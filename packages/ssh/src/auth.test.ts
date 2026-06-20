@@ -30,6 +30,27 @@ describe("ssh auth", () => {
     }),
   );
 
+  it.effect("detects ssh auth failures on cause chain", () =>
+    Effect.sync(() => {
+      const spawnError = new Error("Failed to spawn SSH command for host.", {
+        cause: new Error("Permission denied (publickey,password)."),
+      });
+      assert.equal(isSshAuthFailure(spawnError), true);
+
+      const nestedError = new Error("outer", {
+        cause: new Error("middle", {
+          cause: new Error("Authentication failed"),
+        }),
+      });
+      assert.equal(isSshAuthFailure(nestedError), true);
+
+      const noAuthError = new Error("Failed to spawn SSH command.", {
+        cause: new Error("ECONNREFUSED"),
+      });
+      assert.equal(isSshAuthFailure(noAuthError), false);
+    }),
+  );
+
   it.effect("creates askpass env for cached password prompts", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

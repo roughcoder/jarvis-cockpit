@@ -205,8 +205,7 @@ export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnviron
   };
 });
 
-export function isSshAuthFailure(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
+function matchesAuthFailureMessage(message: string): boolean {
   const normalized = message.toLowerCase();
   return (
     /permission denied \((?:publickey|password|keyboard-interactive|hostbased|gssapi-with-mic)[^)]*\)/u.test(
@@ -215,4 +214,23 @@ export function isSshAuthFailure(error: unknown): boolean {
     /authentication failed/u.test(normalized) ||
     /too many authentication failures/u.test(normalized)
   );
+}
+
+export function isSshAuthFailure(error: unknown): boolean {
+  let current: unknown = error;
+  while (current != null) {
+    const message = current instanceof Error ? current.message : String(current);
+    if (matchesAuthFailureMessage(message)) {
+      return true;
+    }
+    if (typeof current !== "object") {
+      break;
+    }
+    const next = (current as Record<string, unknown>).cause;
+    if (next === undefined || next === current) {
+      break;
+    }
+    current = next;
+  }
+  return false;
 }
