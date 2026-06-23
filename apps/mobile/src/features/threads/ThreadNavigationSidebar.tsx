@@ -1,7 +1,7 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { SymbolView } from "expo-symbols";
-import { useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
+import { useCallback, useMemo, useState } from "react";
+import { Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
@@ -10,6 +10,7 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { relativeTime } from "../../lib/time";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { useProjects, useThreadShells } from "../../state/entities";
+import { useThreadListActions } from "../home/useThreadListActions";
 import { buildThreadNavigationGroups } from "./thread-navigation-groups";
 import { threadStatusTone } from "./threadPresentation";
 
@@ -24,9 +25,21 @@ export function ThreadNavigationSidebar(props: {
   const projects = useProjects();
   const threads = useThreadShells();
   const [searchQuery, setSearchQuery] = useState("");
+  const { archiveThread, confirmDeleteThread } = useThreadListActions();
   const groups = useMemo(
     () => buildThreadNavigationGroups({ projects, threads, searchQuery }),
     [projects, searchQuery, threads],
+  );
+
+  const handleThreadLongPress = useCallback(
+    (thread: EnvironmentThreadShell) => {
+      Alert.alert(thread.title, undefined, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Archive", onPress: () => archiveThread(thread) },
+        { text: "Delete", style: "destructive", onPress: () => confirmDeleteThread(thread) },
+      ]);
+    },
+    [archiveThread, confirmDeleteThread],
   );
 
   const backgroundColor = useThemeColor("--color-drawer");
@@ -131,6 +144,7 @@ export function ThreadNavigationSidebar(props: {
                       accessibilityLabel={thread.title}
                       accessibilityRole="button"
                       accessibilityState={{ selected }}
+                      onLongPress={() => handleThreadLongPress(thread)}
                       onPress={() => props.onSelectThread(thread)}
                       style={({ pressed }) => [
                         styles.threadRow,

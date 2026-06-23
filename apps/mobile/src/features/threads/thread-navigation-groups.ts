@@ -33,7 +33,9 @@ export function buildThreadNavigationGroups(input: {
 
   return groupProjectsByRepository(input).flatMap((group) => {
     const threads = Arr.sort(
-      group.projects.flatMap((projectGroup) => projectGroup.threads),
+      group.projects
+        .flatMap((projectGroup) => projectGroup.threads)
+        .filter((thread) => thread.archivedAt === null),
       threadActivityOrder,
     );
     const title = group.projects[0]?.project.title ?? group.title;
