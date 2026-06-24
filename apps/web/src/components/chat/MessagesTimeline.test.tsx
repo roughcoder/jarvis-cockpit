@@ -13,9 +13,15 @@ vi.mock("@legendapp/list/react", async () => {
     renderItem: (args: { item: { id: string } }) => ReactNode;
     ListHeaderComponent?: ReactNode;
     ListFooterComponent?: ReactNode;
+    anchoredEndSpace?: { anchorIndex: number };
+    contentInsetEndAdjustment?: number;
     ref?: Ref<LegendListRef>;
   }) => (
-    <div data-testid={legendListTestId}>
+    <div
+      data-testid={legendListTestId}
+      data-anchor-index={props.anchoredEndSpace?.anchorIndex}
+      data-content-inset-end={props.contentInsetEndAdjustment}
+    >
       {props.ListHeaderComponent}
       {props.data.map((item) => (
         <div key={props.keyExtractor(item)}>{props.renderItem({ item })}</div>
@@ -109,6 +115,8 @@ function buildProps() {
     resolvedTheme: "light" as const,
     timestampFormat: "locale" as const,
     workspaceRoot: undefined,
+    anchorMessageId: null,
+    contentInsetEndAdjustment: 0,
     onIsAtEndChange: () => {},
   };
 }
@@ -137,6 +145,30 @@ function buildUserTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("anchors a sent message above the measured floating composer", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const firstEntry = buildUserTimelineEntry("First prompt.");
+    const secondEntry = {
+      ...buildUserTimelineEntry("Newest prompt."),
+      id: "entry-2",
+      message: {
+        ...buildUserTimelineEntry("Newest prompt.").message,
+        id: MessageId.make("message-2"),
+      },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        anchorMessageId={secondEntry.message.id}
+        contentInsetEndAdjustment={144}
+        timelineEntries={[firstEntry, secondEntry]}
+      />,
+    );
+
+    expect(markup).toContain('data-anchor-index="1"');
+    expect(markup).toContain('data-content-inset-end="144"');
+  });
+
   it("renders collapse controls for long user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

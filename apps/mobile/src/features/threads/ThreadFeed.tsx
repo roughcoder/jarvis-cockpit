@@ -1,10 +1,20 @@
 import * as Haptics from "expo-haptics";
-import { KeyboardAvoidingLegendList } from "@legendapp/list/keyboard";
+import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { type LegendListRef } from "@legendapp/list/react-native";
-import type { EnvironmentId, ThreadId, TurnId } from "@t3tools/contracts";
+import type { EnvironmentId, MessageId, ThreadId, TurnId } from "@t3tools/contracts";
+import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { SymbolView } from "expo-symbols";
 import { useRouter } from "expo-router";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import {
   Markdown,
   type CustomRenderers,
@@ -15,8 +25,6 @@ import {
   ActivityIndicator,
   Image,
   Linking,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -29,6 +37,7 @@ import {
 import { TouchableOpacity } from "react-native-gesture-handler";
 import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import type { SharedValue } from "react-native-reanimated";
 import { useThemeColor } from "../../lib/useThemeColor";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import {
@@ -64,14 +73,12 @@ import {
   type ThreadFeedEntry,
   type ThreadFeedLatestTurn,
 } from "../../lib/threadActivity";
-import { isThreadFeedNearEnd } from "../../lib/threadFeedLayout";
 import { relativeTime } from "../../lib/time";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { ThreadWorkLog } from "./thread-work-log";
 import { useAssetUrl } from "../../state/assets";
 import { resolveWorkspaceRelativeFilePath } from "../files/filePath";
 
-const THREAD_FEED_END_THRESHOLD = 80;
 const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
   minute: "2-digit",
@@ -93,10 +100,13 @@ export interface ThreadFeedProps {
   readonly contentPresentation: ThreadContentPresentation;
   readonly agentLabel: string;
   readonly latestTurn: ThreadFeedLatestTurn | null;
+  readonly listRef: RefObject<LegendListRef | null>;
+  readonly freeze: SharedValue<boolean>;
+  readonly anchorMessageId: MessageId | null;
+  readonly contentInsetEndAdjustment: SharedValue<number>;
   readonly contentTopInset?: number;
   readonly contentBottomInset?: number;
   readonly layoutVariant?: LayoutVariant;
-  readonly composerExpanded?: boolean;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
 }
 
@@ -1122,17 +1132,12 @@ function ThreadFeedPlaceholder(props: {
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const router = useRouter();
-  const listRef = useRef<LegendListRef>(null);
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const scrollFrameRef = useRef<number | null>(null);
   const foldSettleFrameRef = useRef<number | null>(null);
   const foldSettleSecondFrameRef = useRef<number | null>(null);
-  const suppressAutoFollowRef = useRef(false);
   const previousLatestTurnRef = useRef(props.latestTurn);
-  const isNearEndRef = useRef(true);
-  const initialScrollReadyRef = useRef(false);
-  const lastContentHeightRef = useRef(0);
   const { width: viewportWidth } = useWindowDimensions();
+  const [foldToggleSettling, setFoldToggleSettling] = useState(false);
   const [interactionState, setInteractionState] = useState<{
     readonly copiedRowId: string | null;
     readonly expandedWorkGroups: Record<string, boolean>;
@@ -1214,6 +1219,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     () => deriveThreadFeedPresentation(props.feed, props.latestTurn, expandedTurnIds),
     [expandedTurnIds, props.feed, props.latestTurn],
   );
+  const anchoredEndSpace = useMemo(
+    () =>
+      resolveChatListAnchoredEndSpace(presentedFeed, props.anchorMessageId, (entry) =>
+        entry.type === "message" || entry.type === "queued-message" ? entry.id : null,
+      ),
+    [presentedFeed, props.anchorMessageId],
+  );
   const terminalAssistantMessageIds = useMemo(() => {
     const terminalIdsByTurn = new Map<TurnId, string>();
     for (const entry of props.feed) {
@@ -1228,54 +1240,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     (props.latestTurn.completedAt === null || props.latestTurn.state === "running")
       ? props.latestTurn.turnId
       : null;
-
-  const scrollToEnd = useCallback(() => {
-    if (scrollFrameRef.current !== null) {
-      return;
-    }
-    scrollFrameRef.current = requestAnimationFrame(() => {
-      scrollFrameRef.current = null;
-      listRef.current?.scrollToEnd({ animated: false });
-    });
-  }, []);
-
-  const onListScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent> | NativeScrollEvent) => {
-      const scrollEvent = "nativeEvent" in event ? event.nativeEvent : event;
-      const { contentInset, contentOffset, contentSize, layoutMeasurement } = scrollEvent;
-      isNearEndRef.current = isThreadFeedNearEnd(
-        {
-          contentHeight: contentSize.height,
-          viewportHeight: layoutMeasurement.height,
-          offsetY: contentOffset.y,
-          bottomInset: contentInset.bottom,
-        },
-        THREAD_FEED_END_THRESHOLD,
-      );
-    },
-    [],
-  );
-
-  const onListContentSizeChange = useCallback(
-    (_width: number, height: number) => {
-      const contentGrew = height > lastContentHeightRef.current + 0.5;
-      lastContentHeightRef.current = height;
-
-      if (
-        initialScrollReadyRef.current &&
-        contentGrew &&
-        isNearEndRef.current &&
-        !suppressAutoFollowRef.current
-      ) {
-        scrollToEnd();
-      }
-    },
-    [scrollToEnd],
-  );
-
-  const onListLoad = useCallback(() => {
-    initialScrollReadyRef.current = true;
-  }, []);
 
   useEffect(() => {
     const previous = previousLatestTurnRef.current;
@@ -1307,9 +1271,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     return () => {
       if (copyFeedbackTimeoutRef.current) {
         clearTimeout(copyFeedbackTimeoutRef.current);
-      }
-      if (scrollFrameRef.current !== null) {
-        cancelAnimationFrame(scrollFrameRef.current);
       }
       if (foldSettleFrameRef.current !== null) {
         cancelAnimationFrame(foldSettleFrameRef.current);
@@ -1358,7 +1319,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   }, []);
 
   const onToggleTurnFold = useCallback((turnId: TurnId) => {
-    suppressAutoFollowRef.current = true;
+    setFoldToggleSettling(true);
     if (foldSettleFrameRef.current !== null) {
       cancelAnimationFrame(foldSettleFrameRef.current);
     }
@@ -1376,7 +1337,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     });
     foldSettleFrameRef.current = requestAnimationFrame(() => {
       foldSettleSecondFrameRef.current = requestAnimationFrame(() => {
-        suppressAutoFollowRef.current = false;
+        setFoldToggleSettling(false);
         foldSettleFrameRef.current = null;
         foldSettleSecondFrameRef.current = null;
       });
@@ -1458,59 +1419,61 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     );
   }
 
-  if (props.feed.length === 0) {
-    return (
-      <ThreadFeedPlaceholder
-        title="No conversation yet"
-        detail="Ask the agent to inspect the repo, run a command, or continue the active thread."
-        topInset={topContentInset}
-        bottomInset={bottomContentInset}
-        horizontalPadding={horizontalPadding}
-      />
-    );
-  }
-
   return (
     <>
       <View style={{ flex: 1 }}>
-        <KeyboardAvoidingLegendList
-          ref={listRef}
+        <KeyboardAwareLegendList
+          ref={props.listRef}
           key={props.threadId}
           style={{ flex: 1 }}
           automaticallyAdjustsScrollIndicatorInsets={false}
-          contentInset={{ top: 0, bottom: 0 }}
           scrollIndicatorInsets={{ top: topContentInset, bottom: 0 }}
           alignItemsAtEnd
-          maintainScrollAtEnd={{
-            animated: false,
-            on: {
-              dataChange: true,
-              itemLayout: true,
-              layout: true,
-            },
-          }}
+          {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
+          contentInsetEndAdjustment={props.contentInsetEndAdjustment}
+          freeze={props.freeze}
+          maintainScrollAtEnd={
+            foldToggleSettling
+              ? false
+              : {
+                  animated: false,
+                  on: {
+                    dataChange: true,
+                    itemLayout: true,
+                    layout: true,
+                  },
+                }
+          }
+          maintainVisibleContentPosition
           data={presentedFeed}
           extraData={listAppearanceData}
           renderItem={renderItem}
-          keyExtractor={(entry) => `${entry.type}:${entry.id}`}
+          keyExtractor={(entry) => entry.id}
           getItemType={(entry) =>
             entry.type === "message" ? `message:${entry.message.role}` : entry.type
           }
           keyboardShouldPersistTaps="always"
           keyboardDismissMode="none"
+          keyboardLiftBehavior="whenAtEnd"
           estimatedItemSize={180}
           initialScrollAtEnd
-          onContentSizeChange={onListContentSizeChange}
-          onLoad={onListLoad}
-          onScroll={onListScroll}
-          scrollEventThrottle={16}
           ListHeaderComponent={<View style={{ height: topContentInset }} />}
           contentContainerStyle={{
             paddingTop: 12,
-            paddingBottom: bottomContentInset,
             paddingHorizontal: horizontalPadding,
           }}
         />
+        {props.feed.length === 0 ? (
+          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+            <ThreadFeedPlaceholder
+              title="No conversation yet"
+              detail="Ask the agent to inspect the repo, run a command, or continue the active thread."
+              topInset={topContentInset}
+              bottomInset={bottomContentInset}
+              horizontalPadding={horizontalPadding}
+            />
+          </View>
+        ) : null}
       </View>
 
       <ImageViewing
