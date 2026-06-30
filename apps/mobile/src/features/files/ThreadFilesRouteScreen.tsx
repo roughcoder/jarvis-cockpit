@@ -573,7 +573,8 @@ export function ThreadFilesTreeScreen() {
     );
   }
 
-  const usesCompactMailToolbar = Platform.OS === "ios" && !layout.usesSplitView;
+  const usesCompactMailToolbar =
+    Platform.OS === "ios" && !layout.usesSplitView && Number(Platform.Version) >= 26;
 
   return (
     <View className="flex-1 bg-sheet">
