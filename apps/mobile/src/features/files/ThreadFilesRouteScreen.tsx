@@ -1,6 +1,7 @@
 import Stack from "expo-router/stack";
 import { SymbolView } from "expo-symbols";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useHeaderHeight } from "expo-router/build/react-navigation/elements";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -665,6 +666,7 @@ export function ThreadFileScreen() {
   useAdaptiveWorkspacePaneRole("inspector");
   const router = useRouter();
   const { fileInspector, panes, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const headerHeight = useHeaderHeight();
   const iconColor = useThemeColor("--color-icon");
   const params = useLocalSearchParams<{
     line?: string | string[];
@@ -757,7 +759,7 @@ export function ThreadFileScreen() {
 
   return (
     <ReviewHighlighterProvider>
-      <View className="flex-1 bg-sheet">
+      <View className="flex-1 bg-sheet" style={{ paddingTop: headerHeight }}>
         <Stack.Screen
           options={{
             headerTitle: basename(relativePath),
