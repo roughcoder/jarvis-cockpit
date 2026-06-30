@@ -342,6 +342,11 @@ function ThreadRouteContent(
     return true;
   }, [usesThreadSearchToolbar]);
   useHardwareKeyboardCommand("focusSearch", focusThreadSearch);
+  useEffect(() => {
+    if (!usesThreadSearchToolbar) {
+      setPrimarySidebarSearchQuery("");
+    }
+  }, [usesThreadSearchToolbar, setPrimarySidebarSearchQuery]);
   const headerSubtitle = [
     selectedThreadProject?.title ?? null,
     selectedEnvironmentConnection?.environmentLabel ?? null,
