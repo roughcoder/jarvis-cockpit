@@ -97,6 +97,12 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
+import { makeJarvisClient } from "./jarvis/JarvisClient.ts";
+import {
+  loadJarvisShellSnapshot,
+  loadJarvisThreadDetail,
+  shouldUseJarvisCockpitReads,
+} from "./jarvis/JarvisOrchestrationReadModel.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
@@ -408,6 +414,7 @@ const makeWsRpcLayer = (
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const config = yield* ServerConfig.ServerConfig;
+      const jarvisClient = makeJarvisClient(config);
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
@@ -935,6 +942,7 @@ const makeWsRpcLayer = (
           settings,
         };
       });
+      const useJarvisCockpitReads = shouldUseJarvisCockpitReads(config);
 
       const refreshGitStatus = (cwd: string) =>
         vcsStatusBroadcaster
@@ -1063,25 +1071,40 @@ const makeWsRpcLayer = (
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeShell,
             Effect.gen(function* () {
-              const snapshot = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
-                Effect.tapError((cause) =>
-                  Effect.logError("orchestration shell snapshot load failed", { cause }),
-                ),
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationGetSnapshotError({
-                      message: "Failed to load orchestration shell snapshot",
-                      cause,
-                    }),
-                ),
-              );
+              const snapshot = useJarvisCockpitReads
+                ? yield* loadJarvisShellSnapshot(jarvisClient).pipe(
+                    Effect.tapError((cause) =>
+                      Effect.logError("orchestration shell snapshot load failed", { cause }),
+                    ),
+                    Effect.mapError(
+                      (cause) =>
+                        new OrchestrationGetSnapshotError({
+                          message: "Failed to load orchestration shell snapshot",
+                          cause,
+                        }),
+                    ),
+                  )
+                : yield* projectionSnapshotQuery.getShellSnapshot().pipe(
+                    Effect.tapError((cause) =>
+                      Effect.logError("orchestration shell snapshot load failed", { cause }),
+                    ),
+                    Effect.mapError(
+                      (cause) =>
+                        new OrchestrationGetSnapshotError({
+                          message: "Failed to load orchestration shell snapshot",
+                          cause,
+                        }),
+                    ),
+                  );
 
-              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
-                Stream.mapEffect(toShellStreamEvent),
-                Stream.flatMap((event) =>
-                  Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty,
-                ),
-              );
+              const liveStream = useJarvisCockpitReads
+                ? Stream.empty
+                : orchestrationEngine.streamDomainEvents.pipe(
+                    Stream.mapEffect(toShellStreamEvent),
+                    Stream.flatMap((event) =>
+                      Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty,
+                    ),
+                  );
 
               return Stream.concat(
                 Stream.make({
@@ -1114,27 +1137,40 @@ const makeWsRpcLayer = (
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeThread,
             Effect.gen(function* () {
-              const [threadDetail, snapshotSequence] = yield* Effect.all([
-                projectionSnapshotQuery.getThreadDetailById(input.threadId).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new OrchestrationGetSnapshotError({
-                        message: `Failed to load thread ${input.threadId}`,
-                        cause,
-                      }),
-                  ),
-                ),
-                projectionSnapshotQuery.getSnapshotSequence().pipe(
-                  Effect.map(({ snapshotSequence }) => snapshotSequence),
-                  Effect.mapError(
-                    (cause) =>
-                      new OrchestrationGetSnapshotError({
-                        message: "Failed to load orchestration snapshot sequence",
-                        cause,
-                      }),
-                  ),
-                ),
-              ]);
+              const [threadDetail, snapshotSequence] = useJarvisCockpitReads
+                ? yield* Effect.all([
+                    loadJarvisThreadDetail(jarvisClient, input.threadId).pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new OrchestrationGetSnapshotError({
+                            message: `Failed to load Jarvis thread ${input.threadId}`,
+                            cause,
+                          }),
+                      ),
+                    ),
+                    Effect.succeed(0),
+                  ])
+                : yield* Effect.all([
+                    projectionSnapshotQuery.getThreadDetailById(input.threadId).pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new OrchestrationGetSnapshotError({
+                            message: `Failed to load thread ${input.threadId}`,
+                            cause,
+                          }),
+                      ),
+                    ),
+                    projectionSnapshotQuery.getSnapshotSequence().pipe(
+                      Effect.map(({ snapshotSequence }) => snapshotSequence),
+                      Effect.mapError(
+                        (cause) =>
+                          new OrchestrationGetSnapshotError({
+                            message: "Failed to load orchestration snapshot sequence",
+                            cause,
+                          }),
+                      ),
+                    ),
+                  ]);
 
               if (Option.isNone(threadDetail)) {
                 return yield* new OrchestrationGetSnapshotError({
@@ -1143,18 +1179,20 @@ const makeWsRpcLayer = (
                 });
               }
 
-              const liveStream = orchestrationEngine.streamDomainEvents.pipe(
-                Stream.filter(
-                  (event) =>
-                    event.aggregateKind === "thread" &&
-                    event.aggregateId === input.threadId &&
-                    isThreadDetailEvent(event),
-                ),
-                Stream.map((event) => ({
-                  kind: "event" as const,
-                  event,
-                })),
-              );
+              const liveStream = useJarvisCockpitReads
+                ? Stream.empty
+                : orchestrationEngine.streamDomainEvents.pipe(
+                    Stream.filter(
+                      (event) =>
+                        event.aggregateKind === "thread" &&
+                        event.aggregateId === input.threadId &&
+                        isThreadDetailEvent(event),
+                    ),
+                    Stream.map((event) => ({
+                      kind: "event" as const,
+                      event,
+                    })),
+                  );
 
               return Stream.concat(
                 Stream.make({

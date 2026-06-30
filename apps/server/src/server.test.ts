@@ -16,6 +16,7 @@ import {
   KeybindingRule,
   MessageId,
   ExternalLauncherCommandNotFoundError,
+  type OrchestrationReadModel,
   type OrchestrationThreadShell,
   TerminalNotRunningError,
   type OrchestrationCommand,
@@ -381,6 +382,10 @@ const buildAppUnderTest = (options?: {
       logWebSocketEvents: false,
       tailscaleServeEnabled: false,
       tailscaleServePort: 443,
+      jarvisCockpitEnabled: false,
+      jarvisApiBaseUrl: undefined,
+      jarvisApiToken: undefined,
+      jarvisFixtureMode: false,
       ...options?.config,
     };
     const layerConfig = ServerConfig.layer(config);
@@ -5602,6 +5607,113 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assertTrue(result.failure._tag === "OrchestrationGetSnapshotError");
       assertTrue(result.failure.cause instanceof Error);
       assert.include(result.failure.cause.message, projectionError.message);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc orchestration shell snapshots from Jarvis fixtures", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          jarvisFixtureMode: true,
+        },
+        layers: {
+          projectionSnapshotQuery: {
+            getShellSnapshot: () =>
+              Effect.die(new Error("Native projection should not be read in Jarvis fixture mode")),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const events = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeShell]({}).pipe(Stream.runCollect),
+        ),
+      );
+
+      const [snapshotEvent] = Array.from(events);
+      if (snapshotEvent?.kind !== "snapshot") {
+        return yield* Effect.die(
+          new Error("Expected the first Jarvis shell event to be a snapshot"),
+        );
+      }
+      assert.equal(
+        snapshotEvent.snapshot.projects[0]?.id,
+        ProjectId.make("jarvis-run_run_fixture_dashboard"),
+      );
+      assert.equal(
+        snapshotEvent.snapshot.threads[0]?.id,
+        ThreadId.make("jarvis-session_sess_fixture_codex"),
+      );
+      assert.equal(snapshotEvent.snapshot.threads[0]?.session?.status, "running");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc orchestration thread details from Jarvis fixtures", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          jarvisFixtureMode: true,
+        },
+        layers: {
+          projectionSnapshotQuery: {
+            getThreadDetailById: () =>
+              Effect.die(new Error("Native projection should not be read in Jarvis fixture mode")),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const events = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: ThreadId.make("jarvis-session_sess_fixture_codex"),
+          }).pipe(Stream.runCollect),
+        ),
+      );
+
+      const [snapshotEvent] = Array.from(events);
+      if (snapshotEvent?.kind !== "snapshot") {
+        return yield* Effect.die(
+          new Error("Expected the first Jarvis thread event to be a snapshot"),
+        );
+      }
+      assert.equal(
+        snapshotEvent.snapshot.thread.id,
+        ThreadId.make("jarvis-session_sess_fixture_codex"),
+      );
+      assert.equal(snapshotEvent.snapshot.thread.activities[0]?.summary, "Session created");
+      assert.equal(snapshotEvent.snapshot.thread.session?.status, "running");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes environment orchestration snapshots from Jarvis fixtures", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          jarvisFixtureMode: true,
+        },
+        layers: {
+          projectionSnapshotQuery: {
+            getSnapshot: () =>
+              Effect.die(new Error("Native projection should not be read in Jarvis fixture mode")),
+          },
+        },
+      });
+
+      const cookie = yield* getAuthenticatedSessionCookieHeader();
+      const snapshotUrl = yield* getHttpServerUrl("/api/orchestration/snapshot");
+      const response = yield* fetchEffect(snapshotUrl, {
+        headers: {
+          cookie,
+        },
+      });
+      const body = yield* responseJsonEffect<OrchestrationReadModel>(response);
+
+      assert.equal(response.status, 200);
+      assert.equal(body.projects[0]?.id, ProjectId.make("jarvis-run_run_fixture_dashboard"));
+      assert.equal(body.threads[0]?.id, ThreadId.make("jarvis-session_sess_fixture_codex"));
+      assert.equal(body.threads[0]?.activities[0]?.summary, "Session created");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

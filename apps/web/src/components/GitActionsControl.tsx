@@ -78,6 +78,12 @@ import {
 } from "~/lib/sourceControlActions";
 import { useThread } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
+
+const JARVIS_THREAD_ID_PREFIX = "jarvis-session_";
+
+function isJarvisManagedThread(threadRef: ScopedThreadRef | null | undefined): boolean {
+  return threadRef?.threadId.startsWith(JARVIS_THREAD_ID_PREFIX) ?? false;
+}
 import { serverEnvironment } from "~/state/server";
 import { sourceControlEnvironment } from "~/state/sourceControl";
 import { threadEnvironment } from "~/state/threads";
@@ -986,6 +992,7 @@ export default function GitActionsControl({
     [activeThreadRef],
   );
   const activeServerThread = useThread(activeThreadRef);
+  const activeThreadIsJarvisManaged = isJarvisManagedThread(activeThreadRef);
   const activeDraftThread = useComposerDraftStore((store) =>
     draftId
       ? store.getDraftSession(draftId)
@@ -1028,6 +1035,10 @@ export default function GitActionsControl({
         return;
       }
 
+      if (activeThreadIsJarvisManaged) {
+        return;
+      }
+
       if (activeServerThread) {
         if (activeServerThread.branch === branch) {
           return;
@@ -1058,6 +1069,7 @@ export default function GitActionsControl({
     [
       activeDraftThread,
       activeServerThread,
+      activeThreadIsJarvisManaged,
       activeThreadRef,
       draftId,
       setDraftThreadContext,
