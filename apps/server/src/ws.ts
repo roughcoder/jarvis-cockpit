@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import {
@@ -30,6 +31,8 @@ import {
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
+  type OrchestrationShellStreamItem,
+  type OrchestrationThreadStreamItem,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
@@ -97,7 +100,7 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
-import { makeJarvisClient } from "./jarvis/JarvisClient.ts";
+import { makeJarvisClient, type JarvisClient } from "./jarvis/JarvisClient.ts";
 import {
   loadJarvisShellSnapshot,
   loadJarvisThreadDetail,
@@ -121,6 +124,64 @@ import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+const JARVIS_COCKPIT_POLL_INTERVAL = Duration.seconds(2);
+
+function jarvisShellPollingStream(
+  jarvisClient: JarvisClient,
+): Stream.Stream<OrchestrationShellStreamItem> {
+  return Stream.fromSchedule(Schedule.spaced(JARVIS_COCKPIT_POLL_INTERVAL)).pipe(
+    Stream.mapEffect(() =>
+      loadJarvisShellSnapshot(jarvisClient).pipe(
+        Effect.map((snapshot) => {
+          const item: OrchestrationShellStreamItem = {
+            kind: "snapshot" as const,
+            snapshot,
+          };
+          return Option.some(item);
+        }),
+        Effect.tapError((cause) =>
+          Effect.logWarning("Jarvis shell poll failed", {
+            cause,
+          }),
+        ),
+        Effect.orElseSucceed(() => Option.none<OrchestrationShellStreamItem>()),
+      ),
+    ),
+    Stream.flatMap((event) => (Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty)),
+  );
+}
+
+function jarvisThreadPollingStream(
+  jarvisClient: JarvisClient,
+  threadId: ThreadId,
+): Stream.Stream<OrchestrationThreadStreamItem> {
+  return Stream.fromSchedule(Schedule.spaced(JARVIS_COCKPIT_POLL_INTERVAL)).pipe(
+    Stream.mapEffect(() =>
+      loadJarvisThreadDetail(jarvisClient, threadId).pipe(
+        Effect.map((thread) =>
+          Option.map(
+            thread,
+            (value): OrchestrationThreadStreamItem => ({
+              kind: "snapshot" as const,
+              snapshot: {
+                snapshotSequence: 0,
+                thread: value,
+              },
+            }),
+          ),
+        ),
+        Effect.tapError((cause) =>
+          Effect.logWarning("Jarvis thread poll failed", {
+            cause,
+            threadId,
+          }),
+        ),
+        Effect.orElseSucceed(() => Option.none<OrchestrationThreadStreamItem>()),
+      ),
+    ),
+    Stream.flatMap((event) => (Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty)),
+  );
+}
 
 function unexpectedCompatibilityError(error: never): never {
   throw new Error(`Unhandled compatibility error: ${String(error)}`);
@@ -1098,7 +1159,7 @@ const makeWsRpcLayer = (
                   );
 
               const liveStream = useJarvisCockpitReads
-                ? Stream.empty
+                ? jarvisShellPollingStream(jarvisClient)
                 : orchestrationEngine.streamDomainEvents.pipe(
                     Stream.mapEffect(toShellStreamEvent),
                     Stream.flatMap((event) =>
@@ -1180,7 +1241,7 @@ const makeWsRpcLayer = (
               }
 
               const liveStream = useJarvisCockpitReads
-                ? Stream.empty
+                ? jarvisThreadPollingStream(jarvisClient, input.threadId)
                 : orchestrationEngine.streamDomainEvents.pipe(
                     Stream.filter(
                       (event) =>

@@ -5627,7 +5627,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const wsUrl = yield* getWsServerUrl("/ws");
       const events = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
-          client[ORCHESTRATION_WS_METHODS.subscribeShell]({}).pipe(Stream.runCollect),
+          client[ORCHESTRATION_WS_METHODS.subscribeShell]({}).pipe(
+            Stream.take(1),
+            Stream.runCollect,
+          ),
         ),
       );
 
@@ -5668,7 +5671,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.subscribeThread]({
             threadId: ThreadId.make("jarvis-session_sess_fixture_codex"),
-          }).pipe(Stream.runCollect),
+          }).pipe(Stream.take(1), Stream.runCollect),
         ),
       );
 

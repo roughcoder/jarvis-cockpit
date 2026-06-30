@@ -286,12 +286,25 @@ export const JarvisRestoreCheckpointInput = Schema.Struct({
 });
 export type JarvisRestoreCheckpointInput = typeof JarvisRestoreCheckpointInput.Type;
 
+export const JarvisControlSessionRef = Schema.Struct({
+  session_id: JarvisWorkerSessionId,
+});
+export type JarvisControlSessionRef = typeof JarvisControlSessionRef.Type;
+
+export const JarvisControlEventRef = Schema.Struct({
+  type: JarvisSessionEventType,
+});
+export type JarvisControlEventRef = typeof JarvisControlEventRef.Type;
+
+const JarvisControlSession = Schema.Union([JarvisWorkerSession, JarvisControlSessionRef]);
+const JarvisControlEvent = Schema.Union([JarvisSessionEvent, JarvisControlEventRef]);
+
 export const JarvisControlResult = Schema.Struct({
   ok: Schema.Boolean,
   run: Schema.optional(JarvisRun),
-  session: Schema.optional(JarvisWorkerSession),
-  event: Schema.optional(JarvisSessionEvent),
-  events: Schema.optional(Schema.Array(JarvisSessionEvent)),
+  session: Schema.optional(JarvisControlSession),
+  event: Schema.optional(JarvisControlEvent),
+  events: Schema.optional(Schema.Array(JarvisControlEvent)),
   turn_id: Schema.optional(TrimmedNonEmptyString),
   error: Schema.optional(Schema.String),
 });

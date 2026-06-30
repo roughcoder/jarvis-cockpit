@@ -14,6 +14,7 @@ import {
   JarvisTurnInput,
   JarvisUserInputInput,
   JarvisWorkerSession,
+  JarvisWorkerSessionId,
   type JarvisWorkerSessionStatus,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -106,8 +107,25 @@ export class JarvisClientService extends Context.Service<JarvisClientService, Ja
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
+const WorkerSessionListEntry = Schema.Struct({
+  session_id: JarvisWorkerSessionId,
+  provider: Schema.optional(Schema.String),
+  engine: Schema.optional(Schema.String),
+  status: Schema.optional(Schema.String),
+  run_id: Schema.optional(Schema.String),
+  repo: Schema.optional(Schema.NullOr(Schema.String)),
+  branch: Schema.optional(Schema.NullOr(Schema.String)),
+  cwd: Schema.optional(Schema.NullOr(Schema.String)),
+  title: Schema.optional(Schema.String),
+  worker_id: Schema.optional(Schema.String),
+  created_at: Schema.optional(Schema.String),
+  updated_at: Schema.optional(Schema.String),
+  metadata: Schema.optional(Schema.Unknown),
+});
+type WorkerSessionListEntry = typeof WorkerSessionListEntry.Type;
+
 const WorkerSessionListResponse = Schema.Struct({
-  sessions: Schema.Array(JarvisWorkerSession),
+  sessions: Schema.Array(WorkerSessionListEntry),
 });
 const SessionEventsResponse = Schema.Struct({
   events: Schema.Array(JarvisSessionEvent),
@@ -179,16 +197,37 @@ export function makeJarvisWorkerSessionClient(input: {
       body: JSON.stringify(payload),
     });
 
+  const decodeSession = (operation: string, input: unknown) =>
+    decodeFor(operation, decodeWorkerSession)(input);
+
+  const getSessionById = (sessionId: string) =>
+    requestJson("sessions.get", `/sessions/${encodeURIComponent(sessionId)}`).pipe(
+      Effect.flatMap((body) => decodeSession("sessions.get", body)),
+    );
+
+  const hydrateListEntry = (
+    entry: WorkerSessionListEntry,
+  ): Effect.Effect<JarvisWorkerSession, JarvisClientError> => {
+    if (
+      typeof entry.provider === "string" &&
+      typeof entry.engine === "string" &&
+      typeof entry.status === "string" &&
+      typeof entry.created_at === "string" &&
+      typeof entry.updated_at === "string"
+    ) {
+      return decodeSession("sessions.list", entry);
+    }
+    return getSessionById(entry.session_id);
+  };
+
   return {
     getSnapshot: () =>
       requestJson("sessions.list", "/sessions").pipe(
         Effect.flatMap(decodeFor("sessions.list", decodeWorkerSessionList)),
-        Effect.map((response) => snapshotFromSessions(response.sessions)),
+        Effect.flatMap((response) => Effect.all(response.sessions.map(hydrateListEntry))),
+        Effect.map(snapshotFromSessions),
       ),
-    getSession: (sessionId) =>
-      requestJson("sessions.get", `/sessions/${encodeURIComponent(sessionId)}`).pipe(
-        Effect.flatMap(decodeFor("sessions.get", decodeWorkerSession)),
-      ),
+    getSession: getSessionById,
     getSessionEvents: (sessionId, options) =>
       requestJson(
         "sessions.events",
@@ -504,7 +543,7 @@ function appendQuery(path: string, params: Record<string, string | number | unde
 function snapshotFromSessions(sessions: ReadonlyArray<JarvisWorkerSession>): JarvisRunsSnapshot {
   const runMap = new Map<string, Array<JarvisWorkerSession>>();
   for (const session of sessions) {
-    const runId = session.run_id ?? JarvisRunId.make(`run_${session.session_id}`);
+    const runId = session.run_id ?? fallbackRunIdForSession(session.session_id);
     const current = runMap.get(runId) ?? [];
     current.push(session);
     runMap.set(runId, current);
@@ -548,6 +587,10 @@ function snapshotFromSessions(sessions: ReadonlyArray<JarvisWorkerSession>): Jar
       "1970-01-01T00:00:00.000Z",
     cursor: null,
   };
+}
+
+function fallbackRunIdForSession(sessionId: string): JarvisRunId {
+  return JarvisRunId.make(`run_${sessionId}`);
 }
 
 function deriveRunStatus(sessions: ReadonlyArray<JarvisWorkerSession>): JarvisRun["status"] {
