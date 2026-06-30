@@ -1,12 +1,15 @@
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  CheckpointRef,
   EventId,
   JarvisRun,
   JarvisRunsSnapshot,
+  JarvisSessionCheckpoint,
   JarvisSessionEvent,
   JarvisWorkerSession,
   MessageId,
+  OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationProject,
   OrchestrationProjectShell,
@@ -39,6 +42,8 @@ export const isJarvisThreadId = (threadId: string): boolean =>
 export const jarvisSessionIdFromThreadId = (threadId: string): string | null =>
   isJarvisThreadId(threadId) ? threadId.slice(JARVIS_THREAD_ID_PREFIX.length) : null;
 
+const fallbackRunIdForSession = (sessionId: string): string => `run_${sessionId}`;
+
 export function mapJarvisRunsSnapshotToShellSnapshot(
   snapshot: JarvisRunsSnapshot,
 ): OrchestrationShellSnapshot {
@@ -59,6 +64,7 @@ export function mapJarvisRunsSnapshotToShellSnapshot(
 export function mapJarvisRunsSnapshotToReadModel(input: {
   readonly snapshot: JarvisRunsSnapshot;
   readonly eventsBySession: ReadonlyMap<string, ReadonlyArray<JarvisSessionEvent>>;
+  readonly checkpointsBySession?: ReadonlyMap<string, ReadonlyArray<JarvisSessionCheckpoint>>;
 }): OrchestrationReadModel {
   const runsById = new Map(input.snapshot.runs.map((run) => [run.run_id, run]));
   return {
@@ -71,10 +77,12 @@ export function mapJarvisRunsSnapshotToReadModel(input: {
             session,
             run,
             events: input.eventsBySession.get(session.session_id) ?? [],
+            checkpoints: input.checkpointsBySession?.get(session.session_id) ?? [],
           })
         : mapJarvisSessionToThreadDetail({
             session,
             events: input.eventsBySession.get(session.session_id) ?? [],
+            checkpoints: input.checkpointsBySession?.get(session.session_id) ?? [],
           });
     }),
     updatedAt: input.snapshot.generated_at,
@@ -85,17 +93,17 @@ export function mapJarvisSessionToThreadDetail(input: {
   readonly session: JarvisWorkerSession;
   readonly run?: JarvisRun;
   readonly events: ReadonlyArray<JarvisSessionEvent>;
+  readonly checkpoints?: ReadonlyArray<JarvisSessionCheckpoint>;
   readonly snapshotSequence?: number;
 }): OrchestrationThread {
   const threadId = jarvisThreadIdForSession(input.session.session_id);
   const projectId = jarvisProjectIdForRun(
-    input.session.run_id ?? `session-${input.session.session_id}`,
+    input.session.run_id ?? fallbackRunIdForSession(input.session.session_id),
   );
   const sortedEvents = [...input.events].sort((a, b) => a.time.localeCompare(b.time));
   const messages = sortedEvents.flatMap((event) => eventToMessages(event));
   const activities = sortedEvents.map((event, index) => eventToActivity(event, index));
-  const latestTurnEvent = sortedEvents.toReversed().find((event) => readTurnId(event) !== null);
-  const latestTurnId = latestTurnEvent ? readTurnId(latestTurnEvent) : null;
+  const latestTurn = latestTurnForEvents(sortedEvents, messages);
   return {
     id: threadId,
     projectId,
@@ -105,21 +113,7 @@ export function mapJarvisSessionToThreadDetail(input: {
     interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
     branch: input.session.branch ?? input.run?.branch ?? null,
     worktreePath: input.session.cwd ?? input.run?.cwd ?? null,
-    latestTurn:
-      latestTurnId !== null && latestTurnEvent
-        ? {
-            turnId: TurnId.make(latestTurnId),
-            state: latestTurnStateForEvent(latestTurnEvent),
-            requestedAt: latestTurnEvent.time,
-            startedAt: latestTurnEvent.type === "turn.started" ? latestTurnEvent.time : null,
-            completedAt:
-              latestTurnEvent.type === "turn.completed" || latestTurnEvent.type === "turn.failed"
-                ? latestTurnEvent.time
-                : null,
-            assistantMessageId:
-              messages.find((message) => message.turnId === latestTurnId)?.id ?? null,
-          }
-        : null,
+    latestTurn,
     createdAt: input.session.created_at,
     updatedAt: latestEventTime(sortedEvents) ?? input.session.updated_at,
     archivedAt: null,
@@ -127,8 +121,12 @@ export function mapJarvisSessionToThreadDetail(input: {
     messages,
     proposedPlans: [],
     activities,
-    checkpoints: [],
-    session: sessionForWorkerSession(input.session),
+    checkpoints: checkpointsForSession({
+      session: input.session,
+      checkpoints: input.checkpoints ?? [],
+      messages,
+    }),
+    session: sessionForWorkerSession(input.session, latestTurn),
   };
 }
 
@@ -170,7 +168,7 @@ function mapSessionToThreadShell(
 ): OrchestrationThreadShell {
   return {
     id: jarvisThreadIdForSession(session.session_id),
-    projectId: jarvisProjectIdForRun(session.run_id ?? `session-${session.session_id}`),
+    projectId: jarvisProjectIdForRun(session.run_id ?? fallbackRunIdForSession(session.session_id)),
     title: titleForSession(session, run),
     modelSelection: modelSelectionForSession(session),
     runtimeMode: DEFAULT_RUNTIME_MODE,
@@ -181,7 +179,7 @@ function mapSessionToThreadShell(
     createdAt: session.created_at,
     updatedAt: session.updated_at,
     archivedAt: null,
-    session: sessionForWorkerSession(session),
+    session: sessionForWorkerSession(session, null),
     latestUserMessageAt: null,
     hasPendingApprovals: session.status === "needs_approval" || run?.needs_approval === true,
     hasPendingUserInput: session.status === "needs_input" || run?.needs_input === true,
@@ -189,14 +187,19 @@ function mapSessionToThreadShell(
   };
 }
 
-function sessionForWorkerSession(session: JarvisWorkerSession): OrchestrationSession {
+function sessionForWorkerSession(
+  session: JarvisWorkerSession,
+  latestTurn: NonNullable<OrchestrationThread["latestTurn"]> | null,
+): OrchestrationSession {
+  const status = sessionStatusForWorkerStatus(session.status);
   return {
     threadId: jarvisThreadIdForSession(session.session_id),
-    status: sessionStatusForWorkerStatus(session.status),
+    status,
     providerName: session.provider,
     providerInstanceId: ProviderInstanceId.make(jarvisProviderInstanceId(session.provider)),
     runtimeMode: DEFAULT_RUNTIME_MODE,
-    activeTurnId: null,
+    activeTurnId:
+      status === "running" && latestTurn?.state === "running" ? latestTurn.turnId : null,
     lastError: session.status === "failed" ? "Jarvis session failed" : null,
     updatedAt: session.updated_at,
   };
@@ -209,7 +212,7 @@ function eventToMessages(event: JarvisSessionEvent): ReadonlyArray<Orchestration
   const text = readText(event) ?? "";
   return [
     {
-      id: MessageId.make(`jarvis-message:${event.event_id}`),
+      id: MessageId.make(`jarvis-message:${readTurnId(event) ?? event.event_id}`),
       role: "assistant",
       text,
       turnId: readTurnId(event) ? TurnId.make(readTurnId(event) ?? "") : null,
@@ -224,13 +227,62 @@ function eventToActivity(event: JarvisSessionEvent, index: number): Orchestratio
   return {
     id: EventId.make(`jarvis-event:${event.event_id}`),
     tone: toneForEvent(event),
-    kind: event.type,
+    kind: activityKindForEvent(event),
     summary: summaryForEvent(event),
-    payload: event.data,
+    payload: activityPayloadForEvent(event),
     turnId: readTurnId(event) ? TurnId.make(readTurnId(event) ?? "") : null,
     sequence: index,
     createdAt: event.time,
   };
+}
+
+function latestTurnForEvents(
+  events: ReadonlyArray<JarvisSessionEvent>,
+  messages: ReadonlyArray<OrchestrationMessage>,
+): OrchestrationThread["latestTurn"] {
+  const latestTurnEvent = events.toReversed().find((event) => readTurnId(event) !== null);
+  const latestTurnId = latestTurnEvent ? readTurnId(latestTurnEvent) : null;
+  if (latestTurnId === null || !latestTurnEvent) {
+    return null;
+  }
+  const turnEvents = events.filter((event) => readTurnId(event) === latestTurnId);
+  const startedEvent = turnEvents.find((event) => event.type === "turn.started");
+  const terminalEvent = turnEvents
+    .toReversed()
+    .find((event) => event.type === "turn.completed" || event.type === "turn.failed");
+  return {
+    turnId: TurnId.make(latestTurnId),
+    state: latestTurnStateForEvent(terminalEvent ?? latestTurnEvent),
+    requestedAt: startedEvent?.time ?? turnEvents[0]?.time ?? latestTurnEvent.time,
+    startedAt: startedEvent?.time ?? null,
+    completedAt: terminalEvent?.time ?? null,
+    assistantMessageId:
+      messages.find((message) => message.turnId === TurnId.make(latestTurnId))?.id ?? null,
+  };
+}
+
+function checkpointsForSession(input: {
+  readonly session: JarvisWorkerSession;
+  readonly checkpoints: ReadonlyArray<JarvisSessionCheckpoint>;
+  readonly messages: ReadonlyArray<OrchestrationMessage>;
+}): ReadonlyArray<OrchestrationCheckpointSummary> {
+  return input.checkpoints.map((checkpoint, index) => {
+    const eventTurnId = readJsonString(checkpoint.event, "turn_id", "turnId");
+    const turnId = TurnId.make(eventTurnId ?? checkpoint.checkpoint_id);
+    return {
+      turnId,
+      checkpointTurnCount: index + 1,
+      checkpointRef: CheckpointRef.make(
+        `jarvis:${input.session.session_id}:${checkpoint.checkpoint_id}`,
+      ),
+      status: "ready",
+      files: [],
+      assistantMessageId: input.messages.find((message) => message.turnId === turnId)?.id ?? null,
+      completedAt:
+        readJsonString(checkpoint.event, "time", "created_at", "createdAt") ??
+        input.session.updated_at,
+    };
+  });
 }
 
 function titleForSession(session: JarvisWorkerSession, run: JarvisRun | undefined): string {
@@ -291,6 +343,50 @@ function toneForEvent(event: JarvisSessionEvent): OrchestrationThreadActivityTon
   return "info";
 }
 
+function activityKindForEvent(event: JarvisSessionEvent): string {
+  switch (event.type) {
+    case "input.requested":
+      return "user-input.requested";
+    case "input.received":
+      return "user-input.resolved";
+    default:
+      return event.type;
+  }
+}
+
+function activityPayloadForEvent(event: JarvisSessionEvent): Record<string, unknown> {
+  const requestId = readRequestId(event);
+  if (event.type === "approval.requested") {
+    return {
+      ...event.data,
+      ...(requestId ? { requestId } : {}),
+      requestKind: approvalRequestKindForEvent(event),
+      requestType: readJsonString(event.data, "requestType", "request_type"),
+      detail: readText(event) ?? summaryForEvent(event),
+    };
+  }
+  if (event.type === "approval.resolved") {
+    return {
+      ...event.data,
+      ...(requestId ? { requestId } : {}),
+    };
+  }
+  if (event.type === "input.requested") {
+    return {
+      ...event.data,
+      ...(requestId ? { requestId } : {}),
+      questions: readQuestions(event) ?? [defaultUserInputQuestion(event)],
+    };
+  }
+  if (event.type === "input.received") {
+    return {
+      ...event.data,
+      ...(requestId ? { requestId } : {}),
+    };
+  }
+  return event.data;
+}
+
 function summaryForEvent(event: JarvisSessionEvent): string {
   const text = readText(event);
   if (text) return text;
@@ -337,6 +433,61 @@ function readTurnId(event: JarvisSessionEvent): string | null {
   return typeof event.data.turn_id === "string" && event.data.turn_id.trim().length > 0
     ? event.data.turn_id
     : null;
+}
+
+function readRequestId(event: JarvisSessionEvent): string | null {
+  return readJsonString(event.data, "request_id", "requestId");
+}
+
+function approvalRequestKindForEvent(
+  event: JarvisSessionEvent,
+): "command" | "file-read" | "file-change" {
+  const requestKind = readJsonString(event.data, "requestKind", "request_kind");
+  if (requestKind === "command" || requestKind === "file-read" || requestKind === "file-change") {
+    return requestKind;
+  }
+  switch (readJsonString(event.data, "requestType", "request_type")) {
+    case "file_read_approval":
+      return "file-read";
+    case "file_change_approval":
+    case "apply_patch_approval":
+      return "file-change";
+    default:
+      return "command";
+  }
+}
+
+function readJsonString(
+  data: Record<string, unknown>,
+  ...keys: ReadonlyArray<string>
+): string | null {
+  for (const key of keys) {
+    const value = data[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function readQuestions(event: JarvisSessionEvent): unknown[] | null {
+  const questions = event.data.questions;
+  return Array.isArray(questions) ? questions : null;
+}
+
+function defaultUserInputQuestion(event: JarvisSessionEvent) {
+  return {
+    id: "response",
+    header: "Input",
+    question: readText(event) ?? "Jarvis is waiting for input.",
+    options: [
+      {
+        label: "Respond",
+        description: "Provide a response in the composer.",
+      },
+    ],
+    multiSelect: false,
+  };
 }
 
 function readText(event: JarvisSessionEvent): string | null {

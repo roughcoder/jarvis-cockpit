@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 
 import {
   JarvisApprovalInput,
+  JarvisControlResult,
   JarvisRestoreCheckpointInput,
   JarvisRunsSnapshot,
   JarvisSessionCheckpointsPage,
@@ -25,6 +26,7 @@ const decodeTurn = Schema.decodeUnknownEffect(JarvisTurnInput);
 const decodeApproval = Schema.decodeUnknownEffect(JarvisApprovalInput);
 const decodeUserInput = Schema.decodeUnknownEffect(JarvisUserInputInput);
 const decodeRestoreCheckpoint = Schema.decodeUnknownEffect(JarvisRestoreCheckpointInput);
+const decodeControlResult = Schema.decodeUnknownEffect(JarvisControlResult);
 
 const generatedAt = "2026-06-30T18:00:00+00:00";
 
@@ -247,5 +249,30 @@ it.effect("decodes command inputs with defaults", () =>
     assert.strictEqual(deniedApproval.decision, "denied");
     assert.strictEqual(input.text, "Use the existing orchestration store patterns.");
     assert.deepStrictEqual(restore.metadata, {});
+  }),
+);
+
+it.effect("accepts documented lightweight control response projections", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeControlResult({
+      ok: true,
+      session: {
+        session_id: "sess_1760000000_abcd1234",
+      },
+      event: {
+        type: "turn.started",
+      },
+      events: [
+        {
+          type: "turn.waiting_provider",
+        },
+      ],
+      turn_id: "turn_1",
+    });
+
+    assert.strictEqual(parsed.ok, true);
+    assert.strictEqual(parsed.session?.session_id, "sess_1760000000_abcd1234");
+    assert.strictEqual(parsed.event?.type, "turn.started");
+    assert.strictEqual(parsed.events?.[0]?.type, "turn.waiting_provider");
   }),
 );

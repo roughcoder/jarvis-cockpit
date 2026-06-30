@@ -74,6 +74,51 @@ it.effect("worker-session client attaches bearer token and synthesizes a snapsho
   }),
 );
 
+it.effect("worker-session client hydrates documented session-list summaries", () =>
+  Effect.gen(function* () {
+    const requests: string[] = [];
+    const client = makeJarvisWorkerSessionClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async (url) => {
+        requests.push(String(url));
+        if (String(url).endsWith("/sessions")) {
+          return jsonResponse({
+            sessions: [
+              {
+                session_id: "sess_1",
+                status: "running",
+              },
+            ],
+          });
+        }
+        return jsonResponse({
+          session_id: "sess_1",
+          provider: "codex",
+          engine: "codex",
+          status: "running",
+          run_id: "run_1",
+          repo: "roughcoder/jarvis",
+          branch: "feature/a",
+          cwd: "/tmp/work",
+          title: "Run title",
+          created_at: "2026-06-30T18:00:00+00:00",
+          updated_at: "2026-06-30T18:01:00+00:00",
+          metadata: {},
+        });
+      },
+    });
+
+    const snapshot = yield* client.getSnapshot();
+
+    assert.deepStrictEqual(requests, [
+      "http://jarvis.local:8787/sessions",
+      "http://jarvis.local:8787/sessions/sess_1",
+    ]);
+    assert.strictEqual(snapshot.sessions[0]?.provider, "codex");
+    assert.strictEqual(snapshot.runs[0]?.run_id, "run_1");
+  }),
+);
+
 it.effect("worker-session client reads requests and checkpoints", () =>
   Effect.gen(function* () {
     const requests: Array<{ url: string; method: string }> = [];
@@ -183,6 +228,33 @@ it.effect("worker-session client sends event cursors and checkpoint restore requ
     );
     assert.strictEqual(requests[1]?.method, "POST");
     assert.match(requests[1]?.body ?? "", /ckpt_1/);
+  }),
+);
+
+it.effect("worker-session client accepts lightweight documented control responses", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisWorkerSessionClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async () =>
+        jsonResponse({
+          ok: true,
+          session: {
+            session_id: "sess_1",
+          },
+          event: {
+            type: "turn.started",
+          },
+          turn_id: "turn_1",
+        }),
+    });
+
+    const result = yield* client.sendTurn("sess_1", {
+      prompt: "continue",
+    });
+
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.session?.session_id, "sess_1");
+    assert.strictEqual(result.event?.type, "turn.started");
   }),
 );
 
