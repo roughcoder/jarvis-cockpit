@@ -9,6 +9,16 @@ Jarvis remains the orchestration source of truth. T3 renders and controls Jarvis
 `OrchestrationRun`, `WorkerSession`, and `SessionEvent` resources instead of
 spawning Codex or Claude directly for Jarvis-managed work.
 
+## Plan And Spec Sources
+
+- [Project docs index](./README.md)
+- [Phase 7 plan](./jarvis-cockpit-phase7-plan.md)
+- [Phase 7 PRD](./jarvis-cockpit-phase7-prd.md)
+- [Phase 7 test spec](./jarvis-cockpit-phase7-test-spec.md)
+- [Deep-interview spec](./jarvis-cockpit-phase7-deep-interview-spec.md)
+- [Worker-session pivot](./agentic-worker-session-pivot.md)
+- [Worker sessions API reference](../reference/jarvis-worker-sessions-api.md)
+
 ## Implemented slice
 
 - Added shared Jarvis contracts in `packages/contracts/src/jarvis.ts`.
@@ -26,7 +36,7 @@ spawning Codex or Claude directly for Jarvis-managed work.
 ## Current schema alignment
 
 The connector is aligned with
-`/Users/neilbarton/Development/jarvis-worker-sessions/docs/WORKER_SESSIONS_API.md`
+[the tracked worker sessions API reference](../reference/jarvis-worker-sessions-api.md)
 as of 2026-06-30:
 
 - `GET /sessions`
