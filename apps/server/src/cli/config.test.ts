@@ -46,6 +46,12 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     otlpExportIntervalMs: 10_000,
     otlpServiceName: "t3-server",
   } as const;
+  const defaultJarvisConfig = {
+    jarvisCockpitEnabled: false,
+    jarvisApiBaseUrl: undefined,
+    jarvisApiToken: undefined,
+    jarvisFixtureMode: false,
+  } as const;
 
   const openBootstrapFd = Effect.fn(function* (payload: DesktopBackendBootstrapValue) {
     const fs = yield* FileSystem.FileSystem;
@@ -92,6 +98,10 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
                   T3CODE_NO_BROWSER: "true",
                   T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "false",
                   T3CODE_LOG_WS_EVENTS: "true",
+                  JARVIS_COCKPIT_ENABLED: "true",
+                  JARVIS_API_BASE_URL: "http://127.0.0.1:9876",
+                  JARVIS_API_TOKEN: "jarvis-secret-token",
+                  JARVIS_FIXTURE_MODE: "true",
                 },
               }),
             ),
@@ -103,6 +113,10 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       expect(resolved).toEqual({
         logLevel: "Warn",
         ...defaultObservabilityConfig,
+        jarvisCockpitEnabled: true,
+        jarvisApiBaseUrl: new URL("http://127.0.0.1:9876"),
+        jarvisApiToken: "jarvis-secret-token",
+        jarvisFixtureMode: true,
         mode: "desktop",
         port: 4001,
         cwd: process.cwd(),
@@ -169,6 +183,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       expect(resolved).toEqual({
         logLevel: "Debug",
         ...defaultObservabilityConfig,
+        ...defaultJarvisConfig,
         mode: "web",
         port: 8788,
         cwd: process.cwd(),
@@ -238,6 +253,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       expect(resolved).toEqual({
         logLevel: "Info",
         ...defaultObservabilityConfig,
+        ...defaultJarvisConfig,
         mode: "web",
         port: 8788,
         cwd: process.cwd(),
@@ -310,6 +326,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       expect(resolved).toEqual({
         logLevel: "Info",
         ...defaultObservabilityConfig,
+        ...defaultJarvisConfig,
         otlpTracesUrl: "http://localhost:4318/v1/traces",
         otlpMetricsUrl: "http://localhost:4318/v1/metrics",
         mode: "desktop",
@@ -437,6 +454,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       expect(resolved).toEqual({
         logLevel: "Debug",
         ...defaultObservabilityConfig,
+        ...defaultJarvisConfig,
         mode: "web",
         port: 8788,
         cwd: process.cwd(),
@@ -504,6 +522,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       expect(resolved).toEqual({
         logLevel: "Info",
         ...defaultObservabilityConfig,
+        ...defaultJarvisConfig,
         otlpTracesUrl: "http://localhost:4318/v1/traces",
         otlpMetricsUrl: "http://localhost:4318/v1/metrics",
         mode: "desktop",
@@ -569,6 +588,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       expect(resolved).toEqual({
         logLevel: "Info",
         ...defaultObservabilityConfig,
+        ...defaultJarvisConfig,
         mode: "web",
         port: 3773,
         cwd: process.cwd(),

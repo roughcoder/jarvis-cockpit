@@ -75,6 +75,10 @@ export class ServerConfig extends Context.Service<
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
+    readonly jarvisCockpitEnabled: boolean;
+    readonly jarvisApiBaseUrl: URL | undefined;
+    readonly jarvisApiToken: string | undefined;
+    readonly jarvisFixtureMode: boolean;
   }
 >()("t3/config/ServerConfig") {
   /** @deprecated Import and use `layerTest` from this module. */
@@ -174,6 +178,10 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     logWebSocketEvents: false,
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
+    jarvisCockpitEnabled: false,
+    jarvisApiBaseUrl: undefined,
+    jarvisApiToken: undefined,
+    jarvisFixtureMode: false,
     port: 0,
     host: undefined,
     desktopBootstrapToken: undefined,

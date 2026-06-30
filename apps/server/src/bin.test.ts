@@ -84,6 +84,10 @@ const makeCliTestServerConfig = (baseDir: string) =>
       logWebSocketEvents: false,
       tailscaleServeEnabled: false,
       tailscaleServePort: 443,
+      jarvisCockpitEnabled: false,
+      jarvisApiBaseUrl: undefined,
+      jarvisApiToken: undefined,
+      jarvisFixtureMode: false,
     } satisfies ServerConfig.ServerConfig["Service"];
   });
 

@@ -13,6 +13,12 @@ import {
   failEnvironmentInvalidRequest,
   requireEnvironmentScope,
 } from "../auth/http.ts";
+import { makeJarvisClient } from "../jarvis/JarvisClient.ts";
+import {
+  loadJarvisReadModel,
+  shouldUseJarvisCockpitReads,
+} from "../jarvis/JarvisOrchestrationReadModel.ts";
+import { ServerConfig } from "../config.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
 
@@ -22,6 +28,8 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
     const orchestrationEngine = yield* OrchestrationEngineService;
+    const config = yield* ServerConfig;
+    const jarvisClient = makeJarvisClient(config);
 
     return handlers
       .handle(
@@ -29,6 +37,13 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.snapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          if (shouldUseJarvisCockpitReads(config)) {
+            return yield* loadJarvisReadModel(jarvisClient).pipe(
+              Effect.catch((cause) =>
+                failEnvironmentInternal("orchestration_snapshot_failed", cause),
+              ),
+            );
+          }
           return yield* projectionSnapshotQuery
             .getSnapshot()
             .pipe(
