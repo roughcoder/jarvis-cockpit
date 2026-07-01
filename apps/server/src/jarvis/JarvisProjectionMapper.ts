@@ -33,16 +33,14 @@ export const JARVIS_THREAD_ID_PREFIX = "jarvis-session_";
 export const jarvisProjectIdForRun = (runId: string): ProjectId =>
   ProjectId.make(`${JARVIS_PROJECT_ID_PREFIX}${runId}`);
 
-export const jarvisThreadIdForSession = (sessionId: string): ThreadId =>
-  ThreadId.make(`${JARVIS_THREAD_ID_PREFIX}${sessionId}`);
+export const jarvisThreadIdForSession = (sessionRef: string): ThreadId =>
+  ThreadId.make(`${JARVIS_THREAD_ID_PREFIX}${sessionRef}`);
 
 export const isJarvisThreadId = (threadId: string): boolean =>
   threadId.startsWith(JARVIS_THREAD_ID_PREFIX);
 
 export const jarvisSessionIdFromThreadId = (threadId: string): string | null =>
   isJarvisThreadId(threadId) ? threadId.slice(JARVIS_THREAD_ID_PREFIX.length) : null;
-
-const fallbackRunIdForSession = (sessionId: string): string => `run_${sessionId}`;
 
 export function mapJarvisRunsSnapshotToShellSnapshot(
   snapshot: JarvisRunsSnapshot,
@@ -76,13 +74,13 @@ export function mapJarvisRunsSnapshotToReadModel(input: {
         ? mapJarvisSessionToThreadDetail({
             session,
             run,
-            events: input.eventsBySession.get(session.session_id) ?? [],
-            checkpoints: input.checkpointsBySession?.get(session.session_id) ?? [],
+            events: input.eventsBySession.get(session.session_ref) ?? [],
+            checkpoints: input.checkpointsBySession?.get(session.session_ref) ?? [],
           })
         : mapJarvisSessionToThreadDetail({
             session,
-            events: input.eventsBySession.get(session.session_id) ?? [],
-            checkpoints: input.checkpointsBySession?.get(session.session_id) ?? [],
+            events: input.eventsBySession.get(session.session_ref) ?? [],
+            checkpoints: input.checkpointsBySession?.get(session.session_ref) ?? [],
           });
     }),
     updatedAt: input.snapshot.generated_at,
@@ -96,11 +94,9 @@ export function mapJarvisSessionToThreadDetail(input: {
   readonly checkpoints?: ReadonlyArray<JarvisSessionCheckpoint>;
   readonly snapshotSequence?: number;
 }): OrchestrationThread {
-  const threadId = jarvisThreadIdForSession(input.session.session_id);
-  const projectId = jarvisProjectIdForRun(
-    input.session.run_id ?? fallbackRunIdForSession(input.session.session_id),
-  );
-  const sortedEvents = [...input.events].sort((a, b) => a.time.localeCompare(b.time));
+  const threadId = jarvisThreadIdForSession(input.session.session_ref);
+  const projectId = jarvisProjectIdForRun(input.session.run_id);
+  const sortedEvents = [...input.events].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
   const messages = sortedEvents.flatMap((event) => eventToMessages(event));
   const activities = sortedEvents.map((event, index) => eventToActivity(event, index));
   const latestTurn = latestTurnForEvents(sortedEvents, messages);
@@ -112,7 +108,7 @@ export function mapJarvisSessionToThreadDetail(input: {
     runtimeMode: DEFAULT_RUNTIME_MODE,
     interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
     branch: input.session.branch ?? input.run?.branch ?? null,
-    worktreePath: input.session.cwd ?? input.run?.cwd ?? null,
+    worktreePath: input.session.cwd_label ?? input.session.repo ?? input.run?.repo ?? null,
     latestTurn,
     createdAt: input.session.created_at,
     updatedAt: latestEventTime(sortedEvents) ?? input.session.updated_at,
@@ -146,10 +142,11 @@ function mapRunToProjectShell(
 ): OrchestrationProjectShell {
   const matchingSessions = sessions.filter((session) => session.run_id === run.run_id);
   const workspaceRoot =
-    run.cwd ??
-    matchingSessions.find((session) => session.cwd !== undefined && session.cwd !== null)?.cwd ??
     run.repo ??
-    `/jarvis/${run.run_id}`;
+    matchingSessions.find(
+      (session) => session.cwd_label !== undefined && session.cwd_label !== null,
+    )?.cwd_label ??
+    run.title;
   return {
     id: jarvisProjectIdForRun(run.run_id),
     title: run.title,
@@ -167,22 +164,28 @@ function mapSessionToThreadShell(
   run: JarvisRun | undefined,
 ): OrchestrationThreadShell {
   return {
-    id: jarvisThreadIdForSession(session.session_id),
-    projectId: jarvisProjectIdForRun(session.run_id ?? fallbackRunIdForSession(session.session_id)),
+    id: jarvisThreadIdForSession(session.session_ref),
+    projectId: jarvisProjectIdForRun(session.run_id),
     title: titleForSession(session, run),
     modelSelection: modelSelectionForSession(session),
     runtimeMode: DEFAULT_RUNTIME_MODE,
     interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
     branch: session.branch ?? run?.branch ?? null,
-    worktreePath: session.cwd ?? run?.cwd ?? null,
+    worktreePath: session.cwd_label ?? session.repo ?? run?.repo ?? null,
     latestTurn: null,
     createdAt: session.created_at,
     updatedAt: session.updated_at,
     archivedAt: null,
     session: sessionForWorkerSession(session, null),
     latestUserMessageAt: null,
-    hasPendingApprovals: session.status === "needs_approval" || run?.needs_approval === true,
-    hasPendingUserInput: session.status === "needs_input" || run?.needs_input === true,
+    hasPendingApprovals:
+      session.pending_approval_count > 0 ||
+      session.status === "needs_approval" ||
+      (run?.pending_approval_count ?? 0) > 0,
+    hasPendingUserInput:
+      session.pending_input_count > 0 ||
+      session.status === "needs_input" ||
+      (run?.pending_input_count ?? 0) > 0,
     hasActionableProposedPlan: false,
   };
 }
@@ -193,7 +196,7 @@ function sessionForWorkerSession(
 ): OrchestrationSession {
   const status = sessionStatusForWorkerStatus(session.status);
   return {
-    threadId: jarvisThreadIdForSession(session.session_id),
+    threadId: jarvisThreadIdForSession(session.session_ref),
     status,
     providerName: session.provider,
     providerInstanceId: ProviderInstanceId.make(jarvisProviderInstanceId(session.provider)),
@@ -212,13 +215,15 @@ function eventToMessages(event: JarvisSessionEvent): ReadonlyArray<Orchestration
   const text = readText(event) ?? "";
   return [
     {
-      id: MessageId.make(`jarvis-message:${readTurnId(event) ?? event.event_id}`),
+      id: MessageId.make(
+        `jarvis-message:${event.message_id ?? readTurnId(event) ?? event.event_id}`,
+      ),
       role: "assistant",
       text,
       turnId: readTurnId(event) ? TurnId.make(readTurnId(event) ?? "") : null,
       streaming: event.type === "assistant.delta",
-      createdAt: event.time,
-      updatedAt: event.time,
+      createdAt: event.occurred_at,
+      updatedAt: event.occurred_at,
     },
   ];
 }
@@ -232,7 +237,7 @@ function eventToActivity(event: JarvisSessionEvent, index: number): Orchestratio
     payload: activityPayloadForEvent(event),
     turnId: readTurnId(event) ? TurnId.make(readTurnId(event) ?? "") : null,
     sequence: index,
-    createdAt: event.time,
+    createdAt: event.occurred_at,
   };
 }
 
@@ -253,9 +258,10 @@ function latestTurnForEvents(
   return {
     turnId: TurnId.make(latestTurnId),
     state: latestTurnStateForEvent(terminalEvent ?? latestTurnEvent),
-    requestedAt: startedEvent?.time ?? turnEvents[0]?.time ?? latestTurnEvent.time,
-    startedAt: startedEvent?.time ?? null,
-    completedAt: terminalEvent?.time ?? null,
+    requestedAt:
+      startedEvent?.occurred_at ?? turnEvents[0]?.occurred_at ?? latestTurnEvent.occurred_at,
+    startedAt: startedEvent?.occurred_at ?? null,
+    completedAt: terminalEvent?.occurred_at ?? null,
     assistantMessageId:
       messages.find((message) => message.turnId === TurnId.make(latestTurnId))?.id ?? null,
   };
@@ -273,20 +279,20 @@ function checkpointsForSession(input: {
       turnId,
       checkpointTurnCount: index + 1,
       checkpointRef: CheckpointRef.make(
-        `jarvis:${input.session.session_id}:${checkpoint.checkpoint_id}`,
+        `jarvis:${input.session.session_ref}:${checkpoint.checkpoint_id}`,
       ),
       status: "ready",
       files: [],
       assistantMessageId: input.messages.find((message) => message.turnId === turnId)?.id ?? null,
       completedAt:
-        readJsonString(checkpoint.event, "time", "created_at", "createdAt") ??
+        readJsonString(checkpoint.event, "occurred_at", "time", "created_at", "createdAt") ??
         input.session.updated_at,
     };
   });
 }
 
 function titleForSession(session: JarvisWorkerSession, run: JarvisRun | undefined): string {
-  return session.title ?? run?.title ?? session.session_id;
+  return session.title ?? run?.title ?? session.session_ref;
 }
 
 function modelSelectionForSession(session: JarvisWorkerSession) {
@@ -430,6 +436,9 @@ function summaryForEvent(event: JarvisSessionEvent): string {
 }
 
 function readTurnId(event: JarvisSessionEvent): string | null {
+  if (typeof event.turn_id === "string" && event.turn_id.trim().length > 0) {
+    return event.turn_id;
+  }
   return typeof event.data.turn_id === "string" && event.data.turn_id.trim().length > 0
     ? event.data.turn_id
     : null;
@@ -501,5 +510,7 @@ function readText(event: JarvisSessionEvent): string | null {
 }
 
 function latestEventTime(events: ReadonlyArray<JarvisSessionEvent>): string | null {
-  return [...events].sort((a, b) => b.time.localeCompare(a.time))[0]?.time ?? null;
+  return (
+    [...events].sort((a, b) => b.occurred_at.localeCompare(a.occurred_at))[0]?.occurred_at ?? null
+  );
 }

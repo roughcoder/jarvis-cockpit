@@ -33,7 +33,10 @@ it.effect("loads Jarvis fixture data as orchestration shell and read-model snaps
     const readModel = yield* loadJarvisReadModel(client);
 
     assert.strictEqual(shell.projects[0]?.id, "jarvis-run_run_fixture_dashboard");
-    assert.strictEqual(shell.threads[0]?.id, "jarvis-session_sess_fixture_codex");
+    assert.strictEqual(
+      shell.threads[0]?.id,
+      "jarvis-session_sessref_macbook-worker_sess_fixture_codex",
+    );
     assert.strictEqual(readModel.projects[0]?.deletedAt, null);
     assert.strictEqual(readModel.threads[0]?.activities.length, 2);
   }),
@@ -44,14 +47,14 @@ it.effect("loads Jarvis thread detail only for Jarvis-provenance thread ids", ()
     const client = makeJarvisFixtureClient();
     const detail = yield* loadJarvisThreadDetail(
       client,
-      ThreadId.make("jarvis-session_sess_fixture_codex"),
+      ThreadId.make("jarvis-session_sessref_macbook-worker_sess_fixture_codex"),
     );
     const nonJarvisDetail = yield* loadJarvisThreadDetail(client, ThreadId.make("thread-local"));
 
     assert.strictEqual(Option.isSome(detail), true);
     assert.strictEqual(Option.isNone(nonJarvisDetail), true);
     if (Option.isSome(detail)) {
-      assert.strictEqual(detail.value.activities[1]?.summary, "provider adapter not attached yet");
+      assert.strictEqual(detail.value.activities[1]?.summary, "Choose the next worker action.");
     }
   }),
 );
