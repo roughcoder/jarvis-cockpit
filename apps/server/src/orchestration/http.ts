@@ -16,7 +16,7 @@ import {
 import { makeJarvisClient } from "../jarvis/JarvisClient.ts";
 import { dispatchJarvisCommand } from "../jarvis/JarvisDispatch.ts";
 import {
-  loadJarvisReadModel,
+  loadJarvisSummaryReadModel,
   shouldUseJarvisCockpitReads,
 } from "../jarvis/JarvisOrchestrationReadModel.ts";
 import { ServerConfig } from "../config.ts";
@@ -39,7 +39,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
           if (shouldUseJarvisCockpitReads(config)) {
-            return yield* loadJarvisReadModel(jarvisClient).pipe(
+            return yield* loadJarvisSummaryReadModel(jarvisClient).pipe(
               Effect.catch((cause) =>
                 failEnvironmentInternal("orchestration_snapshot_failed", cause),
               ),

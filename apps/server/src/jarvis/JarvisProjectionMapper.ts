@@ -1,7 +1,6 @@
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
-  CheckpointRef,
   EventId,
   JarvisRun,
   JarvisRunsSnapshot,
@@ -21,26 +20,23 @@ import {
   OrchestrationThreadActivity,
   OrchestrationThreadActivityTone,
   OrchestrationThreadShell,
-  ProjectId,
   ProviderInstanceId,
-  ThreadId,
   TurnId,
 } from "@t3tools/contracts";
 
-export const JARVIS_PROJECT_ID_PREFIX = "jarvis-run_";
-export const JARVIS_THREAD_ID_PREFIX = "jarvis-session_";
-
-export const jarvisProjectIdForRun = (runId: string): ProjectId =>
-  ProjectId.make(`${JARVIS_PROJECT_ID_PREFIX}${runId}`);
-
-export const jarvisThreadIdForSession = (sessionRef: string): ThreadId =>
-  ThreadId.make(`${JARVIS_THREAD_ID_PREFIX}${sessionRef}`);
-
-export const isJarvisThreadId = (threadId: string): boolean =>
-  threadId.startsWith(JARVIS_THREAD_ID_PREFIX);
-
-export const jarvisSessionIdFromThreadId = (threadId: string): string | null =>
-  isJarvisThreadId(threadId) ? threadId.slice(JARVIS_THREAD_ID_PREFIX.length) : null;
+export {
+  JARVIS_PROJECT_ID_PREFIX,
+  JARVIS_THREAD_ID_PREFIX,
+  isJarvisThreadId,
+  jarvisProjectIdForRun,
+  jarvisSessionIdFromThreadId,
+  jarvisThreadIdForSession,
+} from "./JarvisIds.ts";
+import {
+  jarvisCheckpointRefForCheckpoint,
+  jarvisProjectIdForRun,
+  jarvisThreadIdForSession,
+} from "./JarvisIds.ts";
 
 export function mapJarvisRunsSnapshotToShellSnapshot(
   snapshot: JarvisRunsSnapshot,
@@ -329,8 +325,9 @@ function checkpointsForSession(input: {
     return {
       turnId,
       checkpointTurnCount: index + 1,
-      checkpointRef: CheckpointRef.make(
-        `jarvis:${input.session.session_ref}:${checkpoint.checkpoint_id}`,
+      checkpointRef: jarvisCheckpointRefForCheckpoint(
+        input.session.session_ref,
+        checkpoint.checkpoint_id,
       ),
       status: "ready",
       files: [],

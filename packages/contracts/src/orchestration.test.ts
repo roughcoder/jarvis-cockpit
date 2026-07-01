@@ -344,6 +344,25 @@ it.effect("decodes thread archive and unarchive commands", () =>
   }),
 );
 
+it.effect("decodes checkpoint revert commands with stable checkpoint refs", () =>
+  Effect.gen(function* () {
+    const revert = yield* decodeOrchestrationCommand({
+      type: "thread.checkpoint.revert",
+      commandId: "cmd-revert-1",
+      threadId: "thread-1",
+      turnCount: 2,
+      checkpointRef: "jarvis:sessref_worker_session:ckpt_2",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(revert.type, "thread.checkpoint.revert");
+    if (revert.type !== "thread.checkpoint.revert") {
+      assert.fail(`Expected checkpoint revert command, received ${revert.type}.`);
+    }
+    assert.strictEqual(revert.checkpointRef, "jarvis:sessref_worker_session:ckpt_2");
+  }),
+);
+
 it.effect("decodes thread archived and unarchived events", () =>
   Effect.gen(function* () {
     const archived = yield* decodeOrchestrationEvent({

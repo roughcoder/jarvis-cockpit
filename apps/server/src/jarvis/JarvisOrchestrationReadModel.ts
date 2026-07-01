@@ -1,4 +1,5 @@
 import type {
+  JarvisSessionCheckpoint,
   JarvisSessionEvent,
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
@@ -18,6 +19,8 @@ import {
 
 const JARVIS_SESSION_EVENTS_PAGE_LIMIT = 100;
 const JARVIS_SESSION_EVENTS_MAX_PAGES = 100;
+const JARVIS_SESSION_CHECKPOINTS_PAGE_LIMIT = 100;
+const JARVIS_SESSION_CHECKPOINTS_MAX_PAGES = 100;
 
 export function shouldUseJarvisCockpitReads(config: {
   readonly jarvisCockpitEnabled: boolean;
@@ -41,12 +44,12 @@ export function loadJarvisReadModel(
         snapshot.sessions.map((session) =>
           Effect.all({
             events: loadAllJarvisSessionEvents(client, session.session_ref),
-            checkpoints: client.getCheckpoints(session.session_ref),
+            checkpoints: loadAllJarvisSessionCheckpoints(client, session.session_ref),
           }).pipe(
             Effect.map(({ events, checkpoints }) => ({
               sessionRef: session.session_ref,
               events,
-              checkpoints: checkpoints.items,
+              checkpoints,
             })),
           ),
         ),
@@ -65,6 +68,20 @@ export function loadJarvisReadModel(
   );
 }
 
+export function loadJarvisSummaryReadModel(
+  client: JarvisClient,
+): Effect.Effect<OrchestrationReadModel, JarvisClientError> {
+  return client.getSnapshot().pipe(
+    Effect.map((snapshot) =>
+      mapJarvisRunsSnapshotToReadModel({
+        snapshot,
+        eventsBySession: new Map(),
+        checkpointsBySession: new Map(),
+      }),
+    ),
+  );
+}
+
 export function loadJarvisThreadDetail(
   client: JarvisClient,
   threadId: ThreadId,
@@ -78,16 +95,16 @@ export function loadJarvisThreadDetail(
     snapshot: client.getSnapshot(),
     session: client.getSession(sessionRef),
     events: loadAllJarvisSessionEvents(client, sessionRef),
-    checkpointsPage: client.getCheckpoints(sessionRef),
+    checkpoints: loadAllJarvisSessionCheckpoints(client, sessionRef),
   }).pipe(
-    Effect.map(({ snapshot, session, events, checkpointsPage }) => {
+    Effect.map(({ snapshot, session, events, checkpoints }) => {
       const run = snapshot.runs.find((candidate) => candidate.run_id === session.run_id);
       return Option.some(
         mapJarvisSessionToThreadDetail({
           session,
           ...(run ? { run } : {}),
           events,
-          checkpoints: checkpointsPage.items,
+          checkpoints,
         }),
       );
     }),
@@ -117,6 +134,39 @@ function loadAllJarvisSessionEvents(
             page.cursor === null ||
             page.cursor === after ||
             pagesLoaded + 1 >= JARVIS_SESSION_EVENTS_MAX_PAGES
+          ) {
+            return Effect.succeed(next);
+          }
+          return loadPage(page.cursor, pagesLoaded + 1, next);
+        }),
+      );
+
+  return loadPage(undefined, 0, []);
+}
+
+export function loadAllJarvisSessionCheckpoints(
+  client: JarvisClient,
+  sessionRef: string,
+): Effect.Effect<ReadonlyArray<JarvisSessionCheckpoint>, JarvisClientError> {
+  const loadPage = (
+    after: string | undefined,
+    pagesLoaded: number,
+    accumulated: ReadonlyArray<JarvisSessionCheckpoint>,
+  ): Effect.Effect<ReadonlyArray<JarvisSessionCheckpoint>, JarvisClientError> =>
+    client
+      .getCheckpoints(sessionRef, {
+        ...(after ? { after } : {}),
+        limit: JARVIS_SESSION_CHECKPOINTS_PAGE_LIMIT,
+      })
+      .pipe(
+        Effect.flatMap((page) => {
+          const next = [...accumulated, ...page.items];
+          if (
+            !page.has_more ||
+            page.cursor === undefined ||
+            page.cursor === null ||
+            page.cursor === after ||
+            pagesLoaded + 1 >= JARVIS_SESSION_CHECKPOINTS_MAX_PAGES
           ) {
             return Effect.succeed(next);
           }
