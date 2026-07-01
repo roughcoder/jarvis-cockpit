@@ -25,9 +25,14 @@ export const jarvisCheckpointRefForCheckpoint = (
     `${JARVIS_CHECKPOINT_REF_PREFIX}${encodeURIComponent(sessionRef)}${JARVIS_CHECKPOINT_REF_SEPARATOR}${encodeURIComponent(checkpointId)}`,
   );
 
-export const jarvisCheckpointIdFromCheckpointRef = (
+export type JarvisCheckpointRefParts = {
+  readonly sessionRef: string;
+  readonly checkpointId: string;
+};
+
+export const jarvisCheckpointRefPartsFromCheckpointRef = (
   checkpointRef: CheckpointRef | string | undefined,
-): string | null => {
+): JarvisCheckpointRefParts | null => {
   if (checkpointRef === undefined) {
     return null;
   }
@@ -35,12 +40,26 @@ export const jarvisCheckpointIdFromCheckpointRef = (
   if (!value.startsWith(JARVIS_CHECKPOINT_REF_PREFIX)) {
     return null;
   }
-  const lastColonIndex = value.lastIndexOf(JARVIS_CHECKPOINT_REF_SEPARATOR);
-  if (lastColonIndex <= JARVIS_CHECKPOINT_REF_PREFIX.length) {
+  const encodedParts = value.slice(JARVIS_CHECKPOINT_REF_PREFIX.length).split(":");
+  if (encodedParts.length !== 2) {
     return null;
   }
-  const checkpointId = decodeJarvisCheckpointRefComponent(value.slice(lastColonIndex + 1));
-  return checkpointId.trim().length > 0 ? checkpointId : null;
+  const [encodedSessionRef, encodedCheckpointId] = encodedParts;
+  if (encodedSessionRef === undefined || encodedCheckpointId === undefined) {
+    return null;
+  }
+  const sessionRef = decodeJarvisCheckpointRefComponent(encodedSessionRef);
+  const checkpointId = decodeJarvisCheckpointRefComponent(encodedCheckpointId);
+  if (sessionRef.trim().length === 0 || checkpointId.trim().length === 0) {
+    return null;
+  }
+  return { sessionRef, checkpointId };
+};
+
+export const jarvisCheckpointIdFromCheckpointRef = (
+  checkpointRef: CheckpointRef | string | undefined,
+): string | null => {
+  return jarvisCheckpointRefPartsFromCheckpointRef(checkpointRef)?.checkpointId ?? null;
 };
 
 function decodeJarvisCheckpointRefComponent(value: string): string {

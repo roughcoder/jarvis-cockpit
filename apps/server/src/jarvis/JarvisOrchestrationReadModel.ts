@@ -22,6 +22,8 @@ const JARVIS_SESSION_EVENTS_PAGE_LIMIT = 100;
 const JARVIS_SESSION_EVENTS_MAX_PAGES = 100;
 const JARVIS_SESSION_CHECKPOINTS_PAGE_LIMIT = 100;
 const JARVIS_SESSION_CHECKPOINTS_MAX_PAGES = 100;
+const JARVIS_SESSION_REQUESTS_PAGE_LIMIT = 100;
+const JARVIS_SESSION_REQUESTS_MAX_PAGES = 100;
 
 export function shouldUseJarvisCockpitReads(config: {
   readonly jarvisCockpitEnabled: boolean;
@@ -34,6 +36,12 @@ export function loadJarvisShellSnapshot(
   client: JarvisClient,
 ): Effect.Effect<OrchestrationShellSnapshot, JarvisClientError> {
   return client.getSnapshot().pipe(Effect.map(mapJarvisRunsSnapshotToShellSnapshot));
+}
+
+export function loadJarvisArchivedShellSnapshot(
+  client: JarvisClient,
+): Effect.Effect<OrchestrationShellSnapshot, JarvisClientError> {
+  return loadJarvisShellSnapshot(client).pipe(Effect.map(toArchivedShellSnapshot));
 }
 
 export function loadJarvisReadModel(
@@ -118,7 +126,43 @@ function loadAllJarvisSessionRequests(
   client: JarvisClient,
   sessionRef: string,
 ): Effect.Effect<ReadonlyArray<JarvisSessionRequest>, JarvisClientError> {
-  return client.getRequests(sessionRef).pipe(Effect.map((page) => page.items));
+  const loadPage = (
+    after: string | undefined,
+    pagesLoaded: number,
+    accumulated: ReadonlyArray<JarvisSessionRequest>,
+  ): Effect.Effect<ReadonlyArray<JarvisSessionRequest>, JarvisClientError> =>
+    client
+      .getRequests(sessionRef, {
+        ...(after ? { after } : {}),
+        limit: JARVIS_SESSION_REQUESTS_PAGE_LIMIT,
+      })
+      .pipe(
+        Effect.flatMap((page) => {
+          const next = [...accumulated, ...page.items];
+          if (
+            !page.has_more ||
+            page.cursor === undefined ||
+            page.cursor === null ||
+            page.cursor === after ||
+            pagesLoaded + 1 >= JARVIS_SESSION_REQUESTS_MAX_PAGES
+          ) {
+            return Effect.succeed(next);
+          }
+          return loadPage(page.cursor, pagesLoaded + 1, next);
+        }),
+      );
+
+  return loadPage(undefined, 0, []);
+}
+
+function toArchivedShellSnapshot(snapshot: OrchestrationShellSnapshot): OrchestrationShellSnapshot {
+  const threads = snapshot.threads.filter((thread) => thread.archivedAt !== null);
+  const projectIds = new Set(threads.map((thread) => thread.projectId));
+  return {
+    ...snapshot,
+    projects: snapshot.projects.filter((project) => projectIds.has(project.id)),
+    threads,
+  };
 }
 
 function appendPendingRequestEvents(

@@ -68,6 +68,7 @@ export function projectJarvisSessionForCockpit(input: {
     checkpoints: checkpointsForSession({
       session: input.session,
       checkpoints: input.checkpoints,
+      events: sortedEvents,
       messages,
     }),
     latestTurn: latestTurnForEvents(sortedEvents, messages),
@@ -167,15 +168,11 @@ function latestTurnForEvents(
   }
   const turnEvents = events.filter((event) => readTurnId(event) === latestTurnId);
   const startedEvent = turnEvents.find((event) => event.type === "turn.started");
-  const terminalEvent = turnEvents
+  const turnStartSequence =
+    startedEvent?.sequence ?? turnEvents[0]?.sequence ?? latestTurnEvent.sequence;
+  const terminalEvent = events
     .toReversed()
-    .find(
-      (event) =>
-        event.type === "turn.completed" ||
-        event.type === "turn.failed" ||
-        event.type === "session.interrupted" ||
-        event.type === "session.stopped",
-    );
+    .find((event) => event.sequence >= turnStartSequence && isTerminalForTurn(event, latestTurnId));
   return {
     turnId: latestTurnId,
     state: latestTurnStateForEvent(terminalEvent ?? latestTurnEvent),
@@ -192,12 +189,15 @@ function latestTurnForEvents(
 function checkpointsForSession(input: {
   readonly session: JarvisWorkerSession;
   readonly checkpoints: ReadonlyArray<JarvisSessionCheckpoint>;
+  readonly events: ReadonlyArray<JarvisSessionEvent>;
   readonly messages: ReadonlyArray<CockpitTimelineMessage>;
 }): ReadonlyArray<CockpitCheckpoint> {
+  const turnIdByCheckpointId = checkpointTurnIdsFromEvents(input.events);
   return input.checkpoints.map((checkpoint, index) => {
     const event = checkpoint.event ?? {};
     const eventTurnId = readJsonString(event, "turn_id", "turnId");
-    const turnId = eventTurnId ?? checkpoint.checkpoint_id;
+    const turnId =
+      eventTurnId ?? turnIdByCheckpointId.get(checkpoint.checkpoint_id) ?? checkpoint.checkpoint_id;
     return {
       turnId,
       checkpointTurnCount: index + 1,
@@ -214,6 +214,52 @@ function checkpointsForSession(input: {
         input.session.updated_at,
     };
   });
+}
+
+function isTerminalForTurn(event: JarvisSessionEvent, turnId: string): boolean {
+  if (!isTerminalEvent(event)) {
+    return false;
+  }
+  const eventTurnId = readTurnId(event);
+  if (eventTurnId === turnId) {
+    return true;
+  }
+  return (
+    eventTurnId === null &&
+    (event.type === "session.interrupted" || event.type === "session.stopped")
+  );
+}
+
+function isTerminalEvent(event: JarvisSessionEvent): boolean {
+  return (
+    event.type === "turn.completed" ||
+    event.type === "turn.failed" ||
+    event.type === "session.interrupted" ||
+    event.type === "session.stopped"
+  );
+}
+
+function checkpointTurnIdsFromEvents(
+  events: ReadonlyArray<JarvisSessionEvent>,
+): ReadonlyMap<string, string> {
+  const turnIdByCheckpointId = new Map<string, string>();
+  for (const event of events) {
+    if (event.type !== "checkpoint.created" && event.type !== "checkpoint.restored") {
+      continue;
+    }
+    const checkpointId = readJsonString(
+      event.data,
+      "checkpoint_id",
+      "checkpointId",
+      "checkpoint_ref",
+      "checkpointRef",
+    );
+    const turnId = readTurnId(event);
+    if (checkpointId !== null && turnId !== null) {
+      turnIdByCheckpointId.set(checkpointId, turnId);
+    }
+  }
+  return turnIdByCheckpointId;
 }
 
 function latestTurnStateForEvent(event: JarvisSessionEvent) {

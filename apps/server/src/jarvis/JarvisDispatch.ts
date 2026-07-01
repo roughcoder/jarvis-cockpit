@@ -8,7 +8,10 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import type { JarvisClient } from "./JarvisClient.ts";
-import { jarvisCheckpointIdFromCheckpointRef, jarvisSessionIdFromThreadId } from "./JarvisIds.ts";
+import {
+  jarvisCheckpointRefPartsFromCheckpointRef,
+  jarvisSessionIdFromThreadId,
+} from "./JarvisIds.ts";
 
 export function dispatchJarvisCommand(input: {
   readonly client: JarvisClient;
@@ -93,8 +96,8 @@ function dispatchJarvisWrite(
         .pipe(Effect.mapError((cause) => jarvisDispatchError(command.type, cause)));
     }
     case "thread.checkpoint.revert": {
-      const checkpointId = jarvisCheckpointIdFromCheckpointRef(command.checkpointRef);
-      if (checkpointId === null) {
+      const checkpointRef = jarvisCheckpointRefPartsFromCheckpointRef(command.checkpointRef);
+      if (checkpointRef === null) {
         return Effect.fail(
           new OrchestrationDispatchCommandError({
             message:
@@ -102,9 +105,16 @@ function dispatchJarvisWrite(
           }),
         );
       }
+      if (checkpointRef.sessionRef !== sessionRef) {
+        return Effect.fail(
+          new OrchestrationDispatchCommandError({
+            message: "Jarvis checkpoint restore requires a checkpointRef for the selected session.",
+          }),
+        );
+      }
       return client
         .restoreCheckpoint(sessionRef, {
-          checkpoint_id: checkpointId,
+          checkpoint_id: checkpointRef.checkpointId,
           idempotency_key: String(command.commandId),
         })
         .pipe(Effect.mapError((cause) => jarvisDispatchError(command.type, cause)));
@@ -196,7 +206,7 @@ function jarvisEngineForModelSelection(modelSelection: {
   if (instanceId === "codex" || instanceId.startsWith("codex_")) {
     return "codex";
   }
-  if (instanceId === "claude" || instanceId.startsWith("claude_")) {
+  if (instanceId === "claude" || instanceId === "claudeagent" || instanceId.startsWith("claude_")) {
     return "claude";
   }
   return modelSelection.model;

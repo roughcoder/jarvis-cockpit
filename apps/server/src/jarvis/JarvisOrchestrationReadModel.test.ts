@@ -10,6 +10,7 @@ import * as Option from "effect/Option";
 
 import { makeJarvisFixtureClient } from "./JarvisClient.ts";
 import {
+  loadJarvisArchivedShellSnapshot,
   loadJarvisReadModel,
   loadJarvisShellSnapshot,
   loadJarvisSummaryReadModel,
@@ -75,6 +76,34 @@ it.effect("loads Jarvis summary read models without hydrating session history", 
   }),
 );
 
+it.effect("loads archived Jarvis shell snapshots from Jarvis projection state", () =>
+  Effect.gen(function* () {
+    const fixture = makeJarvisFixtureClient();
+    const client = {
+      ...fixture,
+      getSnapshot: () =>
+        fixture.getSnapshot().pipe(
+          Effect.map((snapshot) => ({
+            ...snapshot,
+            sessions: snapshot.sessions.map((session) => ({
+              ...session,
+              archived_at: "2026-07-01T12:02:00+00:00",
+            })),
+          })),
+        ),
+    };
+
+    const archived = yield* loadJarvisArchivedShellSnapshot(client);
+
+    assert.strictEqual(archived.projects[0]?.id, "jarvis-run_run_fixture_dashboard");
+    assert.strictEqual(
+      archived.threads[0]?.id,
+      "jarvis-session_sessref_macbook-worker_sess_fixture_codex",
+    );
+    assert.strictEqual(archived.threads[0]?.archivedAt, "2026-07-01T12:02:00+00:00");
+  }),
+);
+
 it.effect("loads Jarvis thread detail only for Jarvis-provenance thread ids", () =>
   Effect.gen(function* () {
     const client = makeJarvisFixtureClient();
@@ -88,6 +117,76 @@ it.effect("loads Jarvis thread detail only for Jarvis-provenance thread ids", ()
     assert.strictEqual(Option.isNone(nonJarvisDetail), true);
     if (Option.isSome(detail)) {
       assert.strictEqual(detail.value.activities[1]?.summary, "Choose the next worker action.");
+    }
+  }),
+);
+
+it.effect("follows Jarvis request pagination for thread details", () =>
+  Effect.gen(function* () {
+    const fixture = makeJarvisFixtureClient();
+    let requestPageCalls = 0;
+    const client = {
+      ...fixture,
+      getSessionEvents: (sessionRef: string) => {
+        void sessionRef;
+        return Effect.succeed({ items: [], cursor: null, has_more: false });
+      },
+      getRequests: (
+        sessionRef: string,
+        options?: { readonly after?: string; readonly limit?: number },
+      ) => {
+        requestPageCalls += 1;
+        const request = {
+          session_ref: sessionRef as JarvisSessionRequest["session_ref"],
+          run_id: "run_fixture_dashboard" as JarvisSessionRequest["run_id"],
+          kind: "approval" as const,
+          status: "pending" as const,
+          title: "Approve verification",
+          created_at: "2026-07-01T12:01:00+00:00",
+          expires_at: null,
+          questions: [],
+          payload: {
+            request_kind: "command",
+          },
+        };
+        return Effect.succeed(
+          options?.after === "request_page_1"
+            ? {
+                items: [
+                  {
+                    ...request,
+                    request_id: "request_page_2" as JarvisSessionRequest["request_id"],
+                    detail: "Second approval",
+                  },
+                ],
+                cursor: "request_page_2",
+                has_more: false,
+              }
+            : {
+                items: [
+                  {
+                    ...request,
+                    request_id: "request_page_1" as JarvisSessionRequest["request_id"],
+                    detail: "First approval",
+                  },
+                ],
+                cursor: "request_page_1",
+                has_more: true,
+              },
+        );
+      },
+    };
+
+    const detail = yield* loadJarvisThreadDetail(
+      client,
+      ThreadId.make("jarvis-session_sessref_macbook-worker_sess_fixture_codex"),
+    );
+
+    assert.strictEqual(requestPageCalls, 2);
+    assert.strictEqual(Option.isSome(detail), true);
+    if (Option.isSome(detail)) {
+      assert.strictEqual(detail.value.activities.length, 2);
+      assert.strictEqual(detail.value.activities[1]?.summary, "Second approval");
     }
   }),
 );

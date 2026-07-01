@@ -103,6 +103,7 @@ import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import { makeJarvisClient, type JarvisClient } from "./jarvis/JarvisClient.ts";
 import { dispatchJarvisCommand } from "./jarvis/JarvisDispatch.ts";
 import {
+  loadJarvisArchivedShellSnapshot,
   loadJarvisShellSnapshot,
   loadJarvisThreadDetail,
   shouldUseJarvisCockpitReads,
@@ -1186,18 +1187,37 @@ const makeWsRpcLayer = (
         [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot]: (_input) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot,
-            projectionSnapshotQuery.getArchivedShellSnapshot().pipe(
-              Effect.tapError((cause) =>
-                Effect.logError("orchestration archived shell snapshot load failed", { cause }),
-              ),
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationGetSnapshotError({
-                    message: "Failed to load archived orchestration shell snapshot",
-                    cause,
-                  }),
-              ),
-            ),
+            Effect.gen(function* () {
+              return useJarvisCockpitReads
+                ? yield* loadJarvisArchivedShellSnapshot(jarvisClient).pipe(
+                    Effect.tapError((cause) =>
+                      Effect.logError("orchestration archived shell snapshot load failed", {
+                        cause,
+                      }),
+                    ),
+                    Effect.mapError(
+                      (cause) =>
+                        new OrchestrationGetSnapshotError({
+                          message: "Failed to load archived orchestration shell snapshot",
+                          cause,
+                        }),
+                    ),
+                  )
+                : yield* projectionSnapshotQuery.getArchivedShellSnapshot().pipe(
+                    Effect.tapError((cause) =>
+                      Effect.logError("orchestration archived shell snapshot load failed", {
+                        cause,
+                      }),
+                    ),
+                    Effect.mapError(
+                      (cause) =>
+                        new OrchestrationGetSnapshotError({
+                          message: "Failed to load archived orchestration shell snapshot",
+                          cause,
+                        }),
+                    ),
+                  );
+            }),
             { "rpc.aggregate": "orchestration" },
           ),
         [ORCHESTRATION_WS_METHODS.subscribeThread]: (input) =>
