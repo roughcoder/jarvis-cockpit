@@ -334,12 +334,12 @@ export function makeJarvisCockpitClient(input: {
         "work.resume",
         "/v1/work/resume",
         withSurfaceMetadata({
-          run_id: runId,
+          ...resumeInput,
           prompt:
             typeof resumeInput?.prompt === "string" && resumeInput.prompt.trim().length > 0
               ? resumeInput.prompt
               : "Continue from the current state.",
-          ...resumeInput,
+          run_id: runId,
         }),
       ).pipe(Effect.flatMap(decodeFor("work.resume", decodeControlResult))),
   };
