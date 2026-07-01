@@ -355,6 +355,7 @@ it.effect("cockpit client posts work, resume, and exact-session turn intents", (
     });
     yield* client.resumeRun("run_1", {
       prompt: "Continue from the current diff.",
+      run_id: "wrong_run",
     });
     const turnResult = yield* client.sendTurn(sessionRef, {
       prompt: "Keep going.",
@@ -367,6 +368,8 @@ it.effect("cockpit client posts work, resume, and exact-session turn intents", (
       "http://jarvis.local:8787/v1/sessions/sessref_macbook-worker_sess_1/turns",
     );
     assert.match(requests[0]?.body ?? "", /jarvis-cockpit/);
+    assert.match(requests[1]?.body ?? "", /"run_id":"run_1"/);
+    assert.strictEqual((requests[1]?.body ?? "").includes("wrong_run"), false);
     assert.strictEqual(turnResult.ok, true);
     assert.strictEqual(turnResult.session?.session_ref, sessionRef);
   }),
