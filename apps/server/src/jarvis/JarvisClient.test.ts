@@ -454,3 +454,21 @@ it.effect("cockpit client preserves safe HTTP error bodies", () =>
     assert.match(error.responseBody ?? "", /unauthorized/);
   }),
 );
+
+it.effect("cockpit client preserves HTTP status for non-JSON error bodies", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async () =>
+        new Response("upstream unavailable", {
+          status: 503,
+          headers: { "content-type": "text/plain" },
+        }),
+    });
+
+    const error = yield* client.getSnapshot().pipe(Effect.flip);
+    assert.ok(error instanceof JarvisClientError);
+    assert.strictEqual(error.status, 503);
+    assert.match(error.responseBody ?? "", /upstream unavailable/);
+  }),
+);

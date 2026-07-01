@@ -345,7 +345,7 @@ it.effect("preserves structured user-input answers for Jarvis replies", () =>
   }),
 );
 
-it.effect("rejects checkpoint revert without a stable Jarvis checkpoint ref", () =>
+it.effect("rejects checkpoint revert without checkpointRef or positive turnCount", () =>
   Effect.gen(function* () {
     const exit = yield* Effect.exit(
       dispatchJarvisCommand({
@@ -355,7 +355,7 @@ it.effect("rejects checkpoint revert without a stable Jarvis checkpoint ref", ()
           type: "thread.checkpoint.revert",
           commandId: CommandId.make("cmd_restore"),
           threadId: jarvisThreadId,
-          turnCount: 1,
+          turnCount: 0,
           createdAt: now,
         },
       }),
@@ -363,8 +363,75 @@ it.effect("rejects checkpoint revert without a stable Jarvis checkpoint ref", ()
 
     assert.strictEqual(Exit.isFailure(exit), true);
     if (Exit.isFailure(exit)) {
-      assert.ok(exit.cause.toString().includes("requires a stable Jarvis checkpointRef"));
+      assert.ok(exit.cause.toString().includes("positive checkpoint turnCount"));
     }
+  }),
+);
+
+it.effect("routes checkpoint revert by legacy turnCount when checkpointRef is absent", () =>
+  Effect.gen(function* () {
+    let restoredCheckpointId: string | undefined;
+    let checkpointPageCalls = 0;
+    const client = {
+      ...makeJarvisFixtureClient(),
+      getCheckpoints: (
+        sessionRef: string,
+        options?: { readonly after?: string; readonly limit?: number },
+      ) => {
+        void sessionRef;
+        checkpointPageCalls += 1;
+        return Effect.succeed(
+          options?.after === "ckpt_1"
+            ? {
+                items: [
+                  {
+                    session_ref: "sessref_macbook-worker_sess_fixture_codex",
+                    checkpoint_id: "ckpt_2",
+                    provider: "codex",
+                    restored: false,
+                    event: {},
+                  },
+                ],
+                cursor: "ckpt_2",
+                has_more: false,
+              }
+            : {
+                items: [
+                  {
+                    session_ref: "sessref_macbook-worker_sess_fixture_codex",
+                    checkpoint_id: "ckpt_1",
+                    provider: "codex",
+                    restored: false,
+                    event: {},
+                  },
+                ],
+                cursor: "ckpt_1",
+                has_more: true,
+              },
+        );
+      },
+      restoreCheckpoint: (sessionRef: string, input: JarvisRestoreCheckpointInput) => {
+        void sessionRef;
+        restoredCheckpointId = input.checkpoint_id;
+        return Effect.succeed({ ok: true, cursor: "evt_restore" });
+      },
+    };
+
+    const result = yield* dispatchJarvisCommand({
+      client,
+      enabled: true,
+      command: {
+        type: "thread.checkpoint.revert",
+        commandId: CommandId.make("cmd_restore_turn_count"),
+        threadId: jarvisThreadId,
+        turnCount: 2,
+        createdAt: now,
+      },
+    });
+
+    assert.deepStrictEqual(result, { sequence: 0 });
+    assert.strictEqual(checkpointPageCalls, 2);
+    assert.strictEqual(restoredCheckpointId, "ckpt_2");
   }),
 );
 

@@ -185,8 +185,6 @@ export function makeJarvisCockpitClient(input: {
           },
         });
         const text = await response.text();
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
-        const body = text.trim().length > 0 ? JSON.parse(text) : {};
         if (!response.ok) {
           throw new JarvisClientError({
             operation,
@@ -195,6 +193,8 @@ export function makeJarvisCockpitClient(input: {
             message: `Jarvis request ${operation} failed with HTTP ${response.status}.`,
           });
         }
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        const body = text.trim().length > 0 ? JSON.parse(text) : {};
         return body as unknown;
       },
       catch: (cause) =>

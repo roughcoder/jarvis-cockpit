@@ -250,6 +250,37 @@ it("coalesces assistant deltas from the same canonical message", () => {
   assert.strictEqual(detail.messages[0]?.streaming, true);
 });
 
+it("coalesces assistant deltas by turn when later chunks omit message ids", () => {
+  const session = makeSession("sess_1");
+  const events: ReadonlyArray<JarvisSessionEvent> = [
+    makeEvent({
+      event_id: "evt_delta_1" as JarvisSessionEvent["event_id"],
+      type: "assistant.delta",
+      turn_id: "turn_1",
+      message_id: "msg_1",
+      data: {
+        text: "Hel",
+      },
+    }),
+    makeEvent({
+      event_id: "evt_delta_2" as JarvisSessionEvent["event_id"],
+      sequence: 2,
+      type: "assistant.delta",
+      occurred_at: "2026-07-01T12:00:01+00:00",
+      turn_id: "turn_1",
+      message_id: null,
+      data: {
+        text: "lo",
+      },
+    }),
+  ];
+
+  const detail = mapJarvisSessionToThreadDetail({ session, run, events });
+  assert.strictEqual(detail.messages.length, 1);
+  assert.strictEqual(detail.messages[0]?.id, "jarvis-message:msg_1");
+  assert.strictEqual(detail.messages[0]?.text, "Hello");
+});
+
 it("normalizes Jarvis input and approval request activities for T3 derivations", () => {
   const session = makeSession("sess_1", "needs_input");
   const events: ReadonlyArray<JarvisSessionEvent> = [
