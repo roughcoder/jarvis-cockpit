@@ -174,7 +174,7 @@ function startWorkInputForTurnStart(
     start: true,
     prompt: command.message.text,
     ...(title ? { title, objective: title } : {}),
-    ...(modelSelection ? { engine: String(modelSelection.instanceId) } : {}),
+    ...(modelSelection ? { engine: jarvisEngineForModelSelection(modelSelection) } : {}),
     ...(prepareWorktree?.baseBranch ? { base_ref: prepareWorktree.baseBranch } : {}),
     ...((createThread?.branch ?? prepareWorktree?.branch)
       ? { branch: createThread?.branch ?? prepareWorktree?.branch }
@@ -182,6 +182,24 @@ function startWorkInputForTurnStart(
     branch_strategy: "auto" as const,
     idempotency_key: String(command.commandId),
   };
+}
+
+function jarvisEngineForModelSelection(modelSelection: {
+  readonly instanceId: unknown;
+  readonly model: string;
+}): string {
+  const model = modelSelection.model.trim().toLowerCase();
+  if (model === "codex" || model === "claude") {
+    return model;
+  }
+  const instanceId = String(modelSelection.instanceId).trim().toLowerCase();
+  if (instanceId === "codex" || instanceId.startsWith("codex_")) {
+    return "codex";
+  }
+  if (instanceId === "claude" || instanceId.startsWith("claude_")) {
+    return "claude";
+  }
+  return modelSelection.model;
 }
 
 function jarvisApprovalDecisionForProviderDecision(

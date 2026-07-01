@@ -238,6 +238,32 @@ it.effect("cockpit client reads session requests and checkpoints", () =>
   }),
 );
 
+it.effect("cockpit client accepts documented checkpoint wire wrappers", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async () =>
+        jsonResponse({
+          checkpoints: [
+            {
+              session_ref: sessionRef,
+              checkpoint_id: "provider:ckpt_1",
+              label: "before review fixes",
+              provider: "codex",
+              restored: false,
+            },
+          ],
+        }),
+    });
+
+    const checkpoints = yield* client.getCheckpoints(sessionRef);
+
+    assert.strictEqual(checkpoints.items[0]?.checkpoint_id, "provider:ckpt_1");
+    assert.strictEqual(checkpoints.cursor, null);
+    assert.strictEqual(checkpoints.has_more, false);
+  }),
+);
+
 it.effect("cockpit client unwraps Jarvis session detail responses", () =>
   Effect.gen(function* () {
     const client = makeJarvisCockpitClient({

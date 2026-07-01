@@ -13,6 +13,10 @@ import {
   mapJarvisRunsSnapshotToShellSnapshot,
   mapJarvisSessionToThreadDetail,
 } from "./JarvisProjectionMapper.ts";
+import {
+  jarvisCheckpointIdFromCheckpointRef,
+  jarvisCheckpointRefForCheckpoint,
+} from "./JarvisIds.ts";
 
 const now = "2026-07-01T12:00:00+00:00";
 
@@ -103,7 +107,7 @@ it("maps one Jarvis run with two sessions into one project and two thread shells
   assert.strictEqual(snapshot.projects.length, 1);
   assert.strictEqual(snapshot.threads.length, 2);
   assert.strictEqual(snapshot.projects[0]?.id, "jarvis-run_run_1");
-  assert.strictEqual(snapshot.projects[0]?.workspaceRoot, "roughcoder/jarvis");
+  assert.strictEqual(snapshot.projects[0]?.workspaceRoot, "jarvis://runs/run_1");
   assert.strictEqual(snapshot.threads[1]?.hasPendingApprovals, true);
   assert.strictEqual(snapshot.threads[0]?.worktreePath, null);
 });
@@ -115,7 +119,7 @@ it("preserves Jarvis provenance in generated thread ids", () => {
   assert.strictEqual(isJarvisThreadId("thread_1"), false);
 });
 
-it("uses deterministic public workspace labels when repo is missing", () => {
+it("uses synthetic Jarvis project roots when repo is missing", () => {
   const mapped = mapJarvisRunsSnapshotToShellSnapshot({
     api_version: "v1",
     schema_version: 1,
@@ -133,7 +137,20 @@ it("uses deterministic public workspace labels when repo is missing", () => {
     generated_at: now,
   });
 
-  assert.strictEqual(mapped.projects[0]?.workspaceRoot, "jarvis");
+  assert.strictEqual(mapped.projects[0]?.workspaceRoot, "jarvis://runs/run_1");
+});
+
+it("round trips encoded Jarvis checkpoint ids", () => {
+  const checkpointRef = jarvisCheckpointRefForCheckpoint(
+    "sessref_macbook-worker_sess:1",
+    "provider:checkpoint/1",
+  );
+
+  assert.strictEqual(
+    checkpointRef,
+    "jarvis:sessref_macbook-worker_sess%3A1:provider%3Acheckpoint%2F1",
+  );
+  assert.strictEqual(jarvisCheckpointIdFromCheckpointRef(checkpointRef), "provider:checkpoint/1");
 });
 
 it("maps Jarvis archived session state into thread shells and details", () => {
@@ -307,6 +324,29 @@ it("preserves turn start timing and active turn state from Jarvis events", () =>
   });
   assert.strictEqual(running.latestTurn?.startedAt, now);
   assert.strictEqual(running.session?.activeTurnId, "turn_1");
+});
+
+it("treats stopped and interrupted Jarvis session events as settled turns", () => {
+  const session = makeSession("sess_1", "stopped");
+  const events: ReadonlyArray<JarvisSessionEvent> = [
+    makeEvent({
+      event_id: "evt_started" as JarvisSessionEvent["event_id"],
+      type: "turn.started",
+      turn_id: "turn_1",
+    }),
+    makeEvent({
+      event_id: "evt_stopped" as JarvisSessionEvent["event_id"],
+      sequence: 2,
+      type: "session.stopped",
+      occurred_at: "2026-07-01T12:00:02+00:00",
+      turn_id: "turn_1",
+    }),
+  ];
+
+  const detail = mapJarvisSessionToThreadDetail({ session, run, events });
+
+  assert.strictEqual(detail.latestTurn?.state, "interrupted");
+  assert.strictEqual(detail.latestTurn?.completedAt, "2026-07-01T12:00:02+00:00");
 });
 
 it("projects Jarvis checkpoints into thread checkpoint summaries", () => {

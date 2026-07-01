@@ -2113,6 +2113,9 @@ function ChatViewContent(props: ChatViewProps) {
         }
         const targetTurnCount = Math.max(0, turnCount - 1);
         const targetCheckpointRef = checkpointRefByTurnCount.get(targetTurnCount);
+        if (!targetCheckpointRef && activeThread?.id.startsWith("jarvis-session_")) {
+          break;
+        }
         byUserMessageId.set(entry.message.id, {
           turnCount: targetTurnCount,
           ...(targetCheckpointRef ? { checkpointRef: targetCheckpointRef } : {}),
@@ -2123,6 +2126,7 @@ function ChatViewContent(props: ChatViewProps) {
 
     return byUserMessageId;
   }, [
+    activeThread?.id,
     checkpointRefByTurnCount,
     inferredCheckpointTurnCountByTurnId,
     timelineEntries,

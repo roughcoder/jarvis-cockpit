@@ -137,25 +137,22 @@ function mapRunToProject(
 
 function mapRunToProjectShell(
   run: JarvisRun,
-  sessions: ReadonlyArray<JarvisWorkerSession>,
+  _sessions: ReadonlyArray<JarvisWorkerSession>,
 ): OrchestrationProjectShell {
-  const matchingSessions = sessions.filter((session) => session.run_id === run.run_id);
-  const workspaceRoot =
-    run.repo ??
-    matchingSessions.find(
-      (session) => session.cwd_label !== undefined && session.cwd_label !== null,
-    )?.cwd_label ??
-    run.title;
   return {
     id: jarvisProjectIdForRun(run.run_id),
     title: run.title,
-    workspaceRoot,
+    workspaceRoot: jarvisWorkspaceRootForRun(run.run_id),
     repositoryIdentity: null,
     defaultModelSelection: null,
     scripts: [],
     createdAt: run.created_at,
     updatedAt: run.updated_at,
   };
+}
+
+function jarvisWorkspaceRootForRun(runId: string): string {
+  return `jarvis://runs/${encodeURIComponent(runId)}`;
 }
 
 function mapSessionToThreadShell(

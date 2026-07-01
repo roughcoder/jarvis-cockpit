@@ -1,6 +1,7 @@
+import { JarvisSessionEvent } from "@t3tools/contracts";
 import type {
   JarvisSessionCheckpoint,
-  JarvisSessionEvent,
+  JarvisSessionRequest,
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
   OrchestrationThread,
@@ -45,10 +46,11 @@ export function loadJarvisReadModel(
           Effect.all({
             events: loadAllJarvisSessionEvents(client, session.session_ref),
             checkpoints: loadAllJarvisSessionCheckpoints(client, session.session_ref),
+            requests: loadAllJarvisSessionRequests(client, session.session_ref),
           }).pipe(
-            Effect.map(({ events, checkpoints }) => ({
+            Effect.map(({ events, checkpoints, requests }) => ({
               sessionRef: session.session_ref,
-              events,
+              events: appendPendingRequestEvents(events, requests),
               checkpoints,
             })),
           ),
@@ -96,19 +98,72 @@ export function loadJarvisThreadDetail(
     session: client.getSession(sessionRef),
     events: loadAllJarvisSessionEvents(client, sessionRef),
     checkpoints: loadAllJarvisSessionCheckpoints(client, sessionRef),
+    requests: loadAllJarvisSessionRequests(client, sessionRef),
   }).pipe(
-    Effect.map(({ snapshot, session, events, checkpoints }) => {
+    Effect.map(({ snapshot, session, events, checkpoints, requests }) => {
       const run = snapshot.runs.find((candidate) => candidate.run_id === session.run_id);
       return Option.some(
         mapJarvisSessionToThreadDetail({
           session,
           ...(run ? { run } : {}),
-          events,
+          events: appendPendingRequestEvents(events, requests),
           checkpoints,
         }),
       );
     }),
   );
+}
+
+function loadAllJarvisSessionRequests(
+  client: JarvisClient,
+  sessionRef: string,
+): Effect.Effect<ReadonlyArray<JarvisSessionRequest>, JarvisClientError> {
+  return client.getRequests(sessionRef).pipe(Effect.map((page) => page.items));
+}
+
+function appendPendingRequestEvents(
+  events: ReadonlyArray<JarvisSessionEvent>,
+  requests: ReadonlyArray<JarvisSessionRequest>,
+): ReadonlyArray<JarvisSessionEvent> {
+  const existingPendingRequestIds = new Set(
+    events
+      .filter((event) => event.type === "approval.requested" || event.type === "input.requested")
+      .map((event) => readRequestId(event))
+      .filter((requestId): requestId is string => requestId !== null),
+  );
+  const syntheticEvents = requests
+    .filter((request) => request.status === "pending")
+    .filter((request) => !existingPendingRequestIds.has(request.request_id))
+    .map(
+      (request, index): JarvisSessionEvent => ({
+        event_id: JarvisSessionEvent.fields.event_id.make(`request:${request.request_id}`),
+        sequence: Number.MAX_SAFE_INTEGER - requests.length + index,
+        session_ref: request.session_ref,
+        run_id: request.run_id,
+        type: request.kind === "approval" ? "approval.requested" : "input.requested",
+        occurred_at: request.created_at,
+        turn_id: null,
+        message_id: null,
+        data: {
+          ...request.payload,
+          request_id: request.request_id,
+          title: request.title,
+          detail: request.detail ?? request.title,
+          summary: request.detail ?? request.title,
+          ...((request.questions ?? []).length > 0 ? { questions: request.questions } : {}),
+        },
+      }),
+    );
+  return syntheticEvents.length > 0 ? [...events, ...syntheticEvents] : events;
+}
+
+function readRequestId(event: JarvisSessionEvent): string | null {
+  const snake = event.data.request_id;
+  if (typeof snake === "string" && snake.trim().length > 0) {
+    return snake;
+  }
+  const camel = event.data.requestId;
+  return typeof camel === "string" && camel.trim().length > 0 ? camel : null;
 }
 
 function loadAllJarvisSessionEvents(

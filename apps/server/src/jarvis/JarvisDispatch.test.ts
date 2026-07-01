@@ -85,6 +85,59 @@ it.effect("routes first draft turns to Jarvis work start", () =>
   }),
 );
 
+it.effect("derives Jarvis start-work engine from known provider routing keys", () =>
+  Effect.gen(function* () {
+    let capturedStartWork: JarvisStartWorkInput | undefined;
+    const client = {
+      ...makeJarvisFixtureClient(),
+      startWork: (input: JarvisStartWorkInput) => {
+        capturedStartWork = input;
+        return Effect.succeed({ ok: true, cursor: "evt_start" });
+      },
+    };
+
+    yield* dispatchJarvisCommand({
+      client,
+      enabled: true,
+      command: {
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd_start_work_personal"),
+        threadId: ThreadId.make("thread_draft"),
+        message: {
+          messageId: MessageId.make("msg_user"),
+          role: "user",
+          text: "Build the cockpit dashboard.",
+          attachments: [],
+        },
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex_personal"),
+          model: "gpt-5.4",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        bootstrap: {
+          createThread: {
+            projectId: ProjectId.make("project_1"),
+            title: "Cockpit dashboard",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex_personal"),
+              model: "gpt-5.4",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: "jarvis/cockpit",
+            worktreePath: null,
+            createdAt: now,
+          },
+        },
+        createdAt: now,
+      },
+    });
+
+    assert.strictEqual(capturedStartWork?.engine, "codex");
+  }),
+);
+
 it.effect("rejects failed Jarvis control results before returning a dispatch receipt", () =>
   Effect.gen(function* () {
     const client = {
