@@ -162,7 +162,7 @@ import { buildDraftThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
-  markPromotedDraftThreadByRef,
+  markPromotedDraftThreadByDraftId,
   useComposerDraftStore,
   type DraftId,
 } from "../composerDraftStore";
@@ -439,6 +439,12 @@ function terminalIdListsEqual(left: readonly string[], right: readonly string[])
   return true;
 }
 
+function isLocalFilesystemCwd(cwd: string | null | undefined): cwd is string {
+  if (!cwd) return false;
+  if (/^[A-Za-z]:[\\/]/.test(cwd)) return true;
+  return !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(cwd);
+}
+
 /**
  * Server knows about fewer sessions than the client, but every server id still exists locally.
  * Typical right after `terminal.open`: known-session list lags; reconciling would drop the new id
@@ -498,6 +504,9 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
       : null;
   const project = useProject(projectRef);
+  const projectFilesystemCwd = isLocalFilesystemCwd(project?.workspaceRoot)
+    ? project.workspaceRoot
+    : null;
   const terminalUiState = useTerminalUiStateStore((state) =>
     selectThreadTerminalUiState(state.terminalUiStateByThreadKey, threadRef),
   );
@@ -541,7 +550,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         readonly runtimeEnv: Record<string, string>;
       }
     >();
-    if (!project) {
+    if (!projectFilesystemCwd) {
       return next;
     }
 
@@ -556,14 +565,14 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         cwd: launchContext?.cwd ?? summary.cwd,
         worktreePath: worktreePathForLaunch,
         runtimeEnv: projectScriptRuntimeEnv({
-          project: { cwd: project.workspaceRoot },
+          project: { cwd: projectFilesystemCwd },
           worktreePath: worktreePathForLaunch,
         }),
       });
     }
 
     return next;
-  }, [drawerTerminalSessions, launchContext, project]);
+  }, [drawerTerminalSessions, launchContext, projectFilesystemCwd]);
   const serverOrderedTerminalIds = useMemo(
     () => drawerTerminalSessions.map((session) => session.target.terminalId),
     [drawerTerminalSessions],
@@ -600,23 +609,23 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   const cwd = useMemo(
     () =>
       launchContext?.cwd ??
-      (project
+      (projectFilesystemCwd
         ? projectScriptCwd({
-            project: { cwd: project.workspaceRoot },
+            project: { cwd: projectFilesystemCwd },
             worktreePath: effectiveWorktreePath,
           })
         : null),
-    [effectiveWorktreePath, launchContext?.cwd, project],
+    [effectiveWorktreePath, launchContext?.cwd, projectFilesystemCwd],
   );
   const runtimeEnv = useMemo(
     () =>
-      project
+      projectFilesystemCwd
         ? projectScriptRuntimeEnv({
-            project: { cwd: project.workspaceRoot },
+            project: { cwd: projectFilesystemCwd },
             worktreePath: effectiveWorktreePath,
           })
         : {},
-    [effectiveWorktreePath, project],
+    [effectiveWorktreePath, projectFilesystemCwd],
   );
 
   const bumpFocusRequestId = useCallback(() => {
@@ -854,6 +863,9 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
       ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
       : null;
   const project = useProject(projectRef);
+  const projectFilesystemCwd = isLocalFilesystemCwd(project?.workspaceRoot)
+    ? project.workspaceRoot
+    : null;
   const knownTerminalSessions = useKnownTerminalSessions({
     environmentId: threadRef.environmentId,
     threadId: threadRef.threadId,
@@ -868,23 +880,23 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
     () =>
       launchContext?.cwd ??
       activeSummary?.cwd ??
-      (project
+      (projectFilesystemCwd
         ? projectScriptCwd({
-            project: { cwd: project.workspaceRoot },
+            project: { cwd: projectFilesystemCwd },
             worktreePath,
           })
         : null),
-    [activeSummary?.cwd, launchContext?.cwd, project, worktreePath],
+    [activeSummary?.cwd, launchContext?.cwd, projectFilesystemCwd, worktreePath],
   );
   const runtimeEnv = useMemo(
     () =>
-      project
+      projectFilesystemCwd
         ? projectScriptRuntimeEnv({
-            project: { cwd: project.workspaceRoot },
+            project: { cwd: projectFilesystemCwd },
             worktreePath,
           })
         : {},
-    [project, worktreePath],
+    [projectFilesystemCwd, worktreePath],
   );
   const terminalLabelsById = useMemo(() => {
     const labels = new Map<string, string>();
@@ -914,18 +926,18 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
       const terminalCwd =
         launchContext?.cwd ??
         summary?.cwd ??
-        (project
+        (projectFilesystemCwd
           ? projectScriptCwd({
-              project: { cwd: project.workspaceRoot },
+              project: { cwd: projectFilesystemCwd },
               worktreePath: terminalWorktreePath,
             })
           : null);
-      if (!terminalCwd || !project) continue;
+      if (!terminalCwd || !projectFilesystemCwd) continue;
       locations.set(terminalId, {
         cwd: terminalCwd,
         worktreePath: terminalWorktreePath,
         runtimeEnv: projectScriptRuntimeEnv({
-          project: { cwd: project.workspaceRoot },
+          project: { cwd: projectFilesystemCwd },
           worktreePath: terminalWorktreePath,
         }),
       });
@@ -935,7 +947,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
     knownTerminalSessions,
     launchContext?.cwd,
     launchContext?.worktreePath,
-    project,
+    projectFilesystemCwd,
     surface.terminalIds,
     threadWorktreePath,
   ]);
@@ -1382,6 +1394,9 @@ function ChatViewContent(props: ChatViewProps) {
     ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
     : null;
   const activeProject = useProject(activeProjectRef);
+  const activeProjectFilesystemCwd = isLocalFilesystemCwd(activeProject?.workspaceRoot)
+    ? activeProject.workspaceRoot
+    : null;
   const activeEnvironmentShell = useEnvironmentQuery(
     activeThread ? environmentShell.stateAtom(activeThread.environmentId) : null,
   );
@@ -2142,10 +2157,12 @@ function ChatViewContent(props: ChatViewProps) {
   }, [revertTargetByUserMessageId]);
 
   const gitCwd = activeProject
-    ? projectScriptCwd({
-        project: { cwd: activeProject.workspaceRoot },
-        worktreePath: activeThread?.worktreePath ?? null,
-      })
+    ? activeProjectFilesystemCwd
+      ? projectScriptCwd({
+          project: { cwd: activeProjectFilesystemCwd },
+          worktreePath: activeThread?.worktreePath ?? null,
+        })
+      : null
     : null;
   const gitStatusQuery = useEnvironmentQuery(
     gitCwd === null
@@ -2179,13 +2196,13 @@ function ChatViewContent(props: ChatViewProps) {
     const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
-  const activeProjectCwd = activeProject?.workspaceRoot ?? null;
+  const activeProjectCwd = activeProjectFilesystemCwd;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
   const activeTerminalLaunchContext =
     terminalUiLaunchContext?.threadId === activeThreadId ? terminalUiLaunchContext : null;
-  // Default true while loading to avoid toolbar flicker.
-  const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  // Default true while a local Git cwd is loading to avoid toolbar flicker.
+  const isGitRepo = gitCwd === null ? false : (gitStatusQuery.data?.isRepo ?? true);
   const terminalShortcutLabelOptions = useMemo(
     () => ({
       context: {
@@ -2317,10 +2334,10 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef) return;
     const nextOpen = !terminalUiState.terminalOpen;
     if (nextOpen && terminalUiState.terminalIds.length === 0) {
-      if (!activeThreadId || !activeProject) {
+      if (!activeThreadId || !activeProjectFilesystemCwd) {
         return;
       }
-      const cwdForOpen = gitCwd ?? activeProject.workspaceRoot;
+      const cwdForOpen = gitCwd ?? activeProjectFilesystemCwd;
       if (!cwdForOpen) {
         return;
       }
@@ -2334,7 +2351,7 @@ function ChatViewContent(props: ChatViewProps) {
           cwd: cwdForOpen,
           ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
           env: projectScriptRuntimeEnv({
-            project: { cwd: activeProject.workspaceRoot },
+            project: { cwd: activeProjectFilesystemCwd },
             worktreePath: activeThreadWorktreePath,
           }),
         },
@@ -2344,7 +2361,7 @@ function ChatViewContent(props: ChatViewProps) {
     setTerminalOpen(nextOpen);
   }, [
     activeKnownTerminalIds,
-    activeProject,
+    activeProjectFilesystemCwd,
     activeThreadId,
     activeThreadRef,
     activeThreadWorktreePath,
@@ -2359,10 +2376,15 @@ function ChatViewContent(props: ChatViewProps) {
   ]);
   const splitTerminal = useCallback(
     (direction: "horizontal" | "vertical" = "horizontal") => {
-      if (!activeThreadRef || hasReachedSplitLimit || !activeThreadId || !activeProject) {
+      if (
+        !activeThreadRef ||
+        hasReachedSplitLimit ||
+        !activeThreadId ||
+        !activeProjectFilesystemCwd
+      ) {
         return;
       }
-      const cwdForOpen = gitCwd ?? activeProject.workspaceRoot;
+      const cwdForOpen = gitCwd ?? activeProjectFilesystemCwd;
       if (!cwdForOpen) {
         return;
       }
@@ -2381,14 +2403,14 @@ function ChatViewContent(props: ChatViewProps) {
           cwd: cwdForOpen,
           ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
           env: projectScriptRuntimeEnv({
-            project: { cwd: activeProject.workspaceRoot },
+            project: { cwd: activeProjectFilesystemCwd },
             worktreePath: activeThreadWorktreePath,
           }),
         },
       });
     },
     [
-      activeProject,
+      activeProjectFilesystemCwd,
       activeKnownTerminalIds,
       activeThreadId,
       activeThreadRef,
@@ -2402,10 +2424,10 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
   const createNewTerminal = useCallback(() => {
-    if (!activeThreadRef || !activeThreadId || !activeProject) {
+    if (!activeThreadRef || !activeThreadId || !activeProjectFilesystemCwd) {
       return;
     }
-    const cwdForOpen = gitCwd ?? activeProject.workspaceRoot;
+    const cwdForOpen = gitCwd ?? activeProjectFilesystemCwd;
     if (!cwdForOpen) {
       return;
     }
@@ -2420,13 +2442,13 @@ function ChatViewContent(props: ChatViewProps) {
         cwd: cwdForOpen,
         ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
         env: projectScriptRuntimeEnv({
-          project: { cwd: activeProject.workspaceRoot },
+          project: { cwd: activeProjectFilesystemCwd },
           worktreePath: activeThreadWorktreePath,
         }),
       },
     });
   }, [
-    activeProject,
+    activeProjectFilesystemCwd,
     activeKnownTerminalIds,
     activeThreadId,
     activeThreadRef,
@@ -2480,14 +2502,14 @@ function ChatViewContent(props: ChatViewProps) {
         rememberAsLastInvoked?: boolean;
       },
     ) => {
-      if (!activeThreadId || !activeProject || !activeThread) return;
+      if (!activeThreadId || !activeProject || !activeProjectFilesystemCwd || !activeThread) return;
       if (options?.rememberAsLastInvoked !== false) {
         setLastInvokedScriptByProjectId((current) => {
           if (current[activeProject.id] === script.id) return current;
           return { ...current, [activeProject.id]: script.id };
         });
       }
-      const targetCwd = options?.cwd ?? gitCwd ?? activeProject.workspaceRoot;
+      const targetCwd = options?.cwd ?? gitCwd ?? activeProjectFilesystemCwd;
       const baseTerminalId =
         terminalUiState.activeTerminalId || activeKnownTerminalIds[0] || DEFAULT_THREAD_TERMINAL_ID;
       const isBaseTerminalBusy = runningTerminalIds.includes(baseTerminalId);
@@ -2508,7 +2530,7 @@ function ChatViewContent(props: ChatViewProps) {
 
       const runtimeEnv = projectScriptRuntimeEnv({
         project: {
-          cwd: activeProject.workspaceRoot,
+          cwd: activeProjectFilesystemCwd,
         },
         worktreePath: targetWorktreePath,
         ...(options?.env ? { extraEnv: options.env } : {}),
@@ -2570,6 +2592,7 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [
       activeProject,
+      activeProjectFilesystemCwd,
       activeThread,
       activeThreadId,
       activeThreadRef,
@@ -2631,7 +2654,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const saveProjectScript = useCallback(
     async (input: NewProjectScriptInput): Promise<AtomCommandResult<void, unknown>> => {
-      if (!activeProject) {
+      if (!activeProject || !activeProjectFilesystemCwd) {
         return AsyncResult.success(undefined);
       }
       const nextId = nextProjectScriptId(
@@ -2656,21 +2679,21 @@ function ChatViewContent(props: ChatViewProps) {
 
       return persistProjectScripts({
         projectId: activeProject.id,
-        projectCwd: activeProject.workspaceRoot,
+        projectCwd: activeProjectFilesystemCwd,
         previousScripts: activeProject.scripts,
         nextScripts,
         keybinding: input.keybinding,
         keybindingCommand: commandForProjectScript(nextId),
       });
     },
-    [activeProject, persistProjectScripts],
+    [activeProject, activeProjectFilesystemCwd, persistProjectScripts],
   );
   const updateProjectScript = useCallback(
     async (
       scriptId: string,
       input: NewProjectScriptInput,
     ): Promise<AtomCommandResult<void, unknown>> => {
-      if (!activeProject) {
+      if (!activeProject || !activeProjectFilesystemCwd) {
         return AsyncResult.success(undefined);
       }
       const existingScript = activeProject.scripts.find((script) => script.id === scriptId);
@@ -2695,18 +2718,18 @@ function ChatViewContent(props: ChatViewProps) {
 
       return persistProjectScripts({
         projectId: activeProject.id,
-        projectCwd: activeProject.workspaceRoot,
+        projectCwd: activeProjectFilesystemCwd,
         previousScripts: activeProject.scripts,
         nextScripts,
         keybinding: input.keybinding,
         keybindingCommand: commandForProjectScript(scriptId),
       });
     },
-    [activeProject, persistProjectScripts],
+    [activeProject, activeProjectFilesystemCwd, persistProjectScripts],
   );
   const deleteProjectScript = useCallback(
     async (scriptId: string): Promise<AtomCommandResult<void, unknown>> => {
-      if (!activeProject) {
+      if (!activeProject || !activeProjectFilesystemCwd) {
         return AsyncResult.success(undefined);
       }
       const nextScripts = activeProject.scripts.filter((script) => script.id !== scriptId);
@@ -2715,7 +2738,7 @@ function ChatViewContent(props: ChatViewProps) {
 
       const result = await persistProjectScripts({
         projectId: activeProject.id,
-        projectCwd: activeProject.workspaceRoot,
+        projectCwd: activeProjectFilesystemCwd,
         previousScripts: activeProject.scripts,
         nextScripts,
         keybinding: null,
@@ -2738,7 +2761,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
       return result;
     },
-    [activeProject, persistProjectScripts],
+    [activeProject, activeProjectFilesystemCwd, persistProjectScripts],
   );
 
   const handleRuntimeModeChange = useCallback(
@@ -2810,15 +2833,15 @@ function ChatViewContent(props: ChatViewProps) {
     onDiffPanelOpen?.();
   }, [activeThreadRef, isGitRepo, isServerThread, onDiffPanelOpen]);
   const addFilesSurface = useCallback(() => {
-    if (!activeThreadRef || !activeProject) return;
+    if (!activeThreadRef || !activeWorkspaceRoot) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
-  }, [activeProject, activeThreadRef]);
+  }, [activeThreadRef, activeWorkspaceRoot]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
-      if (!activeThreadRef || !activeProject) return;
+      if (!activeThreadRef || !activeWorkspaceRoot) return;
       useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
     },
-    [activeProject, activeThreadRef],
+    [activeThreadRef, activeWorkspaceRoot],
   );
   const togglePreviewPanel = useCallback(() => {
     if (!activeThreadRef || !isPreviewSupportedInRuntime()) return;
@@ -2840,8 +2863,8 @@ function ChatViewContent(props: ChatViewProps) {
     }
   }, [activeThreadRef]);
   const addTerminalSurface = useCallback(() => {
-    if (!activeThreadRef || !activeThreadId || !activeProject) return;
-    const cwd = gitCwd ?? activeProject.workspaceRoot;
+    if (!activeThreadRef || !activeThreadId || !activeProjectFilesystemCwd) return;
+    const cwd = gitCwd ?? activeProjectFilesystemCwd;
     const terminalId = nextTerminalId([...activeKnownTerminalIds, ...panelTerminalIds]);
     useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
@@ -2853,14 +2876,14 @@ function ChatViewContent(props: ChatViewProps) {
         cwd,
         ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
         env: projectScriptRuntimeEnv({
-          project: { cwd: activeProject.workspaceRoot },
+          project: { cwd: activeProjectFilesystemCwd },
           worktreePath: activeThreadWorktreePath,
         }),
       },
     });
   }, [
     activeKnownTerminalIds,
-    activeProject,
+    activeProjectFilesystemCwd,
     activeThreadId,
     activeThreadRef,
     activeThreadWorktreePath,
@@ -2873,14 +2896,14 @@ function ChatViewContent(props: ChatViewProps) {
       if (
         !activeThreadRef ||
         !activeThreadId ||
-        !activeProject ||
+        !activeProjectFilesystemCwd ||
         activeRightPanelSurface?.kind !== "terminal" ||
         activeRightPanelSurface.terminalIds.length >= MAX_TERMINALS_PER_GROUP
       ) {
         return;
       }
       const terminalId = nextTerminalId([...activeKnownTerminalIds, ...panelTerminalIds]);
-      const cwd = gitCwd ?? activeProject.workspaceRoot;
+      const cwd = gitCwd ?? activeProjectFilesystemCwd;
       useRightPanelStore
         .getState()
         .splitTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId, direction);
@@ -2893,7 +2916,7 @@ function ChatViewContent(props: ChatViewProps) {
           cwd,
           ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
           env: projectScriptRuntimeEnv({
-            project: { cwd: activeProject.workspaceRoot },
+            project: { cwd: activeProjectFilesystemCwd },
             worktreePath: activeThreadWorktreePath,
           }),
         },
@@ -2901,7 +2924,7 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [
       activeKnownTerminalIds,
-      activeProject,
+      activeProjectFilesystemCwd,
       activeRightPanelSurface,
       activeThreadId,
       activeThreadRef,
@@ -4005,10 +4028,12 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeProject) return;
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
-    const baseBranchForWorktree =
+    const worktreeProjectCwd =
       isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
-        ? activeThreadBranch
+        ? activeProjectFilesystemCwd
         : null;
+    const baseBranchForWorktree =
+      worktreeProjectCwd !== null && activeThreadBranch ? activeThreadBranch : null;
 
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
@@ -4188,10 +4213,10 @@ function ChatViewContent(props: ChatViewProps) {
                     },
                   }
                 : {}),
-              ...(baseBranchForWorktree
+              ...(baseBranchForWorktree && worktreeProjectCwd
                 ? {
                     prepareWorktree: {
-                      projectCwd: activeProject.workspaceRoot,
+                      projectCwd: worktreeProjectCwd,
                       baseBranch: baseBranchForWorktree,
                       branch: buildTemporaryWorktreeBranchName(randomHex),
                       ...(startFromOrigin ? { startFromOrigin: true } : {}),
@@ -4224,7 +4249,8 @@ function ChatViewContent(props: ChatViewProps) {
         failure = startResult;
       } else {
         if (draftId !== null && startResult.value.promotedThreadId !== undefined) {
-          markPromotedDraftThreadByRef(
+          markPromotedDraftThreadByDraftId(
+            draftId,
             scopeThreadRef(environmentId, startResult.value.promotedThreadId),
           );
         }
@@ -5304,7 +5330,7 @@ function ChatViewContent(props: ChatViewProps) {
                 open
                 environmentId={activeThread.environmentId}
                 threadId={activeThread.id}
-                cwd={activeProject?.workspaceRoot ?? null}
+                cwd={activeProjectFilesystemCwd}
                 initialReference={pullRequestDialogState.initialReference}
                 onOpenChange={(open) => {
                   if (!open) {

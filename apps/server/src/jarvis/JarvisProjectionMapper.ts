@@ -69,9 +69,12 @@ function mapJarvisRunsSnapshotToShellSnapshotWithSessions(
   sessions: ReadonlyArray<JarvisWorkerSession>,
 ): OrchestrationShellSnapshot {
   const runsById = new Map(snapshot.runs.map((run) => [run.run_id, run]));
+  const projectRunIds = projectRunIdsForSessions(sessions);
   return {
     snapshotSequence: 0,
-    projects: snapshot.runs.map((run) => mapRunToProjectShell(run, sessions)),
+    projects: snapshot.runs
+      .filter((run) => projectRunIds.has(run.run_id))
+      .map((run) => mapRunToProjectShell(run, sessions)),
     threads: sessions.map((session) =>
       mapSessionToThreadShell(
         session,
@@ -89,9 +92,12 @@ export function mapJarvisRunsSnapshotToReadModel(input: {
 }): OrchestrationReadModel {
   const runsById = new Map(input.snapshot.runs.map((run) => [run.run_id, run]));
   const activeSessions = activeJarvisSessions(input.snapshot.sessions);
+  const activeRunIds = projectRunIdsForSessions(activeSessions);
   return {
     snapshotSequence: 0,
-    projects: input.snapshot.runs.map((run) => mapRunToProject(run, activeSessions)),
+    projects: input.snapshot.runs
+      .filter((run) => activeRunIds.has(run.run_id))
+      .map((run) => mapRunToProject(run, activeSessions)),
     threads: activeSessions.map((session) => {
       const run = session.run_id !== undefined ? runsById.get(session.run_id) : undefined;
       return run
@@ -121,6 +127,10 @@ function archivedJarvisSessions(
   sessions: ReadonlyArray<JarvisWorkerSession>,
 ): ReadonlyArray<JarvisWorkerSession> {
   return sessions.filter((session) => session.archived_at != null);
+}
+
+function projectRunIdsForSessions(sessions: ReadonlyArray<JarvisWorkerSession>): ReadonlySet<string> {
+  return new Set(sessions.flatMap((session) => (session.run_id ? [session.run_id] : [])));
 }
 
 export function mapJarvisSessionToThreadDetail(input: {

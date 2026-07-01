@@ -540,6 +540,33 @@ it.effect("routes archive for Jarvis-managed threads through Jarvis", () =>
   }),
 );
 
+it.effect("routes stop for Jarvis-managed threads through Jarvis", () =>
+  Effect.gen(function* () {
+    let stoppedSessionRef: string | undefined;
+    const client = {
+      ...makeJarvisFixtureClient(),
+      stopSession: (sessionRef: string) => {
+        stoppedSessionRef = sessionRef;
+        return Effect.succeed({ ok: true, cursor: "evt_stop" });
+      },
+    };
+
+    const result = yield* dispatchJarvisCommand({
+      client,
+      enabled: true,
+      command: {
+        type: "thread.session.stop",
+        commandId: CommandId.make("cmd_stop"),
+        threadId: jarvisThreadId,
+        createdAt: now,
+      },
+    });
+
+    assert.deepStrictEqual(result, { sequence: 0 });
+    assert.strictEqual(stoppedSessionRef, "sessref_macbook-worker_sess_fixture_codex");
+  }),
+);
+
 it.effect(
   "rejects unsupported commands for Jarvis-managed threads instead of falling through",
   () =>
