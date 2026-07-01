@@ -185,7 +185,9 @@ it("keeps archived Jarvis sessions out of live snapshots while preserving detail
   const detail = mapJarvisSessionToThreadDetail({ session, run, events: [] });
 
   assert.strictEqual(shell.threads.length, 0);
+  assert.strictEqual(shell.projects.length, 0);
   assert.strictEqual(readModel.threads.length, 0);
+  assert.strictEqual(readModel.projects.length, 0);
   assert.strictEqual(detail.archivedAt, archivedAt);
 });
 

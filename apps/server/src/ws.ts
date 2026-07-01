@@ -1051,7 +1051,14 @@ const makeWsRpcLayer = (
                       createdAt: yield* nowIso,
                     });
 
-                    yield* dispatchNormalizedCommand(stopCommand);
+                    const stopResult = yield* dispatchJarvisCommand({
+                      client: jarvisClient,
+                      enabled: useJarvisCockpitReads,
+                      command: stopCommand,
+                    });
+                    if (stopResult === null) {
+                      yield* dispatchNormalizedCommand(stopCommand);
+                    }
                   }).pipe(
                     Effect.catchCause((cause) =>
                       Effect.logWarning("failed to stop provider session during archive", {

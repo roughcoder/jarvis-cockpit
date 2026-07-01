@@ -62,6 +62,7 @@ import {
   clearComposerDraftsEnvironment,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThread,
+  markPromotedDraftThreadByDraftId,
   markPromotedDraftThreadByRef,
   markPromotedDraftThreads,
   markPromotedDraftThreadsByRef,
@@ -959,6 +960,24 @@ describe("composerDraftStore project draft thread mapping", () => {
 
     expect(useComposerDraftStore.getState().getDraftThreadByProjectRef(projectRef)?.threadId).toBe(
       threadId,
+    );
+    expect(draftByKey(draftId)?.prompt).toBe("promote me");
+  });
+
+  it("marks a known draft id as promoted to a different canonical server thread", () => {
+    const store = useComposerDraftStore.getState();
+    const canonicalThreadRef = scopeThreadRef(
+      TEST_ENVIRONMENT_ID,
+      ThreadId.make("jarvis-session_sessref_macbook-worker_sess_123"),
+    );
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setPrompt(draftId, "promote me");
+
+    markPromotedDraftThreadByDraftId(draftId, canonicalThreadRef);
+
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectRef(projectRef)).toBeNull();
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)?.promotedTo).toEqual(
+      canonicalThreadRef,
     );
     expect(draftByKey(draftId)?.prompt).toBe("promote me");
   });

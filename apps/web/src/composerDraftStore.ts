@@ -3525,6 +3525,13 @@ export function markPromotedDraftThreadByRef(threadRef: ScopedThreadRef): void {
   }
 }
 
+export function markPromotedDraftThreadByDraftId(
+  draftId: DraftId,
+  promotedTo: ScopedThreadRef,
+): void {
+  useComposerDraftStore.getState().markDraftThreadPromoting(draftId, promotedTo);
+}
+
 export function markPromotedDraftThreads(serverThreadIds: Iterable<ThreadId>): void {
   for (const threadId of serverThreadIds) {
     markPromotedDraftThread(threadId);
