@@ -7,9 +7,12 @@ import {
   JarvisRun,
   JarvisRunId,
   JarvisRunsSnapshot,
+  JarvisSessionCheckpointsResponse,
   JarvisSessionCheckpointsPage,
+  JarvisSessionDetailResponse,
   JarvisSessionEvent,
   JarvisSessionEventsPage,
+  JarvisSessionRequestsResponse,
   JarvisSessionRef,
   JarvisSessionRequestsPage,
   JarvisStartWorkInput,
@@ -114,10 +117,12 @@ type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 const decodeCatalog = Schema.decodeUnknownEffect(JarvisCockpitCatalog);
 const decodeSnapshot = Schema.decodeUnknownEffect(JarvisRunsSnapshot);
 const decodeControlResult = Schema.decodeUnknownEffect(JarvisControlResult);
-const decodeWorkerSession = Schema.decodeUnknownEffect(JarvisWorkerSession);
+const decodeSessionDetail = Schema.decodeUnknownEffect(JarvisSessionDetailResponse);
 const decodeSessionEventsPage = Schema.decodeUnknownEffect(JarvisSessionEventsPage);
-const decodeSessionRequestsPage = Schema.decodeUnknownEffect(JarvisSessionRequestsPage);
-const decodeSessionCheckpointsPage = Schema.decodeUnknownEffect(JarvisSessionCheckpointsPage);
+const decodeSessionRequestsResponse = Schema.decodeUnknownEffect(JarvisSessionRequestsResponse);
+const decodeSessionCheckpointsResponse = Schema.decodeUnknownEffect(
+  JarvisSessionCheckpointsResponse,
+);
 
 const mapDecodeError = (operation: string) => (cause: unknown) =>
   new JarvisClientError({
@@ -206,7 +211,8 @@ export function makeJarvisCockpitClient(input: {
       ),
     getSession: (sessionRef) =>
       requestJson("sessions.get", `/v1/sessions/${encodeURIComponent(sessionRef)}`).pipe(
-        Effect.flatMap(decodeFor("sessions.get", decodeWorkerSession)),
+        Effect.flatMap(decodeFor("sessions.get", decodeSessionDetail)),
+        Effect.map((response) => response.session),
       ),
     getSessionEvents: (sessionRef, options) =>
       requestJson(
@@ -220,12 +226,30 @@ export function makeJarvisCockpitClient(input: {
       requestJson(
         "sessions.requests",
         `/v1/sessions/${encodeURIComponent(sessionRef)}/requests`,
-      ).pipe(Effect.flatMap(decodeFor("sessions.requests", decodeSessionRequestsPage))),
+      ).pipe(
+        Effect.flatMap(decodeFor("sessions.requests", decodeSessionRequestsResponse)),
+        Effect.map(
+          (response): JarvisSessionRequestsPage => ({
+            items: response.requests,
+            cursor: null,
+            has_more: false,
+          }),
+        ),
+      ),
     getCheckpoints: (sessionRef) =>
       requestJson(
         "sessions.checkpoints",
         `/v1/sessions/${encodeURIComponent(sessionRef)}/checkpoints`,
-      ).pipe(Effect.flatMap(decodeFor("sessions.checkpoints", decodeSessionCheckpointsPage))),
+      ).pipe(
+        Effect.flatMap(decodeFor("sessions.checkpoints", decodeSessionCheckpointsResponse)),
+        Effect.map(
+          (response): JarvisSessionCheckpointsPage => ({
+            items: response.checkpoints,
+            cursor: null,
+            has_more: false,
+          }),
+        ),
+      ),
     startWork: (workInput) =>
       postJson("work.start", "/v1/work/start", withSurfaceMetadata(workInput)).pipe(
         Effect.flatMap(decodeFor("work.start", decodeControlResult)),
@@ -459,7 +483,13 @@ export function makeJarvisFixtureClient(): JarvisClient {
           active_sessions: 1,
           queued_sessions: 0,
         },
-        repositories: ["roughcoder/jarvis"],
+        repositories: [
+          {
+            repo: "roughcoder/jarvis",
+            status: "ready",
+            default_branch: "main",
+          },
+        ],
         public_metadata: {},
       },
     ],
@@ -554,18 +584,38 @@ export function makeJarvisFixtureClient(): JarvisClient {
       Effect.succeed({
         api_version: "v1",
         schema_version: 1,
-        engines: [{ id: "codex", label: "Codex", description: "Codex coding agent", metadata: {} }],
+        engines: [
+          {
+            engine: "codex",
+            display_name: "Codex",
+            description: "OpenAI Codex provider session",
+            supports: {
+              streaming: true,
+              resume: true,
+              interrupt: true,
+              approval_requests: true,
+              input_requests: true,
+              checkpoints: true,
+            },
+          },
+        ],
         capabilities: [
-          { id: "code.edit", label: "Edit code", description: null, metadata: {} },
-          { id: "shell.run", label: "Run shell", description: null, metadata: {} },
+          {
+            capability: "code.edit",
+            display_name: "Edit code",
+            maps_to: ["worker.session.create", "worker.session.turn"],
+          },
+          {
+            capability: "shell.run",
+            display_name: "Run shell commands",
+            maps_to: ["worker.job.start"],
+          },
         ],
-        work_sources: [{ id: "manual", label: "Manual", description: null, metadata: {} }],
-        engine_strategies: [{ id: "single", label: "Single", description: null, metadata: {} }],
-        branch_strategies: [{ id: "auto", label: "Auto", description: null, metadata: {} }],
-        landing_policies: [
-          { id: "branch_only", label: "Branch only", description: null, metadata: {} },
-        ],
-        request_kinds: [{ id: "input", label: "Input", description: null, metadata: {} }],
+        work_sources: ["manual", "github", "linear", "voice", "whatsapp"],
+        engine_strategies: ["single", "parallel", "review_panel"],
+        branch_strategies: ["auto", "use_existing", "create", "none"],
+        landing_policies: ["branch_only", "draft_pr", "ready_pr", "confirm_before_pr"],
+        request_kinds: ["approval", "input"],
         generated_at: now,
       }),
     getSnapshot: () => Effect.succeed(snapshot),

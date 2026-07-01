@@ -273,7 +273,8 @@ function checkpointsForSession(input: {
   readonly messages: ReadonlyArray<OrchestrationMessage>;
 }): ReadonlyArray<OrchestrationCheckpointSummary> {
   return input.checkpoints.map((checkpoint, index) => {
-    const eventTurnId = readJsonString(checkpoint.event, "turn_id", "turnId");
+    const event = checkpoint.event ?? {};
+    const eventTurnId = readJsonString(event, "turn_id", "turnId");
     const turnId = TurnId.make(eventTurnId ?? checkpoint.checkpoint_id);
     return {
       turnId,
@@ -285,7 +286,7 @@ function checkpointsForSession(input: {
       files: [],
       assistantMessageId: input.messages.find((message) => message.turnId === turnId)?.id ?? null,
       completedAt:
-        readJsonString(checkpoint.event, "occurred_at", "time", "created_at", "createdAt") ??
+        readJsonString(event, "occurred_at", "time", "created_at", "createdAt") ??
         input.session.updated_at,
     };
   });

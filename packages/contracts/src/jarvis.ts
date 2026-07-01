@@ -66,7 +66,13 @@ export type JarvisWorkerSessionStatus = typeof JarvisWorkerSessionStatus.Type;
 export const JarvisWorkerStatus = Schema.Literals(["online", "offline", "degraded", "unknown"]);
 export type JarvisWorkerStatus = typeof JarvisWorkerStatus.Type;
 
-export const JarvisWorkerHealth = Schema.Literals(["healthy", "degraded", "unhealthy", "unknown"]);
+export const JarvisWorkerHealth = Schema.Literals([
+  "healthy",
+  "degraded",
+  "unhealthy",
+  "unknown",
+  "unreachable",
+]);
 export type JarvisWorkerHealth = typeof JarvisWorkerHealth.Type;
 
 export const JarvisKnownSessionEventType = Schema.Literals([
@@ -127,28 +133,52 @@ export type JarvisBranchStrategy = typeof JarvisBranchStrategy.Type;
 export const JarvisSyncMode = Schema.Literals(["none", "fast", "probe"]);
 export type JarvisSyncMode = typeof JarvisSyncMode.Type;
 
-export const JarvisSyncStatus = Schema.Literals(["fresh", "partial", "stale", "failed"]);
+export const JarvisSyncStatus = Schema.Literals([
+  "fresh",
+  "partial",
+  "stale",
+  "failed",
+  "skipped",
+  "degraded",
+]);
 export type JarvisSyncStatus = typeof JarvisSyncStatus.Type;
 
-export const JarvisCatalogOption = Schema.Struct({
-  id: TrimmedNonEmptyString,
-  label: TrimmedNonEmptyString,
-  description: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
-  metadata: Schema.optionalKey(JsonObject).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+export const JarvisCapabilitySupport = Schema.Struct({
+  streaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  resume: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  interrupt: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  approval_requests: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  input_requests: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  checkpoints: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
-export type JarvisCatalogOption = typeof JarvisCatalogOption.Type;
+export type JarvisCapabilitySupport = typeof JarvisCapabilitySupport.Type;
+
+export const JarvisCatalogEngine = Schema.Struct({
+  engine: JarvisEngineId,
+  display_name: TrimmedNonEmptyString,
+  description: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  supports: JarvisCapabilitySupport,
+});
+export type JarvisCatalogEngine = typeof JarvisCatalogEngine.Type;
+
+export const JarvisCatalogCapability = Schema.Struct({
+  capability: TrimmedNonEmptyString,
+  display_name: TrimmedNonEmptyString,
+  maps_to: Schema.Array(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+});
+export type JarvisCatalogCapability = typeof JarvisCatalogCapability.Type;
 
 export const JarvisCockpitCatalog = Schema.Struct({
   api_version: Schema.Literal("v1"),
   schema_version: Schema.Number,
-  engines: Schema.Array(JarvisCatalogOption),
-  capabilities: Schema.Array(JarvisCatalogOption),
-  work_sources: Schema.Array(JarvisCatalogOption),
-  engine_strategies: Schema.Array(JarvisCatalogOption),
-  branch_strategies: Schema.Array(JarvisCatalogOption),
-  landing_policies: Schema.Array(JarvisCatalogOption),
-  request_kinds: Schema.Array(JarvisCatalogOption),
-  generated_at: IsoDateTime,
+  engines: Schema.Array(JarvisCatalogEngine),
+  capabilities: Schema.Array(JarvisCatalogCapability),
+  work_sources: Schema.Array(TrimmedNonEmptyString),
+  engine_strategies: Schema.Array(TrimmedNonEmptyString),
+  branch_strategies: Schema.Array(TrimmedNonEmptyString),
+  landing_policies: Schema.Array(TrimmedNonEmptyString),
+  request_kinds: Schema.Array(TrimmedNonEmptyString),
+  generated_at: Schema.optional(IsoDateTime),
 });
 export type JarvisCockpitCatalog = typeof JarvisCockpitCatalog.Type;
 
@@ -157,16 +187,16 @@ export const JarvisWorkerEngine = Schema.Struct({
   display_name: TrimmedNonEmptyString,
   status: Schema.Literals(["available", "unavailable", "degraded"]),
   default: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  supports: Schema.Struct({
-    streaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-    resume: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-    interrupt: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-    approval_requests: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-    input_requests: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-    checkpoints: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  }),
+  supports: JarvisCapabilitySupport,
 });
 export type JarvisWorkerEngine = typeof JarvisWorkerEngine.Type;
+
+export const JarvisWorkerRepository = Schema.Struct({
+  repo: TrimmedNonEmptyString,
+  status: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  default_branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+});
+export type JarvisWorkerRepository = typeof JarvisWorkerRepository.Type;
 
 export const JarvisWorkerProfile = Schema.Struct({
   worker_id: JarvisWorkerId,
@@ -181,7 +211,7 @@ export const JarvisWorkerProfile = Schema.Struct({
     active_sessions: NonNegativeInt,
     queued_sessions: NonNegativeInt,
   }),
-  repositories: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)).pipe(
+  repositories: Schema.optionalKey(Schema.Array(JarvisWorkerRepository)).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   public_metadata: Schema.optionalKey(JsonObject).pipe(
@@ -324,7 +354,7 @@ export const JarvisSessionCheckpoint = Schema.Struct({
   label: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   provider: JarvisProviderId,
   restored: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  event: JsonObject,
+  event: Schema.optionalKey(JsonObject).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type JarvisSessionCheckpoint = typeof JarvisSessionCheckpoint.Type;
 
@@ -348,6 +378,22 @@ export const JarvisSessionCheckpointsPage = Schema.Struct({
   has_more: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type JarvisSessionCheckpointsPage = typeof JarvisSessionCheckpointsPage.Type;
+
+export const JarvisSessionDetailResponse = Schema.Struct({
+  session: JarvisWorkerSession,
+  raw: Schema.optionalKey(JsonObject).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+});
+export type JarvisSessionDetailResponse = typeof JarvisSessionDetailResponse.Type;
+
+export const JarvisSessionRequestsResponse = Schema.Struct({
+  requests: Schema.Array(JarvisSessionRequest),
+});
+export type JarvisSessionRequestsResponse = typeof JarvisSessionRequestsResponse.Type;
+
+export const JarvisSessionCheckpointsResponse = Schema.Struct({
+  checkpoints: Schema.Array(JarvisSessionCheckpoint),
+});
+export type JarvisSessionCheckpointsResponse = typeof JarvisSessionCheckpointsResponse.Type;
 
 export const JarvisArtifactsPage = Schema.Struct({
   items: Schema.Array(JarvisArtifact),
