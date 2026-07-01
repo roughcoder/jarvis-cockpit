@@ -1,5 +1,6 @@
 import {
   JarvisApprovalInput,
+  JarvisArchiveInput,
   JarvisCockpitCatalog,
   JarvisControlResult,
   JarvisRequestId,
@@ -97,6 +98,14 @@ export interface JarvisClient {
   ) => Effect.Effect<JarvisControlResult, JarvisClientError>;
   readonly stopSession: (
     sessionRef: string,
+  ) => Effect.Effect<JarvisControlResult, JarvisClientError>;
+  readonly archiveSession: (
+    sessionRef: string,
+    input?: JarvisArchiveInput,
+  ) => Effect.Effect<JarvisControlResult, JarvisClientError>;
+  readonly archiveRun: (
+    runId: string,
+    input?: JarvisArchiveInput,
   ) => Effect.Effect<JarvisControlResult, JarvisClientError>;
   readonly restoreCheckpoint: (
     sessionRef: string,
@@ -276,6 +285,18 @@ export function makeJarvisCockpitClient(input: {
         `/v1/sessions/${encodeURIComponent(sessionRef)}/stop`,
         withSurfaceMetadata({}),
       ).pipe(Effect.flatMap(decodeFor("sessions.stop", decodeControlResult))),
+    archiveSession: (sessionRef, archiveInput = {}) =>
+      postJson(
+        "sessions.archive",
+        `/v1/sessions/${encodeURIComponent(sessionRef)}/archive`,
+        withSurfaceMetadata(archiveInput),
+      ).pipe(Effect.flatMap(decodeFor("sessions.archive", decodeControlResult))),
+    archiveRun: (runId, archiveInput = {}) =>
+      postJson(
+        "runs.archive",
+        `/v1/runs/${encodeURIComponent(runId)}/archive`,
+        withSurfaceMetadata(archiveInput),
+      ).pipe(Effect.flatMap(decodeFor("runs.archive", decodeControlResult))),
     restoreCheckpoint: (sessionRef, restoreInput) =>
       postJson(
         "sessions.checkpoints.restore",
@@ -349,6 +370,8 @@ function makeMissingConfigurationClient(message: string): JarvisClient {
     respondInput: () => fail("jarvis.client.configure"),
     interruptSession: () => fail("jarvis.client.configure"),
     stopSession: () => fail("jarvis.client.configure"),
+    archiveSession: () => fail("jarvis.client.configure"),
+    archiveRun: () => fail("jarvis.client.configure"),
     restoreCheckpoint: () => fail("jarvis.client.configure"),
     resumeRun: () => fail("jarvis.client.configure"),
   };
@@ -364,6 +387,16 @@ export function makeJarvisFixtureClient(): JarvisClient {
     session_id: JarvisWorkerSessionId.make("sess_fixture_codex"),
     provider: "codex",
     engine: "codex",
+    authority: "jarvis",
+    supported_controls: [
+      "turn",
+      "input",
+      "approval",
+      "interrupt",
+      "stop",
+      "archive",
+      "checkpoint_restore",
+    ],
     status: "needs_input",
     run_id: runId,
     repo: "roughcoder/jarvis",
@@ -376,6 +409,7 @@ export function makeJarvisFixtureClient(): JarvisClient {
     checkpoint_count: 1,
     created_at: now,
     updated_at: now,
+    archived_at: null,
     metadata: {
       surface: "jarvis-cockpit",
     },
@@ -398,6 +432,7 @@ export function makeJarvisFixtureClient(): JarvisClient {
     latest_cursor: "evt_fixture_2",
     created_at: now,
     updated_at: now,
+    archived_at: null,
     terminal_reason: null,
     metadata: {
       surface: "jarvis-cockpit",
@@ -674,6 +709,20 @@ export function makeJarvisFixtureClient(): JarvisClient {
         cursor: "evt_fixture_3",
         run: { ...run, status: "stopped" },
         session: { ...session, status: "stopped" },
+      }),
+    archiveSession: () =>
+      Effect.succeed({
+        ok: true,
+        cursor: "evt_fixture_3",
+        run,
+        session: { ...session, archived_at: now },
+      }),
+    archiveRun: () =>
+      Effect.succeed({
+        ok: true,
+        cursor: "evt_fixture_3",
+        run: { ...run, archived_at: now },
+        session,
       }),
     restoreCheckpoint: (_sessionRef, restoreInput) =>
       Effect.succeed({
