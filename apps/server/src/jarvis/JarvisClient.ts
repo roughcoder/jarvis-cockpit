@@ -9,6 +9,7 @@ import {
   JarvisRunId,
   JarvisRunsSnapshot,
   JarvisSessionCheckpointsPage,
+  JarvisSessionCheckpointsResponse,
   JarvisSessionDetailResponse,
   JarvisSessionEvent,
   JarvisSessionEventsPage,
@@ -130,6 +131,9 @@ const decodeSessionDetail = Schema.decodeUnknownEffect(JarvisSessionDetailRespon
 const decodeSessionEventsPage = Schema.decodeUnknownEffect(JarvisSessionEventsPage);
 const decodeSessionRequestsResponse = Schema.decodeUnknownEffect(JarvisSessionRequestsResponse);
 const decodeSessionCheckpointsPage = Schema.decodeUnknownEffect(JarvisSessionCheckpointsPage);
+const decodeSessionCheckpointsResponse = Schema.decodeUnknownEffect(
+  JarvisSessionCheckpointsResponse,
+);
 
 const mapDecodeError = (operation: string) => (cause: unknown) =>
   new JarvisClientError({
@@ -250,7 +254,29 @@ export function makeJarvisCockpitClient(input: {
           after: options?.after,
           limit: options?.limit,
         }),
-      ).pipe(Effect.flatMap(decodeFor("sessions.checkpoints", decodeSessionCheckpointsPage))),
+      ).pipe(
+        Effect.flatMap((body) =>
+          decodeFor(
+            "sessions.checkpoints",
+            decodeSessionCheckpointsPage,
+          )(body).pipe(
+            Effect.catch(() =>
+              decodeFor(
+                "sessions.checkpoints",
+                decodeSessionCheckpointsResponse,
+              )(body).pipe(
+                Effect.map(
+                  (response): JarvisSessionCheckpointsPage => ({
+                    items: response.checkpoints,
+                    cursor: null,
+                    has_more: false,
+                  }),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     startWork: (workInput) =>
       postJson("work.start", "/v1/work/start", withSurfaceMetadata(workInput)).pipe(
         Effect.flatMap(decodeFor("work.start", decodeControlResult)),

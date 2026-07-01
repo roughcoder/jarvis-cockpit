@@ -1,5 +1,10 @@
 import { assert, it } from "@effect/vitest";
-import { JarvisSessionCheckpoint, JarvisSessionEvent, ThreadId } from "@t3tools/contracts";
+import {
+  JarvisSessionCheckpoint,
+  JarvisSessionEvent,
+  JarvisSessionRequest,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -211,6 +216,58 @@ it.effect("follows Jarvis checkpoint pagination for thread details", () =>
     if (Option.isSome(detail)) {
       assert.strictEqual(detail.value.checkpoints.length, 2);
       assert.match(detail.value.checkpoints[1]?.checkpointRef ?? "", /ckpt_page_2/);
+    }
+  }),
+);
+
+it.effect("hydrates pending Jarvis requests into thread detail activities", () =>
+  Effect.gen(function* () {
+    const fixture = makeJarvisFixtureClient();
+    const client = {
+      ...fixture,
+      getSessionEvents: (sessionRef: string) => {
+        void sessionRef;
+        return Effect.succeed({ items: [], cursor: null, has_more: false });
+      },
+      getRequests: (sessionRef: string) =>
+        Effect.succeed({
+          items: [
+            {
+              request_id: "approval_pending_1" as JarvisSessionRequest["request_id"],
+              session_ref: sessionRef as JarvisSessionRequest["session_ref"],
+              run_id: "run_fixture_dashboard" as JarvisSessionRequest["run_id"],
+              kind: "approval" as const,
+              status: "pending" as const,
+              title: "Approve verification",
+              detail: "Run the test command",
+              created_at: "2026-07-01T12:01:00+00:00",
+              expires_at: null,
+              questions: [],
+              payload: {
+                request_kind: "command",
+              },
+            },
+          ],
+          cursor: null,
+          has_more: false,
+        }),
+    };
+
+    const detail = yield* loadJarvisThreadDetail(
+      client,
+      ThreadId.make("jarvis-session_sessref_macbook-worker_sess_fixture_codex"),
+    );
+
+    assert.strictEqual(Option.isSome(detail), true);
+    if (Option.isSome(detail)) {
+      const activity = detail.value.activities[0];
+      assert.ok(activity);
+      assert.strictEqual(activity?.kind, "approval.requested");
+      assert.strictEqual(activity?.summary, "Run the test command");
+      assert.deepStrictEqual(
+        (activity.payload as Record<string, unknown>).requestId,
+        "approval_pending_1",
+      );
     }
   }),
 );

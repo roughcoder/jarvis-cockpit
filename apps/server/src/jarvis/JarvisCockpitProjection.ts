@@ -169,7 +169,13 @@ function latestTurnForEvents(
   const startedEvent = turnEvents.find((event) => event.type === "turn.started");
   const terminalEvent = turnEvents
     .toReversed()
-    .find((event) => event.type === "turn.completed" || event.type === "turn.failed");
+    .find(
+      (event) =>
+        event.type === "turn.completed" ||
+        event.type === "turn.failed" ||
+        event.type === "session.interrupted" ||
+        event.type === "session.stopped",
+    );
   return {
     turnId: latestTurnId,
     state: latestTurnStateForEvent(terminalEvent ?? latestTurnEvent),
@@ -213,6 +219,7 @@ function checkpointsForSession(input: {
 function latestTurnStateForEvent(event: JarvisSessionEvent) {
   switch (event.type) {
     case "session.interrupted":
+    case "session.stopped":
       return "interrupted" as const;
     case "turn.completed":
       return "completed" as const;
