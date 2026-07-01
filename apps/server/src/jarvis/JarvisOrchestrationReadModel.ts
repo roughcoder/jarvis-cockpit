@@ -13,6 +13,7 @@ import * as Option from "effect/Option";
 import type { JarvisClient, JarvisClientError } from "./JarvisClient.ts";
 import {
   jarvisSessionIdFromThreadId,
+  mapJarvisArchivedRunsSnapshotToShellSnapshot,
   mapJarvisRunsSnapshotToReadModel,
   mapJarvisRunsSnapshotToShellSnapshot,
   mapJarvisSessionToThreadDetail,
@@ -41,7 +42,7 @@ export function loadJarvisShellSnapshot(
 export function loadJarvisArchivedShellSnapshot(
   client: JarvisClient,
 ): Effect.Effect<OrchestrationShellSnapshot, JarvisClientError> {
-  return loadJarvisShellSnapshot(client).pipe(Effect.map(toArchivedShellSnapshot));
+  return client.getSnapshot().pipe(Effect.map(mapJarvisArchivedRunsSnapshotToShellSnapshot));
 }
 
 export function loadJarvisReadModel(
@@ -153,16 +154,6 @@ function loadAllJarvisSessionRequests(
       );
 
   return loadPage(undefined, 0, []);
-}
-
-function toArchivedShellSnapshot(snapshot: OrchestrationShellSnapshot): OrchestrationShellSnapshot {
-  const threads = snapshot.threads.filter((thread) => thread.archivedAt !== null);
-  const projectIds = new Set(threads.map((thread) => thread.projectId));
-  return {
-    ...snapshot,
-    projects: snapshot.projects.filter((project) => projectIds.has(project.id)),
-    threads,
-  };
 }
 
 function appendPendingRequestEvents(

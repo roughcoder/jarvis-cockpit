@@ -10,6 +10,7 @@ import type {
 import {
   isJarvisThreadId,
   jarvisSessionIdFromThreadId,
+  mapJarvisRunsSnapshotToReadModel,
   mapJarvisRunsSnapshotToShellSnapshot,
   mapJarvisSessionToThreadDetail,
 } from "./JarvisProjectionMapper.ts";
@@ -153,7 +154,7 @@ it("round trips encoded Jarvis checkpoint ids", () => {
   assert.strictEqual(jarvisCheckpointIdFromCheckpointRef(checkpointRef), "provider:checkpoint/1");
 });
 
-it("maps Jarvis archived session state into thread shells and details", () => {
+it("keeps archived Jarvis sessions out of live snapshots while preserving detail state", () => {
   const archivedAt = "2026-07-01T13:00:00+00:00";
   const session = { ...makeSession("sess_archived"), archived_at: archivedAt };
   const shell = mapJarvisRunsSnapshotToShellSnapshot({
@@ -167,10 +168,50 @@ it("maps Jarvis archived session state into thread shells and details", () => {
     artifacts: [],
     generated_at: now,
   });
+  const readModel = mapJarvisRunsSnapshotToReadModel({
+    snapshot: {
+      api_version: "v1",
+      schema_version: 1,
+      cursor: "evt_1",
+      sync: { mode: "fast", status: "fresh", synced_at: now, errors: [] },
+      runs: [run],
+      sessions: [session],
+      workers: [],
+      artifacts: [],
+      generated_at: now,
+    },
+    eventsBySession: new Map(),
+  });
   const detail = mapJarvisSessionToThreadDetail({ session, run, events: [] });
 
-  assert.strictEqual(shell.threads[0]?.archivedAt, archivedAt);
+  assert.strictEqual(shell.threads.length, 0);
+  assert.strictEqual(readModel.threads.length, 0);
   assert.strictEqual(detail.archivedAt, archivedAt);
+});
+
+it("keeps run-level pending counts off sibling Jarvis thread shells", () => {
+  const snapshot = mapJarvisRunsSnapshotToShellSnapshot({
+    api_version: "v1",
+    schema_version: 1,
+    cursor: "evt_1",
+    sync: { mode: "fast", status: "fresh", synced_at: now, errors: [] },
+    runs: [{ ...run, pending_input_count: 1, pending_approval_count: 1 }],
+    sessions: [
+      {
+        ...makeSession("sess_1"),
+        pending_input_count: 0,
+        pending_approval_count: 0,
+      },
+      makeSession("sess_2", "needs_approval"),
+    ],
+    workers: [],
+    artifacts: [],
+    generated_at: now,
+  });
+
+  assert.strictEqual(snapshot.threads[0]?.hasPendingApprovals, false);
+  assert.strictEqual(snapshot.threads[0]?.hasPendingUserInput, false);
+  assert.strictEqual(snapshot.threads[1]?.hasPendingApprovals, true);
 });
 
 it("maps known and unknown events into timeline activities", () => {

@@ -1,6 +1,7 @@
 import {
   JarvisRequestId,
   OrchestrationDispatchCommandError,
+  type DispatchResult,
   type JarvisControlResult,
   type JarvisSessionCheckpoint,
   type OrchestrationCommand,
@@ -12,6 +13,7 @@ import type { JarvisClient, JarvisClientError } from "./JarvisClient.ts";
 import {
   jarvisCheckpointRefPartsFromCheckpointRef,
   jarvisSessionIdFromThreadId,
+  jarvisThreadIdForSession,
 } from "./JarvisIds.ts";
 
 const JARVIS_CHECKPOINTS_PAGE_LIMIT = 100;
@@ -21,7 +23,7 @@ export function dispatchJarvisCommand(input: {
   readonly client: JarvisClient;
   readonly enabled: boolean;
   readonly command: OrchestrationCommand;
-}): Effect.Effect<{ readonly sequence: number } | null, OrchestrationDispatchCommandError> {
+}): Effect.Effect<DispatchResult | null, OrchestrationDispatchCommandError> {
   if (!input.enabled) {
     return Effect.succeed(null);
   }
@@ -215,12 +217,17 @@ function dispatchJarvisStartWork(
 function dispatchReceiptForJarvisResult(
   result: JarvisControlResult | null,
   commandType: OrchestrationCommand["type"],
-): Effect.Effect<{ readonly sequence: number } | null, OrchestrationDispatchCommandError> {
+): Effect.Effect<DispatchResult | null, OrchestrationDispatchCommandError> {
   if (result === null) {
     return Effect.succeed(null);
   }
   if (result.ok) {
-    return Effect.succeed({ sequence: 0 });
+    return Effect.succeed({
+      sequence: 0,
+      ...(result.session?.session_ref
+        ? { promotedThreadId: jarvisThreadIdForSession(result.session.session_ref) }
+        : {}),
+    });
   }
   return Effect.fail(
     new OrchestrationDispatchCommandError({

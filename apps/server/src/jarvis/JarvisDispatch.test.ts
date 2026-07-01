@@ -29,7 +29,7 @@ it.effect("routes first draft turns to Jarvis work start", () =>
       ...makeJarvisFixtureClient(),
       startWork: (input: JarvisStartWorkInput) => {
         capturedStartWork = input;
-        return Effect.succeed({ ok: true, cursor: "evt_start" });
+        return makeJarvisFixtureClient().startWork(input);
       },
     };
 
@@ -76,7 +76,10 @@ it.effect("routes first draft turns to Jarvis work start", () =>
       },
     });
 
-    assert.deepStrictEqual(result, { sequence: 0 });
+    assert.deepStrictEqual(result, {
+      sequence: 0,
+      promotedThreadId: "jarvis-session_sessref_macbook-worker_sess_fixture_codex",
+    });
     assert.strictEqual(capturedStartWork?.prompt, "Build the cockpit dashboard.");
     assert.strictEqual(capturedStartWork?.title, "Cockpit dashboard");
     assert.strictEqual(capturedStartWork?.engine, "codex");
