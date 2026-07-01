@@ -3,6 +3,7 @@ import {
   ApprovalRequestId,
   CheckpointRef,
   CommandId,
+  type JarvisArchiveInput,
   type JarvisRestoreCheckpointInput,
   type JarvisStartWorkInput,
   type JarvisUserInputInput,
@@ -205,54 +206,26 @@ it.effect("preserves structured user-input answers for Jarvis replies", () =>
   }),
 );
 
-it.effect("routes checkpoint revert through Jarvis checkpoint restore", () =>
+it.effect("rejects checkpoint revert without a stable Jarvis checkpoint ref", () =>
   Effect.gen(function* () {
-    let restoredCheckpointId: string | undefined;
-    const fixture = makeJarvisFixtureClient();
-    const client = {
-      ...fixture,
-      getCheckpoints: (
-        sessionRef: string,
-        options?: { readonly after?: string; readonly limit?: number },
-      ) => {
-        void sessionRef;
-        void options;
-        return Effect.succeed({
-          items: [
-            {
-              session_ref: "sessref_macbook-worker_sess_fixture_codex" as never,
-              checkpoint_id: "ckpt_fixture_1",
-              label: "First checkpoint",
-              provider: "codex",
-              restored: false,
-              event: {},
-            },
-          ],
-          cursor: "ckpt_fixture_1",
-          has_more: false,
-        });
-      },
-      restoreCheckpoint: (sessionRef: string, input: JarvisRestoreCheckpointInput) => {
-        void sessionRef;
-        restoredCheckpointId = input.checkpoint_id;
-        return Effect.succeed({ ok: true, cursor: "evt_restore" });
-      },
-    };
+    const exit = yield* Effect.exit(
+      dispatchJarvisCommand({
+        client: makeJarvisFixtureClient(),
+        enabled: true,
+        command: {
+          type: "thread.checkpoint.revert",
+          commandId: CommandId.make("cmd_restore"),
+          threadId: jarvisThreadId,
+          turnCount: 1,
+          createdAt: now,
+        },
+      }),
+    );
 
-    const result = yield* dispatchJarvisCommand({
-      client,
-      enabled: true,
-      command: {
-        type: "thread.checkpoint.revert",
-        commandId: CommandId.make("cmd_restore"),
-        threadId: jarvisThreadId,
-        turnCount: 1,
-        createdAt: now,
-      },
-    });
-
-    assert.deepStrictEqual(result, { sequence: 0 });
-    assert.strictEqual(restoredCheckpointId, "ckpt_fixture_1");
+    assert.strictEqual(Exit.isFailure(exit), true);
+    if (Exit.isFailure(exit)) {
+      assert.ok(exit.cause.toString().includes("requires a stable Jarvis checkpointRef"));
+    }
   }),
 );
 
@@ -295,53 +268,16 @@ it.effect("routes checkpoint revert by stable Jarvis checkpoint ref when availab
   }),
 );
 
-it.effect("routes checkpoint revert after following Jarvis checkpoint pages", () =>
+it.effect("routes archive for Jarvis-managed threads through Jarvis", () =>
   Effect.gen(function* () {
-    let restoredCheckpointId: string | undefined;
+    let archivedSessionRef: string | undefined;
+    let idempotencyKey: string | undefined;
     const client = {
       ...makeJarvisFixtureClient(),
-      getCheckpoints: (
-        sessionRef: string,
-        options?: { readonly after?: string; readonly limit?: number },
-      ) => {
-        void sessionRef;
-        void options;
-        return Effect.succeed(
-          options?.after === "ckpt_page_1"
-            ? {
-                items: [
-                  {
-                    session_ref: "sessref_macbook-worker_sess_fixture_codex" as never,
-                    checkpoint_id: "ckpt_page_2",
-                    label: "Second checkpoint",
-                    provider: "codex",
-                    restored: false,
-                    event: {},
-                  },
-                ],
-                cursor: "ckpt_page_2",
-                has_more: false,
-              }
-            : {
-                items: [
-                  {
-                    session_ref: "sessref_macbook-worker_sess_fixture_codex" as never,
-                    checkpoint_id: "ckpt_page_1",
-                    label: "First checkpoint",
-                    provider: "codex",
-                    restored: false,
-                    event: {},
-                  },
-                ],
-                cursor: "ckpt_page_1",
-                has_more: true,
-              },
-        );
-      },
-      restoreCheckpoint: (sessionRef: string, input: JarvisRestoreCheckpointInput) => {
-        void sessionRef;
-        restoredCheckpointId = input.checkpoint_id;
-        return Effect.succeed({ ok: true, cursor: "evt_restore" });
+      archiveSession: (sessionRef: string, input?: JarvisArchiveInput) => {
+        archivedSessionRef = sessionRef;
+        idempotencyKey = input?.idempotency_key;
+        return Effect.succeed({ ok: true, cursor: "evt_archive" });
       },
     };
 
@@ -349,37 +285,15 @@ it.effect("routes checkpoint revert after following Jarvis checkpoint pages", ()
       client,
       enabled: true,
       command: {
-        type: "thread.checkpoint.revert",
-        commandId: CommandId.make("cmd_restore_page_2"),
+        type: "thread.archive",
+        commandId: CommandId.make("cmd_archive"),
         threadId: jarvisThreadId,
-        turnCount: 2,
-        createdAt: now,
       },
     });
 
     assert.deepStrictEqual(result, { sequence: 0 });
-    assert.strictEqual(restoredCheckpointId, "ckpt_page_2");
-  }),
-);
-
-it.effect("rejects archive for Jarvis-managed threads instead of falling through locally", () =>
-  Effect.gen(function* () {
-    const exit = yield* Effect.exit(
-      dispatchJarvisCommand({
-        client: makeJarvisFixtureClient(),
-        enabled: true,
-        command: {
-          type: "thread.archive",
-          commandId: CommandId.make("cmd_archive"),
-          threadId: jarvisThreadId,
-        },
-      }),
-    );
-
-    assert.strictEqual(Exit.isFailure(exit), true);
-    if (Exit.isFailure(exit)) {
-      assert.ok(exit.cause.toString().includes("does not support archiving Jarvis-managed"));
-    }
+    assert.strictEqual(archivedSessionRef, "sessref_macbook-worker_sess_fixture_codex");
+    assert.strictEqual(idempotencyKey, "cmd_archive");
   }),
 );
 

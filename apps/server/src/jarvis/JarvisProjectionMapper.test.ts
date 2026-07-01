@@ -34,6 +34,7 @@ const run: JarvisRun = {
   latest_cursor: "evt_1",
   created_at: now,
   updated_at: now,
+  archived_at: null,
   terminal_reason: null,
   metadata: {},
 };
@@ -49,6 +50,16 @@ const makeSession = (
   title: `Session ${id}`,
   provider: "codex",
   engine: "codex",
+  authority: "jarvis",
+  supported_controls: [
+    "turn",
+    "input",
+    "approval",
+    "interrupt",
+    "stop",
+    "archive",
+    "checkpoint_restore",
+  ],
   status,
   repo: run.repo,
   branch: run.branch,
@@ -59,6 +70,7 @@ const makeSession = (
   checkpoint_count: 0,
   created_at: now,
   updated_at: now,
+  archived_at: null,
   metadata: {},
 });
 
@@ -121,6 +133,26 @@ it("uses deterministic public workspace labels when repo is missing", () => {
   });
 
   assert.strictEqual(mapped.projects[0]?.workspaceRoot, "jarvis");
+});
+
+it("maps Jarvis archived session state into thread shells and details", () => {
+  const archivedAt = "2026-07-01T13:00:00+00:00";
+  const session = { ...makeSession("sess_archived"), archived_at: archivedAt };
+  const shell = mapJarvisRunsSnapshotToShellSnapshot({
+    api_version: "v1",
+    schema_version: 1,
+    cursor: "evt_1",
+    sync: { mode: "fast", status: "fresh", synced_at: now, errors: [] },
+    runs: [run],
+    sessions: [session],
+    workers: [],
+    artifacts: [],
+    generated_at: now,
+  });
+  const detail = mapJarvisSessionToThreadDetail({ session, run, events: [] });
+
+  assert.strictEqual(shell.threads[0]?.archivedAt, archivedAt);
+  assert.strictEqual(detail.archivedAt, archivedAt);
 });
 
 it("maps known and unknown events into timeline activities", () => {

@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 
 import {
   JarvisApprovalInput,
+  JarvisArchiveInput,
   JarvisCockpitCatalog,
   JarvisCockpitEvent,
   JarvisControlResult,
@@ -35,6 +36,7 @@ const decodeTurn = Schema.decodeUnknownEffect(JarvisTurnInput);
 const decodeApproval = Schema.decodeUnknownEffect(JarvisApprovalInput);
 const decodeUserInput = Schema.decodeUnknownEffect(JarvisUserInputInput);
 const decodeRestoreCheckpoint = Schema.decodeUnknownEffect(JarvisRestoreCheckpointInput);
+const decodeArchive = Schema.decodeUnknownEffect(JarvisArchiveInput);
 const decodeControlResult = Schema.decodeUnknownEffect(JarvisControlResult);
 const decodeSseEvent = Schema.decodeUnknownEffect(JarvisCockpitEvent);
 
@@ -50,6 +52,16 @@ const sessionFixture = {
   title: "Codex implementation",
   provider: "codex",
   engine: "codex",
+  authority: "jarvis",
+  supported_controls: [
+    "turn",
+    "input",
+    "approval",
+    "interrupt",
+    "stop",
+    "archive",
+    "checkpoint_restore",
+  ],
   status: "running",
   repo: "roughcoder/jarvis",
   branch: "jarvis/eng-42-worker-heartbeat",
@@ -60,6 +72,7 @@ const sessionFixture = {
   checkpoint_count: 2,
   created_at: generatedAt,
   updated_at: generatedAt,
+  archived_at: null,
 };
 
 const eventFixture = {
@@ -158,6 +171,7 @@ it.effect("decodes a Jarvis cockpit snapshot fixture", () =>
           latest_cursor: "evt_123",
           created_at: generatedAt,
           updated_at: generatedAt,
+          archived_at: null,
           terminal_reason: null,
         },
       ],
@@ -492,6 +506,9 @@ it.effect("decodes command inputs with cockpit metadata defaults", () =>
     const restore = yield* decodeRestoreCheckpoint({
       checkpoint_id: "ckpt_turn_1",
     });
+    const archive = yield* decodeArchive({
+      idempotency_key: "cmd_archive",
+    });
 
     assert.strictEqual(start.branch_strategy, "auto");
     assert.strictEqual(start.metadata?.surface, "jarvis-cockpit");
@@ -500,6 +517,7 @@ it.effect("decodes command inputs with cockpit metadata defaults", () =>
     assert.strictEqual(deniedApproval.decision, "denied");
     assert.strictEqual(input.text, "Use the existing orchestration store patterns.");
     assert.strictEqual(restore.metadata?.surface, "jarvis-cockpit");
+    assert.strictEqual(archive.metadata?.surface, "jarvis-cockpit");
   }),
 );
 

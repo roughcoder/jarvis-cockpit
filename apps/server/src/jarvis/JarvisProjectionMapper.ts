@@ -115,7 +115,7 @@ export function mapJarvisSessionToThreadDetail(input: {
     latestTurn,
     createdAt: input.session.created_at,
     updatedAt: cockpit.latestEventTime ?? input.session.updated_at,
-    archivedAt: null,
+    archivedAt: input.session.archived_at ?? null,
     deletedAt: null,
     messages,
     proposedPlans: [],
@@ -174,7 +174,7 @@ function mapSessionToThreadShell(
     latestTurn: null,
     createdAt: session.created_at,
     updatedAt: session.updated_at,
-    archivedAt: null,
+    archivedAt: session.archived_at ?? null,
     session: sessionForWorkerSession(session, null),
     latestUserMessageAt: null,
     hasPendingApprovals:

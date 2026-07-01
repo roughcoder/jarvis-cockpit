@@ -9,7 +9,6 @@ import * as Schema from "effect/Schema";
 
 import type { JarvisClient } from "./JarvisClient.ts";
 import { jarvisCheckpointIdFromCheckpointRef, jarvisSessionIdFromThreadId } from "./JarvisIds.ts";
-import { loadAllJarvisSessionCheckpoints } from "./JarvisOrchestrationReadModel.ts";
 
 export function dispatchJarvisCommand(input: {
   readonly client: JarvisClient;
@@ -38,15 +37,6 @@ export function dispatchJarvisCommand(input: {
   if (sessionRef === null) {
     return Effect.succeed(null);
   }
-  if (input.command.type === "thread.archive") {
-    return Effect.fail(
-      new OrchestrationDispatchCommandError({
-        message:
-          "Jarvis cockpit does not support archiving Jarvis-managed sessions yet. Stop the session instead.",
-      }),
-    );
-  }
-
   return dispatchJarvisWrite(input.client, sessionRef, input.command).pipe(
     Effect.flatMap((result) => {
       if (result === null) {
@@ -98,41 +88,31 @@ function dispatchJarvisWrite(
         .pipe(Effect.mapError((cause) => jarvisDispatchError(command.type, cause)));
     }
     case "thread.checkpoint.revert": {
-      const turnCount = command.turnCount;
-      const commandId = command.commandId;
-      const commandType = command.type;
       const checkpointId = jarvisCheckpointIdFromCheckpointRef(command.checkpointRef);
-      if (checkpointId !== null) {
-        return client
-          .restoreCheckpoint(sessionRef, {
-            checkpoint_id: checkpointId,
-            idempotency_key: String(commandId),
-          })
-          .pipe(Effect.mapError((cause) => jarvisDispatchError(commandType, cause)));
+      if (checkpointId === null) {
+        return Effect.fail(
+          new OrchestrationDispatchCommandError({
+            message:
+              "Jarvis checkpoint restore requires a stable Jarvis checkpointRef from the selected checkpoint.",
+          }),
+        );
       }
-      return loadAllJarvisSessionCheckpoints(client, sessionRef).pipe(
-        Effect.mapError((cause) => jarvisDispatchError(commandType, cause)),
-        Effect.flatMap((checkpoints) => {
-          const checkpoint = checkpoints[turnCount - 1];
-          if (checkpoint === undefined) {
-            return Effect.fail(
-              new OrchestrationDispatchCommandError({
-                message: `Jarvis checkpoint ${turnCount} was not found for ${sessionRef}.`,
-              }),
-            );
-          }
-          return client
-            .restoreCheckpoint(sessionRef, {
-              checkpoint_id: checkpoint.checkpoint_id,
-              idempotency_key: String(commandId),
-            })
-            .pipe(Effect.mapError((cause) => jarvisDispatchError(commandType, cause)));
-        }),
-      );
+      return client
+        .restoreCheckpoint(sessionRef, {
+          checkpoint_id: checkpointId,
+          idempotency_key: String(command.commandId),
+        })
+        .pipe(Effect.mapError((cause) => jarvisDispatchError(command.type, cause)));
     }
     case "thread.session.stop":
       return client
         .stopSession(sessionRef)
+        .pipe(Effect.mapError((cause) => jarvisDispatchError(command.type, cause)));
+    case "thread.archive":
+      return client
+        .archiveSession(sessionRef, {
+          idempotency_key: String(command.commandId),
+        })
         .pipe(Effect.mapError((cause) => jarvisDispatchError(command.type, cause)));
     default:
       return Effect.succeed(null);

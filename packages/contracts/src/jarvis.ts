@@ -63,6 +63,20 @@ export const JarvisWorkerSessionStatus = Schema.Literals([
 ]);
 export type JarvisWorkerSessionStatus = typeof JarvisWorkerSessionStatus.Type;
 
+export const JarvisWorkerSessionAuthority = Schema.Literal("jarvis");
+export type JarvisWorkerSessionAuthority = typeof JarvisWorkerSessionAuthority.Type;
+
+export const JarvisSupportedControl = Schema.Literals([
+  "turn",
+  "input",
+  "approval",
+  "interrupt",
+  "stop",
+  "archive",
+  "checkpoint_restore",
+]);
+export type JarvisSupportedControl = typeof JarvisSupportedControl.Type;
+
 export const JarvisWorkerStatus = Schema.Literals(["online", "offline", "degraded", "unknown"]);
 export type JarvisWorkerStatus = typeof JarvisWorkerStatus.Type;
 
@@ -227,6 +241,7 @@ export const JarvisRun = Schema.Struct({
   latest_cursor: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   created_at: IsoDateTime,
   updated_at: IsoDateTime,
+  archived_at: Schema.optional(Schema.NullOr(IsoDateTime)),
   terminal_reason: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   metadata: Schema.optionalKey(JsonObject).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
@@ -240,6 +255,8 @@ export const JarvisWorkerSession = Schema.Struct({
   title: TrimmedNonEmptyString,
   provider: JarvisProviderId,
   engine: JarvisEngineId,
+  authority: JarvisWorkerSessionAuthority,
+  supported_controls: Schema.Array(JarvisSupportedControl),
   status: JarvisWorkerSessionStatus,
   repo: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -250,6 +267,7 @@ export const JarvisWorkerSession = Schema.Struct({
   checkpoint_count: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   created_at: IsoDateTime,
   updated_at: IsoDateTime,
+  archived_at: Schema.optional(Schema.NullOr(IsoDateTime)),
   metadata: Schema.optionalKey(JsonObject).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type JarvisWorkerSession = typeof JarvisWorkerSession.Type;
@@ -465,6 +483,14 @@ export const JarvisRestoreCheckpointInput = Schema.Struct({
   ),
 });
 export type JarvisRestoreCheckpointInput = typeof JarvisRestoreCheckpointInput.Type;
+
+export const JarvisArchiveInput = Schema.Struct({
+  idempotency_key: Schema.optional(TrimmedNonEmptyString),
+  metadata: Schema.optionalKey(JarvisWriteMetadata).pipe(
+    Schema.withDecodingDefault(Effect.succeed({ surface: "jarvis-cockpit" })),
+  ),
+});
+export type JarvisArchiveInput = typeof JarvisArchiveInput.Type;
 
 export const JarvisControlSessionRef = Schema.Struct({
   session_ref: JarvisSessionRef,

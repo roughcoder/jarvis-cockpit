@@ -66,6 +66,7 @@ const run = {
   latest_cursor: "evt_1",
   created_at: now,
   updated_at: now,
+  archived_at: null,
   terminal_reason: null,
 };
 
@@ -77,6 +78,16 @@ const session = {
   title: "Codex implementation",
   provider: "codex",
   engine: "codex",
+  authority: "jarvis",
+  supported_controls: [
+    "turn",
+    "input",
+    "approval",
+    "interrupt",
+    "stop",
+    "archive",
+    "checkpoint_restore",
+  ],
   status: "running",
   repo: "roughcoder/jarvis",
   branch: "feature/a",
@@ -87,6 +98,7 @@ const session = {
   checkpoint_count: 1,
   created_at: now,
   updated_at: now,
+  archived_at: null,
 };
 
 const snapshot = {
@@ -331,6 +343,40 @@ it.effect("cockpit client posts work, resume, and exact-session turn intents", (
     assert.match(requests[0]?.body ?? "", /jarvis-cockpit/);
     assert.strictEqual(turnResult.ok, true);
     assert.strictEqual(turnResult.session?.session_ref, sessionRef);
+  }),
+);
+
+it.effect("cockpit client posts Jarvis-owned archive intents", () =>
+  Effect.gen(function* () {
+    const requests: Array<{ url: string; method: string; body: string | null }> = [];
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async (url, init) => {
+        requests.push({
+          url: String(url),
+          method: init?.method ?? "GET",
+          body: typeof init?.body === "string" ? init.body : null,
+        });
+        return jsonResponse({ ok: true, cursor: "evt_archive" });
+      },
+    });
+
+    yield* client.archiveSession(sessionRef, {
+      idempotency_key: "cmd_archive_session",
+    });
+    yield* client.archiveRun("run_1", {
+      idempotency_key: "cmd_archive_run",
+    });
+
+    assert.strictEqual(
+      requests[0]?.url,
+      "http://jarvis.local:8787/v1/sessions/sessref_macbook-worker_sess_1/archive",
+    );
+    assert.strictEqual(requests[0]?.method, "POST");
+    assert.match(requests[0]?.body ?? "", /cmd_archive_session/);
+    assert.match(requests[0]?.body ?? "", /jarvis-cockpit/);
+    assert.strictEqual(requests[1]?.url, "http://jarvis.local:8787/v1/runs/run_1/archive");
+    assert.match(requests[1]?.body ?? "", /cmd_archive_run/);
   }),
 );
 
