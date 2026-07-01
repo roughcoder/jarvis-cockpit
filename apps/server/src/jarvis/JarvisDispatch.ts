@@ -8,34 +8,47 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import type { JarvisClient } from "./JarvisClient.ts";
-import { jarvisSessionIdFromThreadId } from "./JarvisProjectionMapper.ts";
+import { jarvisCheckpointIdFromCheckpointRef, jarvisSessionIdFromThreadId } from "./JarvisIds.ts";
+import { loadAllJarvisSessionCheckpoints } from "./JarvisOrchestrationReadModel.ts";
 
 export function dispatchJarvisCommand(input: {
   readonly client: JarvisClient;
   readonly enabled: boolean;
   readonly command: OrchestrationCommand;
 }): Effect.Effect<{ readonly sequence: number } | null, OrchestrationDispatchCommandError> {
+  if (!input.enabled) {
+    return Effect.succeed(null);
+  }
+  if (input.command.type === "thread.turn.start" && input.command.message.attachments.length > 0) {
+    return Effect.fail(
+      new OrchestrationDispatchCommandError({
+        message:
+          "Jarvis cockpit does not support forwarding turn attachments yet. Remove attachments and send the prompt again.",
+      }),
+    );
+  }
+
   const sessionRef =
     "threadId" in input.command ? jarvisSessionIdFromThreadId(input.command.threadId) : null;
-  if (!input.enabled || sessionRef === null) {
+  if (sessionRef === null && input.command.type === "thread.turn.start") {
+    return dispatchJarvisStartWork(input.client, input.command).pipe(
+      Effect.flatMap((result) => dispatchReceiptForJarvisResult(result, input.command.type)),
+    );
+  }
+  if (sessionRef === null) {
     return Effect.succeed(null);
+  }
+  if (input.command.type === "thread.archive") {
+    return Effect.fail(
+      new OrchestrationDispatchCommandError({
+        message:
+          "Jarvis cockpit does not support archiving Jarvis-managed sessions yet. Stop the session instead.",
+      }),
+    );
   }
 
   return dispatchJarvisWrite(input.client, sessionRef, input.command).pipe(
-    Effect.flatMap((result) => {
-      if (result === null) {
-        return Effect.succeed(null);
-      }
-      if (result.ok) {
-        return Effect.succeed({ sequence: 0 });
-      }
-      return Effect.fail(
-        new OrchestrationDispatchCommandError({
-          message: `Jarvis rejected ${input.command.type}: ${result.error?.message ?? "unknown error"}`,
-          cause: result.error,
-        }),
-      );
-    }),
+    Effect.flatMap((result) => dispatchReceiptForJarvisResult(result, input.command.type)),
   );
 }
 
@@ -79,10 +92,19 @@ function dispatchJarvisWrite(
       const turnCount = command.turnCount;
       const commandId = command.commandId;
       const commandType = command.type;
-      return client.getCheckpoints(sessionRef).pipe(
+      const checkpointId = jarvisCheckpointIdFromCheckpointRef(command.checkpointRef);
+      if (checkpointId !== null) {
+        return client
+          .restoreCheckpoint(sessionRef, {
+            checkpoint_id: checkpointId,
+            idempotency_key: String(commandId),
+          })
+          .pipe(Effect.mapError((cause) => jarvisDispatchError(commandType, cause)));
+      }
+      return loadAllJarvisSessionCheckpoints(client, sessionRef).pipe(
         Effect.mapError((cause) => jarvisDispatchError(commandType, cause)),
-        Effect.flatMap((page) => {
-          const checkpoint = page.items[turnCount - 1];
+        Effect.flatMap((checkpoints) => {
+          const checkpoint = checkpoints[turnCount - 1];
           if (checkpoint === undefined) {
             return Effect.fail(
               new OrchestrationDispatchCommandError({
@@ -108,11 +130,64 @@ function dispatchJarvisWrite(
   }
 }
 
+function dispatchJarvisStartWork(
+  client: JarvisClient,
+  command: Extract<OrchestrationCommand, { readonly type: "thread.turn.start" }>,
+): Effect.Effect<JarvisControlResult | null, OrchestrationDispatchCommandError> {
+  if (command.bootstrap?.createThread === undefined) {
+    return Effect.succeed(null);
+  }
+  return client
+    .startWork(startWorkInputForTurnStart(command))
+    .pipe(Effect.mapError((cause) => jarvisDispatchError(command.type, cause)));
+}
+
+function dispatchReceiptForJarvisResult(
+  result: JarvisControlResult | null,
+  commandType: OrchestrationCommand["type"],
+): Effect.Effect<{ readonly sequence: number } | null, OrchestrationDispatchCommandError> {
+  if (result === null) {
+    return Effect.succeed(null);
+  }
+  if (result.ok) {
+    return Effect.succeed({ sequence: 0 });
+  }
+  return Effect.fail(
+    new OrchestrationDispatchCommandError({
+      message: `Jarvis rejected ${commandType}: ${result.error?.message ?? "unknown error"}`,
+      cause: result.error,
+    }),
+  );
+}
+
 function jarvisDispatchError(commandType: OrchestrationCommand["type"], cause: unknown) {
   return new OrchestrationDispatchCommandError({
     message: `Failed to dispatch Jarvis cockpit command ${commandType}.`,
     cause,
   });
+}
+
+function startWorkInputForTurnStart(
+  command: Extract<OrchestrationCommand, { readonly type: "thread.turn.start" }>,
+) {
+  const createThread = command.bootstrap?.createThread;
+  const prepareWorktree = command.bootstrap?.prepareWorktree;
+  const modelSelection = command.modelSelection ?? createThread?.modelSelection;
+  const title = command.titleSeed ?? createThread?.title;
+  return {
+    phrase: command.message.text,
+    source: "manual",
+    start: true,
+    prompt: command.message.text,
+    ...(title ? { title, objective: title } : {}),
+    ...(modelSelection ? { engine: String(modelSelection.instanceId) } : {}),
+    ...(prepareWorktree?.baseBranch ? { base_ref: prepareWorktree.baseBranch } : {}),
+    ...((createThread?.branch ?? prepareWorktree?.branch)
+      ? { branch: createThread?.branch ?? prepareWorktree?.branch }
+      : {}),
+    branch_strategy: "auto" as const,
+    idempotency_key: String(command.commandId),
+  };
 }
 
 function jarvisApprovalDecisionForProviderDecision(

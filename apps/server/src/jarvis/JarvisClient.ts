@@ -7,7 +7,6 @@ import {
   JarvisRun,
   JarvisRunId,
   JarvisRunsSnapshot,
-  JarvisSessionCheckpointsResponse,
   JarvisSessionCheckpointsPage,
   JarvisSessionDetailResponse,
   JarvisSessionEvent,
@@ -75,6 +74,7 @@ export interface JarvisClient {
   ) => Effect.Effect<JarvisSessionRequestsPage, JarvisClientError>;
   readonly getCheckpoints: (
     sessionRef: string,
+    options?: { readonly after?: string; readonly limit?: number },
   ) => Effect.Effect<JarvisSessionCheckpointsPage, JarvisClientError>;
   readonly startWork: (
     input: JarvisStartWorkInput,
@@ -120,9 +120,7 @@ const decodeControlResult = Schema.decodeUnknownEffect(JarvisControlResult);
 const decodeSessionDetail = Schema.decodeUnknownEffect(JarvisSessionDetailResponse);
 const decodeSessionEventsPage = Schema.decodeUnknownEffect(JarvisSessionEventsPage);
 const decodeSessionRequestsResponse = Schema.decodeUnknownEffect(JarvisSessionRequestsResponse);
-const decodeSessionCheckpointsResponse = Schema.decodeUnknownEffect(
-  JarvisSessionCheckpointsResponse,
-);
+const decodeSessionCheckpointsPage = Schema.decodeUnknownEffect(JarvisSessionCheckpointsPage);
 
 const mapDecodeError = (operation: string) => (cause: unknown) =>
   new JarvisClientError({
@@ -236,20 +234,14 @@ export function makeJarvisCockpitClient(input: {
           }),
         ),
       ),
-    getCheckpoints: (sessionRef) =>
+    getCheckpoints: (sessionRef, options) =>
       requestJson(
         "sessions.checkpoints",
-        `/v1/sessions/${encodeURIComponent(sessionRef)}/checkpoints`,
-      ).pipe(
-        Effect.flatMap(decodeFor("sessions.checkpoints", decodeSessionCheckpointsResponse)),
-        Effect.map(
-          (response): JarvisSessionCheckpointsPage => ({
-            items: response.checkpoints,
-            cursor: null,
-            has_more: false,
-          }),
-        ),
-      ),
+        appendQuery(`/v1/sessions/${encodeURIComponent(sessionRef)}/checkpoints`, {
+          after: options?.after,
+          limit: options?.limit,
+        }),
+      ).pipe(Effect.flatMap(decodeFor("sessions.checkpoints", decodeSessionCheckpointsPage))),
     startWork: (workInput) =>
       postJson("work.start", "/v1/work/start", withSurfaceMetadata(workInput)).pipe(
         Effect.flatMap(decodeFor("work.start", decodeControlResult)),

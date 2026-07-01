@@ -647,6 +647,7 @@ const ThreadCheckpointRevertCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   turnCount: NonNegativeInt,
+  checkpointRef: Schema.optional(CheckpointRef),
   createdAt: IsoDateTime,
 });
 

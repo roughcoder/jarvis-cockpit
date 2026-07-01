@@ -2073,8 +2073,11 @@ function ChatViewContent(props: ChatViewProps) {
     }
     return byMessageId;
   }, [turnDiffSummaries]);
-  const revertTurnCountByUserMessageId = useMemo(() => {
-    const byUserMessageId = new Map<MessageId, number>();
+  const revertTargetByUserMessageId = useMemo(() => {
+    const byUserMessageId = new Map<
+      MessageId,
+      { readonly turnCount: number; readonly checkpointRef?: TurnDiffSummary["checkpointRef"] }
+    >();
     for (let index = 0; index < timelineEntries.length; index += 1) {
       const entry = timelineEntries[index];
       if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
@@ -2098,13 +2101,23 @@ function ChatViewContent(props: ChatViewProps) {
         if (typeof turnCount !== "number") {
           break;
         }
-        byUserMessageId.set(entry.message.id, Math.max(0, turnCount - 1));
+        byUserMessageId.set(entry.message.id, {
+          turnCount: Math.max(0, turnCount - 1),
+          ...(summary.checkpointRef ? { checkpointRef: summary.checkpointRef } : {}),
+        });
         break;
       }
     }
 
     return byUserMessageId;
   }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
+  const revertTurnCountByUserMessageId = useMemo(() => {
+    const byUserMessageId = new Map<MessageId, number>();
+    for (const [messageId, target] of revertTargetByUserMessageId) {
+      byUserMessageId.set(messageId, target.turnCount);
+    }
+    return byUserMessageId;
+  }, [revertTargetByUserMessageId]);
 
   const gitCwd = activeProject
     ? projectScriptCwd({
@@ -3817,7 +3830,10 @@ function ChatViewContent(props: ChatViewProps) {
   ]);
 
   const onRevertToTurnCount = useCallback(
-    async (turnCount: number) => {
+    async (target: {
+      readonly turnCount: number;
+      readonly checkpointRef?: TurnDiffSummary["checkpointRef"];
+    }) => {
       const localApi = readLocalApi();
       if (!localApi || !activeThread || isRevertingCheckpoint) return;
 
@@ -3834,7 +3850,7 @@ function ChatViewContent(props: ChatViewProps) {
       }
       const confirmed = await localApi.dialogs.confirm(
         [
-          `Revert this thread to checkpoint ${turnCount}?`,
+          `Revert this thread to checkpoint ${target.turnCount}?`,
           "This will discard newer messages and turn diffs in this thread.",
           "This action cannot be undone.",
         ].join("\n"),
@@ -3849,7 +3865,8 @@ function ChatViewContent(props: ChatViewProps) {
         environmentId,
         input: {
           threadId: activeThread.id,
-          turnCount,
+          turnCount: target.turnCount,
+          ...(target.checkpointRef ? { checkpointRef: target.checkpointRef } : {}),
         },
       });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -4897,16 +4914,16 @@ function ChatViewContent(props: ChatViewProps) {
   );
   // Both the Map and the revert handler are read from refs at call-time so
   // the callback reference is fully stable and never busts context identity.
-  const revertTurnCountRef = useRef(revertTurnCountByUserMessageId);
-  revertTurnCountRef.current = revertTurnCountByUserMessageId;
+  const revertTargetRef = useRef(revertTargetByUserMessageId);
+  revertTargetRef.current = revertTargetByUserMessageId;
   const onRevertToTurnCountRef = useRef(onRevertToTurnCount);
   onRevertToTurnCountRef.current = onRevertToTurnCount;
   const onRevertUserMessage = useCallback((messageId: MessageId) => {
-    const targetTurnCount = revertTurnCountRef.current.get(messageId);
-    if (typeof targetTurnCount !== "number") {
+    const target = revertTargetRef.current.get(messageId);
+    if (!target) {
       return;
     }
-    void onRevertToTurnCountRef.current(targetTurnCount);
+    void onRevertToTurnCountRef.current(target);
   }, []);
 
   // Empty state: no active thread

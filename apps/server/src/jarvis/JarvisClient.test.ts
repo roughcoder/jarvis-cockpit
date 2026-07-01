@@ -194,7 +194,7 @@ it.effect("cockpit client reads session requests and checkpoints", () =>
           });
         }
         return jsonResponse({
-          checkpoints: [
+          items: [
             {
               session_ref: sessionRef,
               checkpoint_id: "ckpt_1",
@@ -203,6 +203,8 @@ it.effect("cockpit client reads session requests and checkpoints", () =>
               restored: false,
             },
           ],
+          cursor: "ckpt_1",
+          has_more: false,
         });
       },
     });
@@ -258,11 +260,15 @@ it.effect("cockpit client sends event cursors and checkpoint restore requests", 
         if (String(url).includes("/events")) {
           return jsonResponse({ items: [], cursor: "evt_1", has_more: false });
         }
+        if (String(url).includes("/checkpoints") && init?.method !== "POST") {
+          return jsonResponse({ items: [], cursor: "ckpt_1", has_more: false });
+        }
         return jsonResponse({ ok: true, cursor: "evt_2" });
       },
     });
 
     yield* client.getSessionEvents(sessionRef, { after: "evt_1", limit: 25 });
+    yield* client.getCheckpoints(sessionRef, { after: "ckpt_1", limit: 10 });
     yield* client.restoreCheckpoint(sessionRef, {
       checkpoint_id: "ckpt_1",
       metadata: {
@@ -276,11 +282,15 @@ it.effect("cockpit client sends event cursors and checkpoint restore requests", 
     );
     assert.strictEqual(
       requests[1]?.url,
+      "http://jarvis.local:8787/v1/sessions/sessref_macbook-worker_sess_1/checkpoints?after=ckpt_1&limit=10",
+    );
+    assert.strictEqual(
+      requests[2]?.url,
       "http://jarvis.local:8787/v1/sessions/sessref_macbook-worker_sess_1/checkpoints/restore",
     );
-    assert.strictEqual(requests[1]?.method, "POST");
-    assert.match(requests[1]?.body ?? "", /ckpt_1/);
-    assert.match(requests[1]?.body ?? "", /jarvis-cockpit/);
+    assert.strictEqual(requests[2]?.method, "POST");
+    assert.match(requests[2]?.body ?? "", /ckpt_1/);
+    assert.match(requests[2]?.body ?? "", /jarvis-cockpit/);
   }),
 );
 
