@@ -105,6 +105,7 @@ it("maps one Jarvis run with two sessions into one project and two thread shells
   assert.strictEqual(snapshot.projects[0]?.id, "jarvis-run_run_1");
   assert.strictEqual(snapshot.projects[0]?.workspaceRoot, "roughcoder/jarvis");
   assert.strictEqual(snapshot.threads[1]?.hasPendingApprovals, true);
+  assert.strictEqual(snapshot.threads[0]?.worktreePath, null);
 });
 
 it("preserves Jarvis provenance in generated thread ids", () => {
@@ -331,4 +332,48 @@ it("projects Jarvis checkpoints into thread checkpoint summaries", () => {
     "jarvis:sessref_macbook-worker_sess_1:ckpt_1",
   );
   assert.strictEqual(detail.checkpoints[0]?.completedAt, "2026-07-01T12:03:00+00:00");
+});
+
+it("links Jarvis checkpoints to assistant messages instead of user prompts", () => {
+  const session = makeSession("sess_1");
+  const events: ReadonlyArray<JarvisSessionEvent> = [
+    makeEvent({
+      event_id: "evt_started" as JarvisSessionEvent["event_id"],
+      sequence: 1,
+      type: "turn.started",
+      turn_id: "turn_1",
+      data: {
+        prompt: "Please implement the change.",
+      },
+    }),
+    makeEvent({
+      event_id: "evt_assistant" as JarvisSessionEvent["event_id"],
+      sequence: 2,
+      type: "assistant.message",
+      turn_id: "turn_1",
+      message_id: "message_1",
+      data: {
+        text: "Implemented.",
+      },
+    }),
+  ];
+  const checkpoints: ReadonlyArray<JarvisSessionCheckpoint> = [
+    {
+      session_ref: session.session_ref,
+      checkpoint_id: "ckpt_1",
+      label: "After implementation",
+      provider: "codex",
+      restored: false,
+      event: {
+        turn_id: "turn_1",
+        occurred_at: "2026-07-01T12:03:00+00:00",
+      },
+    },
+  ];
+
+  const detail = mapJarvisSessionToThreadDetail({ session, run, events, checkpoints });
+
+  assert.strictEqual(detail.messages[0]?.role, "user");
+  assert.strictEqual(detail.messages[1]?.role, "assistant");
+  assert.strictEqual(detail.checkpoints[0]?.assistantMessageId, detail.messages[1]?.id);
 });
