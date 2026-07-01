@@ -76,8 +76,13 @@ function dispatchJarvisWrite(
         .sendTurn(sessionRef, {
           prompt: command.message.text,
           idempotency_key: String(command.commandId),
+          metadata: {
+            client_message_id: String(command.message.messageId),
+          },
         })
         .pipe(Effect.mapError((cause) => jarvisDispatchError(command.type, cause)));
+    case "thread.meta.update":
+      return Effect.succeed({ ok: true });
     case "thread.turn.interrupt":
       return client
         .interruptSession(sessionRef, command.turnId)

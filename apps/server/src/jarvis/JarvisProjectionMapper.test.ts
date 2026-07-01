@@ -10,6 +10,7 @@ import type {
 import {
   isJarvisThreadId,
   jarvisSessionIdFromThreadId,
+  mapJarvisArchivedRunsSnapshotToShellSnapshot,
   mapJarvisRunsSnapshotToReadModel,
   mapJarvisRunsSnapshotToShellSnapshot,
   mapJarvisSessionToThreadDetail,
@@ -154,7 +155,7 @@ it("round trips encoded Jarvis checkpoint ids", () => {
   assert.strictEqual(jarvisCheckpointIdFromCheckpointRef(checkpointRef), "provider:checkpoint/1");
 });
 
-it("keeps archived Jarvis sessions out of live snapshots while preserving detail state", () => {
+it("keeps archived Jarvis sessions out of live threads while preserving active run rows", () => {
   const archivedAt = "2026-07-01T13:00:00+00:00";
   const session = { ...makeSession("sess_archived"), archived_at: archivedAt };
   const shell = mapJarvisRunsSnapshotToShellSnapshot({
@@ -185,10 +186,89 @@ it("keeps archived Jarvis sessions out of live snapshots while preserving detail
   const detail = mapJarvisSessionToThreadDetail({ session, run, events: [] });
 
   assert.strictEqual(shell.threads.length, 0);
-  assert.strictEqual(shell.projects.length, 0);
+  assert.strictEqual(shell.projects.length, 1);
   assert.strictEqual(readModel.threads.length, 0);
-  assert.strictEqual(readModel.projects.length, 0);
+  assert.strictEqual(readModel.projects.length, 1);
   assert.strictEqual(detail.archivedAt, archivedAt);
+});
+
+it("keeps queued Jarvis runs visible before they have sessions", () => {
+  const queuedRun = {
+    ...run,
+    run_id: "run_queued" as JarvisRun["run_id"],
+    title: "Queued work",
+    session_count: 0,
+    active_session_count: 0,
+  };
+  const shell = mapJarvisRunsSnapshotToShellSnapshot({
+    api_version: "v1",
+    schema_version: 1,
+    cursor: "evt_1",
+    sync: { mode: "fast", status: "fresh", synced_at: now, errors: [] },
+    runs: [queuedRun],
+    sessions: [],
+    workers: [],
+    artifacts: [],
+    generated_at: now,
+  });
+
+  assert.strictEqual(shell.projects.length, 1);
+  assert.strictEqual(shell.projects[0]?.id, "jarvis-run_run_queued");
+  assert.strictEqual(shell.threads.length, 0);
+});
+
+it("moves run-level archived sessions out of live snapshots", () => {
+  const archivedRun = { ...run, archived_at: "2026-07-01T13:00:00+00:00" };
+  const session = makeSession("sess_run_archived");
+  const live = mapJarvisRunsSnapshotToShellSnapshot({
+    api_version: "v1",
+    schema_version: 1,
+    cursor: "evt_1",
+    sync: { mode: "fast", status: "fresh", synced_at: now, errors: [] },
+    runs: [archivedRun],
+    sessions: [session],
+    workers: [],
+    artifacts: [],
+    generated_at: now,
+  });
+  const archived = mapJarvisArchivedRunsSnapshotToShellSnapshot({
+    api_version: "v1",
+    schema_version: 1,
+    cursor: "evt_1",
+    sync: { mode: "fast", status: "fresh", synced_at: now, errors: [] },
+    runs: [archivedRun],
+    sessions: [session],
+    workers: [],
+    artifacts: [],
+    generated_at: now,
+  });
+
+  assert.strictEqual(live.projects.length, 0);
+  assert.strictEqual(live.threads.length, 0);
+  assert.strictEqual(archived.projects[0]?.id, "jarvis-run_run_1");
+  assert.strictEqual(
+    archived.threads[0]?.id,
+    "jarvis-session_sessref_macbook-worker_sess_run_archived",
+  );
+});
+
+it("synthesizes project rows for sessions when partial snapshots omit their run", () => {
+  const session = makeSession("sess_partial");
+  const shell = mapJarvisRunsSnapshotToShellSnapshot({
+    api_version: "v1",
+    schema_version: 1,
+    cursor: "evt_1",
+    sync: { mode: "fast", status: "fresh", synced_at: now, errors: [] },
+    runs: [],
+    sessions: [session],
+    workers: [],
+    artifacts: [],
+    generated_at: now,
+  });
+
+  assert.strictEqual(shell.projects[0]?.id, "jarvis-run_run_1");
+  assert.strictEqual(shell.projects[0]?.title, "roughcoder/jarvis");
+  assert.strictEqual(shell.threads[0]?.projectId, shell.projects[0]?.id);
 });
 
 it("keeps run-level pending counts off sibling Jarvis thread shells", () => {
@@ -259,6 +339,28 @@ it("maps known and unknown events into timeline activities", () => {
   assert.strictEqual(detail.activities[2]?.kind, "provider.future_event");
   assert.strictEqual(detail.activities[2]?.tone, "info");
   assert.strictEqual(detail.activities[2]?.summary, "Future event");
+});
+
+it("uses echoed client message ids for Jarvis user turn messages", () => {
+  const session = makeSession("sess_1");
+  const events: ReadonlyArray<JarvisSessionEvent> = [
+    makeEvent({
+      event_id: "evt_started" as JarvisSessionEvent["event_id"],
+      type: "turn.started",
+      turn_id: "turn_1",
+      data: {
+        prompt: "Continue.",
+        metadata: {
+          client_message_id: "msg_client_user",
+        },
+      },
+    }),
+  ];
+
+  const detail = mapJarvisSessionToThreadDetail({ session, run, events });
+
+  assert.strictEqual(detail.messages[0]?.id, "msg_client_user");
+  assert.strictEqual(detail.messages[0]?.role, "user");
 });
 
 it("coalesces assistant deltas from the same canonical message", () => {

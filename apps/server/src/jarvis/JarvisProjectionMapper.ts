@@ -11,7 +11,6 @@ import {
   MessageId,
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
-  OrchestrationProject,
   OrchestrationProjectShell,
   OrchestrationReadModel,
   OrchestrationSession,
@@ -46,35 +45,30 @@ export function mapJarvisRunsSnapshotToShellSnapshot(
 ): OrchestrationShellSnapshot {
   return mapJarvisRunsSnapshotToShellSnapshotWithSessions(
     snapshot,
-    activeJarvisSessions(snapshot.sessions),
+    activeJarvisRuns(snapshot.runs),
+    activeJarvisSessionsForSnapshot(snapshot),
   );
 }
 
 export function mapJarvisArchivedRunsSnapshotToShellSnapshot(
   snapshot: JarvisRunsSnapshot,
 ): OrchestrationShellSnapshot {
-  const mapped = mapJarvisRunsSnapshotToShellSnapshotWithSessions(
+  return mapJarvisRunsSnapshotToShellSnapshotWithSessions(
     snapshot,
-    archivedJarvisSessions(snapshot.sessions),
+    archivedJarvisRuns(snapshot.runs),
+    archivedJarvisSessionsForSnapshot(snapshot),
   );
-  const projectIds = new Set(mapped.threads.map((thread) => thread.projectId));
-  return {
-    ...mapped,
-    projects: mapped.projects.filter((project) => projectIds.has(project.id)),
-  };
 }
 
 function mapJarvisRunsSnapshotToShellSnapshotWithSessions(
   snapshot: JarvisRunsSnapshot,
+  runs: ReadonlyArray<JarvisRun>,
   sessions: ReadonlyArray<JarvisWorkerSession>,
 ): OrchestrationShellSnapshot {
   const runsById = new Map(snapshot.runs.map((run) => [run.run_id, run]));
-  const projectRunIds = projectRunIdsForSessions(sessions);
   return {
     snapshotSequence: 0,
-    projects: snapshot.runs
-      .filter((run) => projectRunIds.has(run.run_id))
-      .map((run) => mapRunToProjectShell(run, sessions)),
+    projects: mapRunsAndSessionsToProjectShells(runs, sessions),
     threads: sessions.map((session) =>
       mapSessionToThreadShell(
         session,
@@ -91,13 +85,14 @@ export function mapJarvisRunsSnapshotToReadModel(input: {
   readonly checkpointsBySession?: ReadonlyMap<string, ReadonlyArray<JarvisSessionCheckpoint>>;
 }): OrchestrationReadModel {
   const runsById = new Map(input.snapshot.runs.map((run) => [run.run_id, run]));
-  const activeSessions = activeJarvisSessions(input.snapshot.sessions);
-  const activeRunIds = projectRunIdsForSessions(activeSessions);
+  const activeRuns = activeJarvisRuns(input.snapshot.runs);
+  const activeSessions = activeJarvisSessionsForSnapshot(input.snapshot);
   return {
     snapshotSequence: 0,
-    projects: input.snapshot.runs
-      .filter((run) => activeRunIds.has(run.run_id))
-      .map((run) => mapRunToProject(run, activeSessions)),
+    projects: mapRunsAndSessionsToProjectShells(activeRuns, activeSessions).map((project) => ({
+      ...project,
+      deletedAt: null,
+    })),
     threads: activeSessions.map((session) => {
       const run = session.run_id !== undefined ? runsById.get(session.run_id) : undefined;
       return run
@@ -117,20 +112,30 @@ export function mapJarvisRunsSnapshotToReadModel(input: {
   };
 }
 
-function activeJarvisSessions(
-  sessions: ReadonlyArray<JarvisWorkerSession>,
+export function activeJarvisSessionsForSnapshot(
+  snapshot: JarvisRunsSnapshot,
 ): ReadonlyArray<JarvisWorkerSession> {
-  return sessions.filter((session) => session.archived_at == null);
+  const archivedRunIds = new Set(archivedJarvisRuns(snapshot.runs).map((run) => run.run_id));
+  return snapshot.sessions.filter(
+    (session) => session.archived_at == null && !archivedRunIds.has(session.run_id),
+  );
 }
 
-function archivedJarvisSessions(
-  sessions: ReadonlyArray<JarvisWorkerSession>,
+function archivedJarvisSessionsForSnapshot(
+  snapshot: JarvisRunsSnapshot,
 ): ReadonlyArray<JarvisWorkerSession> {
-  return sessions.filter((session) => session.archived_at != null);
+  const archivedRunIds = new Set(archivedJarvisRuns(snapshot.runs).map((run) => run.run_id));
+  return snapshot.sessions.filter(
+    (session) => session.archived_at != null || archivedRunIds.has(session.run_id),
+  );
 }
 
-function projectRunIdsForSessions(sessions: ReadonlyArray<JarvisWorkerSession>): ReadonlySet<string> {
-  return new Set(sessions.flatMap((session) => (session.run_id ? [session.run_id] : [])));
+function activeJarvisRuns(runs: ReadonlyArray<JarvisRun>): ReadonlyArray<JarvisRun> {
+  return runs.filter((run) => run.archived_at == null);
+}
+
+function archivedJarvisRuns(runs: ReadonlyArray<JarvisRun>): ReadonlyArray<JarvisRun> {
+  return runs.filter((run) => run.archived_at != null);
 }
 
 export function mapJarvisSessionToThreadDetail(input: {
@@ -172,16 +177,6 @@ export function mapJarvisSessionToThreadDetail(input: {
   };
 }
 
-function mapRunToProject(
-  run: JarvisRun,
-  sessions: ReadonlyArray<JarvisWorkerSession>,
-): OrchestrationProject {
-  return {
-    ...mapRunToProjectShell(run, sessions),
-    deletedAt: null,
-  };
-}
-
 function mapRunToProjectShell(
   run: JarvisRun,
   _sessions: ReadonlyArray<JarvisWorkerSession>,
@@ -195,6 +190,36 @@ function mapRunToProjectShell(
     scripts: [],
     createdAt: run.created_at,
     updatedAt: run.updated_at,
+  };
+}
+
+function mapRunsAndSessionsToProjectShells(
+  runs: ReadonlyArray<JarvisRun>,
+  sessions: ReadonlyArray<JarvisWorkerSession>,
+): ReadonlyArray<OrchestrationProjectShell> {
+  const mappedRunIds = new Set(runs.map((run) => run.run_id));
+  const projects = runs.map((run) => mapRunToProjectShell(run, sessions));
+  const synthesizedRunIds = new Set<string>();
+  for (const session of sessions) {
+    if (mappedRunIds.has(session.run_id) || synthesizedRunIds.has(session.run_id)) {
+      continue;
+    }
+    synthesizedRunIds.add(session.run_id);
+    projects.push(mapSessionToProjectShell(session));
+  }
+  return projects;
+}
+
+function mapSessionToProjectShell(session: JarvisWorkerSession): OrchestrationProjectShell {
+  return {
+    id: jarvisProjectIdForRun(session.run_id),
+    title: session.repo ?? session.title,
+    workspaceRoot: jarvisWorkspaceRootForRun(session.run_id),
+    repositoryIdentity: null,
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: session.created_at,
+    updatedAt: session.updated_at,
   };
 }
 

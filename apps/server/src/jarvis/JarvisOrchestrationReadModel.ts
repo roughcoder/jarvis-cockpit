@@ -12,6 +12,7 @@ import * as Option from "effect/Option";
 
 import type { JarvisClient, JarvisClientError } from "./JarvisClient.ts";
 import {
+  activeJarvisSessionsForSnapshot,
   jarvisSessionIdFromThreadId,
   mapJarvisArchivedRunsSnapshotToShellSnapshot,
   mapJarvisRunsSnapshotToReadModel,
@@ -51,7 +52,7 @@ export function loadJarvisReadModel(
   return client.getSnapshot().pipe(
     Effect.flatMap((snapshot) =>
       Effect.all(
-        snapshot.sessions.map((session) =>
+        activeJarvisSessionsForSnapshot(snapshot).map((session) =>
           Effect.all({
             events: loadAllJarvisSessionEvents(client, session.session_ref),
             checkpoints: loadAllJarvisSessionCheckpoints(client, session.session_ref),

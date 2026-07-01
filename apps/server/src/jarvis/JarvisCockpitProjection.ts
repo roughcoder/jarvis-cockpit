@@ -94,8 +94,9 @@ function eventsToMessages(
     if (event.type === "turn.started") {
       const prompt = readText(event);
       if (prompt !== null) {
+        const clientMessageId = readClientUserMessageId(event);
         messages.push({
-          id: `jarvis-message:user:${event.event_id}`,
+          id: clientMessageId ?? `jarvis-message:user:${event.event_id}`,
           role: "user",
           text: prompt,
           turnId: readTurnId(event),
@@ -405,6 +406,22 @@ function readRequestId(event: JarvisSessionEvent): string | null {
   return readJsonString(event.data, "request_id", "requestId");
 }
 
+function readClientUserMessageId(event: JarvisSessionEvent): string | null {
+  return (
+    readJsonString(event.data, "client_message_id", "clientMessageId", "message_id", "messageId") ??
+    readJsonObjectString(
+      event.data.metadata,
+      "client_message_id",
+      "clientMessageId",
+      "message_id",
+      "messageId",
+    ) ??
+    (typeof event.message_id === "string" && event.message_id.trim().length > 0
+      ? event.message_id
+      : null)
+  );
+}
+
 function approvalRequestKindForEvent(
   event: JarvisSessionEvent,
 ): "command" | "file-read" | "file-change" {
@@ -434,6 +451,13 @@ function readJsonString(
     }
   }
   return null;
+}
+
+function readJsonObjectString(value: unknown, ...keys: ReadonlyArray<string>): string | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  return readJsonString(value as Record<string, unknown>, ...keys);
 }
 
 function readQuestions(event: JarvisSessionEvent): unknown[] | null {

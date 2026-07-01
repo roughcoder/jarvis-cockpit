@@ -3,6 +3,7 @@ import {
   JarvisSessionCheckpoint,
   JarvisSessionEvent,
   JarvisSessionRequest,
+  JarvisWorkerSession,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -73,6 +74,55 @@ it.effect("loads Jarvis summary read models without hydrating session history", 
     assert.strictEqual(readModel.threads[0]?.activities.length, 0);
     assert.strictEqual(eventCalls, 0);
     assert.strictEqual(checkpointCalls, 0);
+  }),
+);
+
+it.effect("loads Jarvis read models without hydrating archived session details", () =>
+  Effect.gen(function* () {
+    const fixture = makeJarvisFixtureClient();
+    let eventCalls = 0;
+    let checkpointCalls = 0;
+    let requestCalls = 0;
+    const client = {
+      ...fixture,
+      getSnapshot: () =>
+        fixture.getSnapshot().pipe(
+          Effect.map((snapshot) => {
+            const activeSession = snapshot.sessions[0];
+            assert.ok(activeSession);
+            const archivedSession: JarvisWorkerSession = {
+              ...activeSession,
+              session_ref:
+                "sessref_macbook-worker_sess_archived" as JarvisWorkerSession["session_ref"],
+              session_id: "sess_archived" as JarvisWorkerSession["session_id"],
+              archived_at: "2026-07-01T12:02:00+00:00",
+            };
+            return {
+              ...snapshot,
+              sessions: [activeSession, archivedSession],
+            };
+          }),
+        ),
+      getSessionEvents: (sessionRef: string) => {
+        eventCalls += 1;
+        return fixture.getSessionEvents(sessionRef);
+      },
+      getCheckpoints: (sessionRef: string) => {
+        checkpointCalls += 1;
+        return fixture.getCheckpoints(sessionRef);
+      },
+      getRequests: (sessionRef: string) => {
+        requestCalls += 1;
+        return fixture.getRequests(sessionRef);
+      },
+    };
+
+    const readModel = yield* loadJarvisReadModel(client);
+
+    assert.strictEqual(readModel.threads.length, 1);
+    assert.strictEqual(eventCalls, 1);
+    assert.strictEqual(checkpointCalls, 1);
+    assert.strictEqual(requestCalls, 1);
   }),
 );
 

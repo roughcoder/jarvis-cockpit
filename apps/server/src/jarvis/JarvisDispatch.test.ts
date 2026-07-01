@@ -5,7 +5,9 @@ import {
   CommandId,
   type JarvisArchiveInput,
   type JarvisRestoreCheckpointInput,
+  type JarvisSessionCheckpoint,
   type JarvisStartWorkInput,
+  type JarvisTurnInput,
   type JarvisUserInputInput,
   MessageId,
   ProjectId,
@@ -78,7 +80,7 @@ it.effect("routes first draft turns to Jarvis work start", () =>
 
     assert.deepStrictEqual(result, {
       sequence: 0,
-      promotedThreadId: "jarvis-session_sessref_macbook-worker_sess_fixture_codex",
+      promotedThreadId: ThreadId.make("jarvis-session_sessref_macbook-worker_sess_fixture_codex"),
     });
     assert.strictEqual(capturedStartWork?.prompt, "Build the cockpit dashboard.");
     assert.strictEqual(capturedStartWork?.title, "Cockpit dashboard");
@@ -238,6 +240,41 @@ it.effect("rejects failed Jarvis control results before returning a dispatch rec
   }),
 );
 
+it.effect("forwards the client user message id in Jarvis turn metadata", () =>
+  Effect.gen(function* () {
+    let capturedTurnInput: JarvisTurnInput | undefined;
+    const client = {
+      ...makeJarvisFixtureClient(),
+      sendTurn: (_sessionRef: string, input: JarvisTurnInput) => {
+        capturedTurnInput = input;
+        return Effect.succeed({ ok: true, cursor: "evt_turn" });
+      },
+    };
+
+    const result = yield* dispatchJarvisCommand({
+      client,
+      enabled: true,
+      command: {
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd_start"),
+        threadId: jarvisThreadId,
+        message: {
+          messageId: MessageId.make("msg_client_user"),
+          role: "user",
+          text: "Continue.",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdAt: now,
+      },
+    });
+
+    assert.deepStrictEqual(result, { sequence: 0 });
+    assert.strictEqual(capturedTurnInput?.metadata?.client_message_id, "msg_client_user");
+  }),
+);
+
 it.effect("rejects Jarvis turn attachments instead of dropping them", () =>
   Effect.gen(function* () {
     const exit = yield* Effect.exit(
@@ -375,6 +412,9 @@ it.effect("routes checkpoint revert by legacy turnCount when checkpointRef is ab
   Effect.gen(function* () {
     let restoredCheckpointId: string | undefined;
     let checkpointPageCalls = 0;
+    const checkpointSessionRef =
+      "sessref_macbook-worker_sess_fixture_codex" as JarvisSessionCheckpoint["session_ref"];
+    const checkpointProvider = "codex" as JarvisSessionCheckpoint["provider"];
     const client = {
       ...makeJarvisFixtureClient(),
       getCheckpoints: (
@@ -388,9 +428,9 @@ it.effect("routes checkpoint revert by legacy turnCount when checkpointRef is ab
             ? {
                 items: [
                   {
-                    session_ref: "sessref_macbook-worker_sess_fixture_codex",
+                    session_ref: checkpointSessionRef,
                     checkpoint_id: "ckpt_2",
-                    provider: "codex",
+                    provider: checkpointProvider,
                     restored: false,
                     event: {},
                   },
@@ -401,9 +441,9 @@ it.effect("routes checkpoint revert by legacy turnCount when checkpointRef is ab
             : {
                 items: [
                   {
-                    session_ref: "sessref_macbook-worker_sess_fixture_codex",
+                    session_ref: checkpointSessionRef,
                     checkpoint_id: "ckpt_1",
-                    provider: "codex",
+                    provider: checkpointProvider,
                     restored: false,
                     event: {},
                   },
@@ -567,28 +607,42 @@ it.effect("routes stop for Jarvis-managed threads through Jarvis", () =>
   }),
 );
 
-it.effect(
-  "rejects unsupported commands for Jarvis-managed threads instead of falling through",
-  () =>
-    Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        dispatchJarvisCommand({
-          client: makeJarvisFixtureClient(),
-          enabled: true,
-          command: {
-            type: "thread.meta.update",
-            commandId: CommandId.make("cmd_meta"),
-            threadId: jarvisThreadId,
-            title: "Renamed thread",
-          },
-        }),
-      );
+it.effect("treats Jarvis-managed thread metadata updates as no-ops", () =>
+  Effect.gen(function* () {
+    const result = yield* dispatchJarvisCommand({
+      client: makeJarvisFixtureClient(),
+      enabled: true,
+      command: {
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd_meta"),
+        threadId: jarvisThreadId,
+        title: "Renamed thread",
+      },
+    });
 
-      assert.strictEqual(Exit.isFailure(exit), true);
-      if (Exit.isFailure(exit)) {
-        assert.ok(exit.cause.toString().includes("does not support command thread.meta.update"));
-      }
-    }),
+    assert.deepStrictEqual(result, { sequence: 0 });
+  }),
+);
+
+it.effect("rejects unsupported commands for Jarvis-managed threads instead of falling through", () =>
+  Effect.gen(function* () {
+    const exit = yield* Effect.exit(
+      dispatchJarvisCommand({
+        client: makeJarvisFixtureClient(),
+        enabled: true,
+        command: {
+          type: "thread.delete",
+          commandId: CommandId.make("cmd_delete"),
+          threadId: jarvisThreadId,
+        },
+      }),
+    );
+
+    assert.strictEqual(Exit.isFailure(exit), true);
+    if (Exit.isFailure(exit)) {
+      assert.ok(exit.cause.toString().includes("does not support command thread.delete"));
+    }
+  }),
 );
 
 it.effect("ignores non-Jarvis threads", () =>
