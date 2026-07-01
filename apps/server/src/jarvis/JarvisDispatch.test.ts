@@ -383,6 +383,30 @@ it.effect("rejects archive for Jarvis-managed threads instead of falling through
   }),
 );
 
+it.effect(
+  "rejects unsupported commands for Jarvis-managed threads instead of falling through",
+  () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        dispatchJarvisCommand({
+          client: makeJarvisFixtureClient(),
+          enabled: true,
+          command: {
+            type: "thread.meta.update",
+            commandId: CommandId.make("cmd_meta"),
+            threadId: jarvisThreadId,
+            title: "Renamed thread",
+          },
+        }),
+      );
+
+      assert.strictEqual(Exit.isFailure(exit), true);
+      if (Exit.isFailure(exit)) {
+        assert.ok(exit.cause.toString().includes("does not support command thread.meta.update"));
+      }
+    }),
+);
+
 it.effect("ignores non-Jarvis threads", () =>
   Effect.gen(function* () {
     const result = yield* dispatchJarvisCommand({
