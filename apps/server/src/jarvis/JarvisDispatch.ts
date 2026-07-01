@@ -48,7 +48,16 @@ export function dispatchJarvisCommand(input: {
   }
 
   return dispatchJarvisWrite(input.client, sessionRef, input.command).pipe(
-    Effect.flatMap((result) => dispatchReceiptForJarvisResult(result, input.command.type)),
+    Effect.flatMap((result) => {
+      if (result === null) {
+        return Effect.fail(
+          new OrchestrationDispatchCommandError({
+            message: `Jarvis cockpit does not support command ${input.command.type} for Jarvis-managed sessions.`,
+          }),
+        );
+      }
+      return dispatchReceiptForJarvisResult(result, input.command.type);
+    }),
   );
 }
 
