@@ -236,7 +236,64 @@ it.effect("accepts current Jarvis snapshot edge-state literals", () =>
       generated_at: generatedAt,
       sync: {
         mode: "none",
+        status: "stale",
+        synced_at: null,
+        errors: [],
+      },
+      runs: [],
+      sessions: [],
+      workers: [
+        {
+          worker_id: "offline-worker",
+          display_name: "Offline worker",
+          status: "offline",
+          health: "unknown",
+          last_seen_at: null,
+          capabilities: [],
+          engines: [],
+          capacity: {
+            max_sessions: 1,
+            active_sessions: 0,
+            queued_sessions: 0,
+          },
+          public_metadata: {},
+        },
+      ],
+      artifacts: [],
+    });
+
+    assert.strictEqual(parsed.sync.status, "stale");
+    assert.strictEqual(parsed.workers[0]?.health, "unknown");
+  }),
+);
+
+it.effect("rejects obsolete pre-merge Jarvis snapshot literals", () =>
+  Effect.gen(function* () {
+    yield* decodeSnapshot({
+      api_version: "v1",
+      schema_version: 1,
+      cursor: "evt_empty",
+      generated_at: generatedAt,
+      sync: {
+        mode: "none",
         status: "skipped",
+        synced_at: null,
+        errors: [],
+      },
+      runs: [],
+      sessions: [],
+      workers: [],
+      artifacts: [],
+    }).pipe(Effect.flip);
+
+    yield* decodeSnapshot({
+      api_version: "v1",
+      schema_version: 1,
+      cursor: "evt_empty",
+      generated_at: generatedAt,
+      sync: {
+        mode: "none",
+        status: "stale",
         synced_at: null,
         errors: [],
       },
@@ -260,10 +317,7 @@ it.effect("accepts current Jarvis snapshot edge-state literals", () =>
         },
       ],
       artifacts: [],
-    });
-
-    assert.strictEqual(parsed.sync.status, "skipped");
-    assert.strictEqual(parsed.workers[0]?.health, "unreachable");
+    }).pipe(Effect.flip);
   }),
 );
 
