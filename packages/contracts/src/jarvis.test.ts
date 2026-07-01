@@ -4,6 +4,8 @@ import * as Schema from "effect/Schema";
 
 import {
   JarvisApprovalInput,
+  JarvisCockpitCatalog,
+  JarvisCockpitEvent,
   JarvisControlResult,
   JarvisRestoreCheckpointInput,
   JarvisRunsSnapshot,
@@ -16,6 +18,7 @@ import {
   JarvisUserInputInput,
 } from "./jarvis.ts";
 
+const decodeCatalog = Schema.decodeUnknownEffect(JarvisCockpitCatalog);
 const decodeSnapshot = Schema.decodeUnknownEffect(JarvisRunsSnapshot);
 const decodeEvent = Schema.decodeUnknownEffect(JarvisSessionEvent);
 const decodeEventsPage = Schema.decodeUnknownEffect(JarvisSessionEventsPage);
@@ -27,33 +30,42 @@ const decodeApproval = Schema.decodeUnknownEffect(JarvisApprovalInput);
 const decodeUserInput = Schema.decodeUnknownEffect(JarvisUserInputInput);
 const decodeRestoreCheckpoint = Schema.decodeUnknownEffect(JarvisRestoreCheckpointInput);
 const decodeControlResult = Schema.decodeUnknownEffect(JarvisControlResult);
+const decodeSseEvent = Schema.decodeUnknownEffect(JarvisCockpitEvent);
 
-const generatedAt = "2026-06-30T18:00:00+00:00";
+const generatedAt = "2026-07-01T12:00:00+00:00";
+const sessionRef = "sessref_macbook-worker_sess_123";
+const runId = "run_123";
 
 const sessionFixture = {
-  session_id: "sess_1760000000_abcd1234",
+  session_ref: sessionRef,
+  worker_id: "macbook-worker",
+  session_id: "sess_123",
+  run_id: runId,
+  title: "Codex implementation",
   provider: "codex",
   engine: "codex",
   status: "running",
-  run_id: "run_1760000000_abcd1234",
   repo: "roughcoder/jarvis",
   branch: "jarvis/eng-42-worker-heartbeat",
-  cwd: "/worker/worktrees/jarvis-eng-42-worker-heartbeat",
-  title: "Add worker heartbeat status",
+  cwd_label: "jarvis",
+  latest_event_cursor: "evt_123",
+  pending_input_count: 0,
+  pending_approval_count: 1,
+  checkpoint_count: 2,
   created_at: generatedAt,
   updated_at: generatedAt,
-  metadata: {
-    surface: "t3",
-  },
 };
 
 const eventFixture = {
-  event_id: "ev_1760000001_abcd1234",
-  session_id: "sess_1760000000_abcd1234",
+  event_id: "evt_124",
+  sequence: 2,
+  session_ref: sessionRef,
+  run_id: runId,
   type: "turn.started",
-  time: "2026-06-30T18:00:01+00:00",
+  occurred_at: "2026-07-01T12:00:01+00:00",
+  turn_id: "turn_1",
+  message_id: null,
   data: {
-    turn_id: "turn_1",
     prompt: "Continue from the current diff and run the tests.",
     provider_payload: {
       provider_specific: true,
@@ -61,57 +73,113 @@ const eventFixture = {
   },
 };
 
-it.effect("decodes a Jarvis aggregate snapshot fixture", () =>
+it.effect("decodes a Jarvis cockpit catalog fixture", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeCatalog({
+      api_version: "v1",
+      schema_version: 1,
+      engines: [{ id: "codex", label: "Codex" }],
+      capabilities: [{ id: "code.edit", label: "Edit code" }],
+      work_sources: [{ id: "manual", label: "Manual" }],
+      engine_strategies: [{ id: "single", label: "Single" }],
+      branch_strategies: [{ id: "auto", label: "Auto" }],
+      landing_policies: [{ id: "branch_only", label: "Branch only" }],
+      request_kinds: [{ id: "approval", label: "Approval" }],
+      generated_at: generatedAt,
+    });
+
+    assert.strictEqual(parsed.api_version, "v1");
+    assert.strictEqual(parsed.engines[0]?.id, "codex");
+  }),
+);
+
+it.effect("decodes a Jarvis cockpit snapshot fixture", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeSnapshot({
+      api_version: "v1",
+      schema_version: 1,
+      cursor: "evt_123",
+      generated_at: generatedAt,
+      sync: {
+        mode: "probe",
+        status: "fresh",
+        synced_at: generatedAt,
+        errors: [],
+      },
       runs: [
         {
-          run_id: "run_1760000000_abcd1234",
+          run_id: runId,
           title: "Worker heartbeat",
           objective: "Add worker heartbeat status",
           status: "running",
+          phase: "implementing",
           repo: "roughcoder/jarvis",
           branch: "jarvis/eng-42-worker-heartbeat",
-          cwd: "/Users/neilbarton/Development/jarvis",
-          worker_count: 1,
           session_count: 1,
-          needs_input: false,
-          needs_approval: true,
+          active_session_count: 1,
+          pending_input_count: 0,
+          pending_approval_count: 1,
+          artifact_count: 1,
+          primary_artifact_ids: ["artifact_branch_1"],
+          latest_activity_at: generatedAt,
+          latest_cursor: "evt_123",
           created_at: generatedAt,
           updated_at: generatedAt,
-          metadata: {
-            surface: "t3",
-          },
+          terminal_reason: null,
         },
       ],
       sessions: [sessionFixture],
       workers: [
         {
-          worker_id: "worker_local_mac",
-          label: "Local Mac",
+          worker_id: "macbook-worker",
+          display_name: "MacBook Pro",
           status: "online",
-          providers: ["codex", "claude"],
-          engines: ["codex", "claude"],
-          active_session_count: 1,
-          updated_at: generatedAt,
+          health: "healthy",
+          last_seen_at: generatedAt,
+          capabilities: ["code.edit", "shell.run"],
+          engines: [
+            {
+              engine: "codex",
+              display_name: "Codex",
+              status: "available",
+              default: true,
+              supports: {
+                streaming: true,
+                resume: true,
+                interrupt: true,
+                approval_requests: true,
+                input_requests: true,
+                checkpoints: true,
+              },
+            },
+          ],
+          capacity: {
+            max_sessions: 4,
+            active_sessions: 1,
+            queued_sessions: 0,
+          },
+          public_metadata: {},
         },
       ],
       artifacts: [
         {
           artifact_id: "artifact_branch_1",
-          run_id: "run_1760000000_abcd1234",
-          session_id: "sess_1760000000_abcd1234",
+          run_id: runId,
+          session_ref: sessionRef,
           kind: "branch",
           title: "jarvis/eng-42-worker-heartbeat",
+          status: "ready",
           url: "https://github.com/roughcoder/jarvis/tree/jarvis/eng-42-worker-heartbeat",
+          branch: "jarvis/eng-42-worker-heartbeat",
           created_at: generatedAt,
+          updated_at: generatedAt,
         },
       ],
-      generated_at: generatedAt,
     });
 
-    assert.strictEqual(parsed.runs[0]?.needs_approval, true);
-    assert.strictEqual(parsed.sessions[0]?.provider, "codex");
+    assert.strictEqual(parsed.runs[0]?.pending_approval_count, 1);
+    assert.strictEqual(parsed.sessions[0]?.session_ref, sessionRef);
+    assert.strictEqual(parsed.workers[0]?.engines[0]?.supports.resume, true);
     assert.strictEqual(parsed.artifacts[0]?.kind, "branch");
   }),
 );
@@ -152,50 +220,48 @@ it.effect("rejects malformed event envelopes", () =>
   }),
 );
 
-it.effect("decodes a worker-session events page", () =>
+it.effect("decodes paginated session events, requests, and checkpoints", () =>
   Effect.gen(function* () {
-    const parsed = yield* decodeEventsPage({
-      session_id: "sess_1760000000_abcd1234",
-      events: [
+    const events = yield* decodeEventsPage({
+      items: [
         eventFixture,
         {
-          event_id: "ev_1760000002_abcd1234",
-          session_id: "sess_1760000000_abcd1234",
-          type: "turn.waiting_provider",
-          time: "2026-06-30T18:00:02+00:00",
+          ...eventFixture,
+          event_id: "evt_125",
+          sequence: 3,
+          type: "assistant.message",
+          message_id: "message_1",
           data: {
-            turn_id: "turn_1",
-            message: "provider adapter not attached yet",
+            text: "Done.",
           },
         },
       ],
-      cursor: null,
+      cursor: "evt_125",
+      has_more: false,
     });
-
-    assert.strictEqual(parsed.events.length, 2);
-  }),
-);
-
-it.effect("decodes pending request and checkpoint projections", () =>
-  Effect.gen(function* () {
     const requests = yield* decodeRequestsPage({
-      requests: [
+      items: [
         {
-          session_id: "sess_1760000000_abcd1234",
           request_id: "approval_turn_1",
+          session_ref: sessionRef,
+          run_id: runId,
           kind: "approval",
           status: "pending",
-          event: {
-            type: "approval.requested",
-            request_id: "approval_turn_1",
+          title: "Approve shell command",
+          detail: "Run verification",
+          created_at: generatedAt,
+          payload: {
+            request_kind: "command",
           },
         },
       ],
+      cursor: "evt_126",
+      has_more: false,
     });
     const checkpoints = yield* decodeCheckpointsPage({
-      checkpoints: [
+      items: [
         {
-          session_id: "sess_1760000000_abcd1234",
+          session_ref: sessionRef,
           checkpoint_id: "ckpt_turn_1",
           label: "before review fixes",
           provider: "codex",
@@ -206,22 +272,26 @@ it.effect("decodes pending request and checkpoint projections", () =>
           },
         },
       ],
+      cursor: "evt_127",
+      has_more: false,
     });
 
-    assert.strictEqual(requests.requests[0]?.kind, "approval");
-    assert.strictEqual(checkpoints.checkpoints[0]?.checkpoint_id, "ckpt_turn_1");
+    assert.strictEqual(events.items.length, 2);
+    assert.strictEqual(requests.items[0]?.kind, "approval");
+    assert.strictEqual(checkpoints.items[0]?.checkpoint_id, "ckpt_turn_1");
   }),
 );
 
-it.effect("decodes command inputs with defaults", () =>
+it.effect("decodes command inputs with cockpit metadata defaults", () =>
   Effect.gen(function* () {
     const start = yield* decodeStartWork({
-      title: "Worker heartbeat",
-      objective: "Add worker heartbeat status",
-      prompt: "Inspect the repo and implement the worker heartbeat.",
-      metadata: {
-        surface: "t3",
-      },
+      phrase: "next Linear ticket",
+      source: "linear",
+      repo: "roughcoder/jarvis",
+      worker_id: "macbook-worker",
+      engine: "codex",
+      engine_strategy: "single",
+      start: true,
     });
     const turn = yield* decodeTurn({
       prompt: "Continue from the current diff.",
@@ -244,35 +314,59 @@ it.effect("decodes command inputs with defaults", () =>
     });
 
     assert.strictEqual(start.branch_strategy, "auto");
-    assert.deepStrictEqual(turn.metadata, {});
+    assert.strictEqual(start.metadata?.surface, "jarvis-cockpit");
+    assert.strictEqual(turn.metadata?.surface, "jarvis-cockpit");
     assert.strictEqual(approval.decision, "approved");
     assert.strictEqual(deniedApproval.decision, "denied");
     assert.strictEqual(input.text, "Use the existing orchestration store patterns.");
-    assert.deepStrictEqual(restore.metadata, {});
+    assert.strictEqual(restore.metadata?.surface, "jarvis-cockpit");
   }),
 );
 
-it.effect("accepts documented lightweight control response projections", () =>
+it.effect("accepts documented write success and failure response projections", () =>
   Effect.gen(function* () {
-    const parsed = yield* decodeControlResult({
+    const success = yield* decodeControlResult({
       ok: true,
+      cursor: "evt_130",
       session: {
-        session_id: "sess_1760000000_abcd1234",
-      },
-      event: {
-        type: "turn.started",
+        session_ref: sessionRef,
       },
       events: [
         {
-          type: "turn.waiting_provider",
+          type: "turn.started",
         },
       ],
-      turn_id: "turn_1",
+      requests: [],
+      artifacts: [],
+    });
+    const failure = yield* decodeControlResult({
+      ok: false,
+      error: {
+        code: "session_active",
+        message: "Session already has an active turn.",
+        recoverable: true,
+      },
     });
 
-    assert.strictEqual(parsed.ok, true);
-    assert.strictEqual(parsed.session?.session_id, "sess_1760000000_abcd1234");
-    assert.strictEqual(parsed.event?.type, "turn.started");
-    assert.strictEqual(parsed.events?.[0]?.type, "turn.waiting_provider");
+    assert.strictEqual(success.ok, true);
+    assert.strictEqual(success.session?.session_ref, sessionRef);
+    assert.strictEqual(success.events?.[0]?.type, "turn.started");
+    assert.strictEqual(failure.error?.code, "session_active");
+  }),
+);
+
+it.effect("decodes SSE event envelopes with cursor-bearing payloads", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeSseEvent({
+      cursor: "evt_124",
+      occurred_at: generatedAt,
+      type: "session.event",
+      run_id: runId,
+      session_ref: sessionRef,
+      payload: eventFixture,
+    });
+
+    assert.strictEqual(parsed.cursor, "evt_124");
+    assert.strictEqual(parsed.type, "session.event");
   }),
 );

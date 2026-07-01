@@ -1,5 +1,6 @@
 import {
   JarvisApprovalInput,
+  JarvisCockpitCatalog,
   JarvisControlResult,
   JarvisRequestId,
   JarvisRestoreCheckpointInput,
@@ -9,13 +10,13 @@ import {
   JarvisSessionCheckpointsPage,
   JarvisSessionEvent,
   JarvisSessionEventsPage,
+  JarvisSessionRef,
   JarvisSessionRequestsPage,
   JarvisStartWorkInput,
   JarvisTurnInput,
   JarvisUserInputInput,
   JarvisWorkerSession,
   JarvisWorkerSessionId,
-  type JarvisWorkerSessionStatus,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -57,48 +58,51 @@ export class JarvisMissingContractError extends Error {
 }
 
 export interface JarvisClient {
+  readonly getCatalog: () => Effect.Effect<JarvisCockpitCatalog, JarvisClientError>;
   readonly getSnapshot: () => Effect.Effect<JarvisRunsSnapshot, JarvisClientError>;
-  readonly getSession: (sessionId: string) => Effect.Effect<JarvisWorkerSession, JarvisClientError>;
+  readonly getSession: (
+    sessionRef: string,
+  ) => Effect.Effect<JarvisWorkerSession, JarvisClientError>;
   readonly getSessionEvents: (
-    sessionId: string,
+    sessionRef: string,
     options?: { readonly after?: string; readonly limit?: number },
   ) => Effect.Effect<JarvisSessionEventsPage, JarvisClientError>;
   readonly getRequests: (
-    sessionId?: string,
+    sessionRef: string,
   ) => Effect.Effect<JarvisSessionRequestsPage, JarvisClientError>;
   readonly getCheckpoints: (
-    sessionId: string,
+    sessionRef: string,
   ) => Effect.Effect<JarvisSessionCheckpointsPage, JarvisClientError>;
   readonly startWork: (
     input: JarvisStartWorkInput,
   ) => Effect.Effect<JarvisControlResult, JarvisClientError | JarvisMissingContractError>;
   readonly sendTurn: (
-    sessionId: string,
+    sessionRef: string,
     input: JarvisTurnInput,
   ) => Effect.Effect<JarvisControlResult, JarvisClientError>;
   readonly respondApproval: (
-    sessionId: string,
+    sessionRef: string,
     input: JarvisApprovalInput,
   ) => Effect.Effect<JarvisControlResult, JarvisClientError>;
   readonly respondInput: (
-    sessionId: string,
+    sessionRef: string,
     input: JarvisUserInputInput,
   ) => Effect.Effect<JarvisControlResult, JarvisClientError>;
   readonly interruptSession: (
-    sessionId: string,
+    sessionRef: string,
     turnId?: string,
   ) => Effect.Effect<JarvisControlResult, JarvisClientError>;
   readonly stopSession: (
-    sessionId: string,
+    sessionRef: string,
   ) => Effect.Effect<JarvisControlResult, JarvisClientError>;
   readonly restoreCheckpoint: (
-    sessionId: string,
+    sessionRef: string,
     input: JarvisRestoreCheckpointInput,
   ) => Effect.Effect<JarvisControlResult, JarvisClientError>;
   readonly resumeRun: (
     runId: string,
     input?: Record<string, unknown>,
-  ) => Effect.Effect<JarvisControlResult, JarvisMissingContractError>;
+  ) => Effect.Effect<JarvisControlResult, JarvisClientError | JarvisMissingContractError>;
 }
 
 export class JarvisClientService extends Context.Service<JarvisClientService, JarvisClient>()(
@@ -107,34 +111,11 @@ export class JarvisClientService extends Context.Service<JarvisClientService, Ja
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
-const WorkerSessionListEntry = Schema.Struct({
-  session_id: JarvisWorkerSessionId,
-  provider: Schema.optional(Schema.String),
-  engine: Schema.optional(Schema.String),
-  status: Schema.optional(Schema.String),
-  run_id: Schema.optional(Schema.String),
-  repo: Schema.optional(Schema.NullOr(Schema.String)),
-  branch: Schema.optional(Schema.NullOr(Schema.String)),
-  cwd: Schema.optional(Schema.NullOr(Schema.String)),
-  title: Schema.optional(Schema.String),
-  worker_id: Schema.optional(Schema.String),
-  created_at: Schema.optional(Schema.String),
-  updated_at: Schema.optional(Schema.String),
-  metadata: Schema.optional(Schema.Unknown),
-});
-type WorkerSessionListEntry = typeof WorkerSessionListEntry.Type;
-
-const WorkerSessionListResponse = Schema.Struct({
-  sessions: Schema.Array(WorkerSessionListEntry),
-});
-const SessionEventsResponse = Schema.Struct({
-  events: Schema.Array(JarvisSessionEvent),
-});
-
+const decodeCatalog = Schema.decodeUnknownEffect(JarvisCockpitCatalog);
+const decodeSnapshot = Schema.decodeUnknownEffect(JarvisRunsSnapshot);
 const decodeControlResult = Schema.decodeUnknownEffect(JarvisControlResult);
 const decodeWorkerSession = Schema.decodeUnknownEffect(JarvisWorkerSession);
-const decodeWorkerSessionList = Schema.decodeUnknownEffect(WorkerSessionListResponse);
-const decodeSessionEvents = Schema.decodeUnknownEffect(SessionEventsResponse);
+const decodeSessionEventsPage = Schema.decodeUnknownEffect(JarvisSessionEventsPage);
 const decodeSessionRequestsPage = Schema.decodeUnknownEffect(JarvisSessionRequestsPage);
 const decodeSessionCheckpointsPage = Schema.decodeUnknownEffect(JarvisSessionCheckpointsPage);
 
@@ -150,7 +131,24 @@ const decodeFor =
   (input: unknown): Effect.Effect<A, JarvisClientError> =>
     decoder(input).pipe(Effect.mapError(mapDecodeError(operation)));
 
-export function makeJarvisWorkerSessionClient(input: {
+const withSurfaceMetadata = <Input extends object>(
+  input: Input,
+): Input & { readonly metadata: Record<string, unknown> } => {
+  const metadata = "metadata" in input && isRecord(input.metadata) ? input.metadata : {};
+  return {
+    ...input,
+    metadata: {
+      ...metadata,
+      surface: "jarvis-cockpit",
+    },
+  };
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function makeJarvisCockpitClient(input: {
   readonly baseUrl: URL;
   readonly token?: string;
   readonly fetch?: FetchLike;
@@ -197,130 +195,94 @@ export function makeJarvisWorkerSessionClient(input: {
       body: JSON.stringify(payload),
     });
 
-  const decodeSession = (operation: string, input: unknown) =>
-    decodeFor(operation, decodeWorkerSession)(input);
-
-  const getSessionById = (sessionId: string) =>
-    requestJson("sessions.get", `/sessions/${encodeURIComponent(sessionId)}`).pipe(
-      Effect.flatMap((body) => decodeSession("sessions.get", body)),
-    );
-
-  const hydrateListEntry = (
-    entry: WorkerSessionListEntry,
-  ): Effect.Effect<JarvisWorkerSession, JarvisClientError> => {
-    if (
-      typeof entry.provider === "string" &&
-      typeof entry.engine === "string" &&
-      typeof entry.status === "string" &&
-      typeof entry.created_at === "string" &&
-      typeof entry.updated_at === "string"
-    ) {
-      return decodeSession("sessions.list", entry);
-    }
-    return getSessionById(entry.session_id);
-  };
-
   return {
-    getSnapshot: () =>
-      requestJson("sessions.list", "/sessions").pipe(
-        Effect.flatMap(decodeFor("sessions.list", decodeWorkerSessionList)),
-        Effect.flatMap((response) => Effect.all(response.sessions.map(hydrateListEntry))),
-        Effect.map(snapshotFromSessions),
+    getCatalog: () =>
+      requestJson("cockpit.catalog", "/v1/cockpit/catalog").pipe(
+        Effect.flatMap(decodeFor("cockpit.catalog", decodeCatalog)),
       ),
-    getSession: getSessionById,
-    getSessionEvents: (sessionId, options) =>
+    getSnapshot: () =>
+      requestJson("cockpit.snapshot", "/v1/cockpit/snapshot?sync=fast").pipe(
+        Effect.flatMap(decodeFor("cockpit.snapshot", decodeSnapshot)),
+      ),
+    getSession: (sessionRef) =>
+      requestJson("sessions.get", `/v1/sessions/${encodeURIComponent(sessionRef)}`).pipe(
+        Effect.flatMap(decodeFor("sessions.get", decodeWorkerSession)),
+      ),
+    getSessionEvents: (sessionRef, options) =>
       requestJson(
         "sessions.events",
-        appendQuery(`/sessions/${encodeURIComponent(sessionId)}/events`, {
+        appendQuery(`/v1/sessions/${encodeURIComponent(sessionRef)}/events`, {
           after: options?.after,
           limit: options?.limit,
         }),
-      ).pipe(
-        Effect.flatMap(decodeFor("sessions.events", decodeSessionEvents)),
-        Effect.map((response) => ({
-          session_id: JarvisWorkerSession.fields.session_id.make(sessionId),
-          events: response.events,
-          cursor: null,
-        })),
-      ),
-    getRequests: (sessionId) =>
+      ).pipe(Effect.flatMap(decodeFor("sessions.events", decodeSessionEventsPage))),
+    getRequests: (sessionRef) =>
       requestJson(
         "sessions.requests",
-        sessionId === undefined
-          ? "/sessions/requests"
-          : `/sessions/${encodeURIComponent(sessionId)}/requests`,
+        `/v1/sessions/${encodeURIComponent(sessionRef)}/requests`,
       ).pipe(Effect.flatMap(decodeFor("sessions.requests", decodeSessionRequestsPage))),
-    getCheckpoints: (sessionId) =>
+    getCheckpoints: (sessionRef) =>
       requestJson(
         "sessions.checkpoints",
-        `/sessions/${encodeURIComponent(sessionId)}/checkpoints`,
+        `/v1/sessions/${encodeURIComponent(sessionRef)}/checkpoints`,
       ).pipe(Effect.flatMap(decodeFor("sessions.checkpoints", decodeSessionCheckpointsPage))),
-    startWork: (workInput) => {
-      const metadata = workInput.metadata ?? {};
-      return postJson("sessions.create", "/sessions", {
-        run_id: "run_t3_dev_session",
-        provider: workInput.provider ?? workInput.engine ?? "codex",
-        engine: workInput.engine ?? workInput.provider ?? "codex",
-        repo: workInput.repo ?? "",
-        branch: workInput.branch ?? "",
-        title: workInput.title,
-        metadata: {
-          ...metadata,
-          objective: workInput.objective,
-          prompt: workInput.prompt,
-          surface: "t3",
-          execution_envelope: metadata.execution_envelope ?? {
-            run_id: "run_t3_dev_session",
-            allowed_actions: ["worker.session.create", "worker.session.turn"],
-            landing: {
-              mode: "branch_only",
-              allow_merge: false,
-            },
-          },
-        },
-      }).pipe(Effect.flatMap(decodeFor("sessions.create", decodeControlResult)));
-    },
-    sendTurn: (sessionId, turnInput) =>
-      postJson("sessions.turn", `/sessions/${encodeURIComponent(sessionId)}/turns`, turnInput).pipe(
-        Effect.flatMap(decodeFor("sessions.turn", decodeControlResult)),
+    startWork: (workInput) =>
+      postJson("work.start", "/v1/work/start", withSurfaceMetadata(workInput)).pipe(
+        Effect.flatMap(decodeFor("work.start", decodeControlResult)),
       ),
-    respondApproval: (sessionId, approvalInput) =>
+    sendTurn: (sessionRef, turnInput) =>
+      postJson(
+        "sessions.turn",
+        `/v1/sessions/${encodeURIComponent(sessionRef)}/turns`,
+        withSurfaceMetadata(turnInput),
+      ).pipe(Effect.flatMap(decodeFor("sessions.turn", decodeControlResult))),
+    respondApproval: (sessionRef, approvalInput) =>
       postJson(
         "sessions.approval",
-        `/sessions/${encodeURIComponent(sessionId)}/approval`,
-        approvalInput,
+        `/v1/sessions/${encodeURIComponent(sessionRef)}/approval`,
+        withSurfaceMetadata(approvalInput),
       ).pipe(Effect.flatMap(decodeFor("sessions.approval", decodeControlResult))),
-    respondInput: (sessionId, userInput) =>
+    respondInput: (sessionRef, userInput) =>
       postJson(
         "sessions.input",
-        `/sessions/${encodeURIComponent(sessionId)}/input`,
-        userInput,
+        `/v1/sessions/${encodeURIComponent(sessionRef)}/input`,
+        withSurfaceMetadata(userInput),
       ).pipe(Effect.flatMap(decodeFor("sessions.input", decodeControlResult))),
-    interruptSession: (sessionId, turnId) =>
+    interruptSession: (sessionRef, turnId) =>
       postJson(
         "sessions.interrupt",
-        `/sessions/${encodeURIComponent(sessionId)}/interrupt`,
-        turnId ? { turn_id: turnId } : {},
+        `/v1/sessions/${encodeURIComponent(sessionRef)}/interrupt`,
+        withSurfaceMetadata(turnId ? { turn_id: turnId } : {}),
       ).pipe(Effect.flatMap(decodeFor("sessions.interrupt", decodeControlResult))),
-    stopSession: (sessionId) =>
-      postJson("sessions.stop", `/sessions/${encodeURIComponent(sessionId)}/stop`, {}).pipe(
-        Effect.flatMap(decodeFor("sessions.stop", decodeControlResult)),
-      ),
-    restoreCheckpoint: (sessionId, restoreInput) =>
+    stopSession: (sessionRef) =>
+      postJson(
+        "sessions.stop",
+        `/v1/sessions/${encodeURIComponent(sessionRef)}/stop`,
+        withSurfaceMetadata({}),
+      ).pipe(Effect.flatMap(decodeFor("sessions.stop", decodeControlResult))),
+    restoreCheckpoint: (sessionRef, restoreInput) =>
       postJson(
         "sessions.checkpoints.restore",
-        `/sessions/${encodeURIComponent(sessionId)}/checkpoints/restore`,
-        restoreInput,
+        `/v1/sessions/${encodeURIComponent(sessionRef)}/checkpoints/restore`,
+        withSurfaceMetadata(restoreInput),
       ).pipe(Effect.flatMap(decodeFor("sessions.checkpoints.restore", decodeControlResult))),
-    resumeRun: (runId) =>
-      Effect.fail(
-        new JarvisMissingContractError({
-          operation: "runs.resume",
-          missing: `No Jarvis resume endpoint is defined for run ${runId}.`,
+    resumeRun: (runId, resumeInput) =>
+      postJson(
+        "work.resume",
+        "/v1/work/resume",
+        withSurfaceMetadata({
+          run_id: runId,
+          prompt:
+            typeof resumeInput?.prompt === "string" && resumeInput.prompt.trim().length > 0
+              ? resumeInput.prompt
+              : "Continue from the current state.",
+          ...resumeInput,
         }),
-      ),
+      ).pipe(Effect.flatMap(decodeFor("work.resume", decodeControlResult))),
   };
 }
+
+export const makeJarvisWorkerSessionClient = makeJarvisCockpitClient;
 
 export function makeJarvisClient(config: {
   readonly jarvisCockpitEnabled: boolean;
@@ -332,7 +294,7 @@ export function makeJarvisClient(config: {
     return makeJarvisFixtureClient();
   }
   if (config.jarvisApiBaseUrl !== undefined) {
-    return makeJarvisWorkerSessionClient({
+    return makeJarvisCockpitClient({
       baseUrl: config.jarvisApiBaseUrl,
       ...(config.jarvisApiToken ? { token: config.jarvisApiToken } : {}),
     });
@@ -359,6 +321,7 @@ function makeMissingConfigurationClient(message: string): JarvisClient {
     );
 
   return {
+    getCatalog: () => fail("jarvis.client.configure"),
     getSnapshot: () => fail("jarvis.client.configure"),
     getSession: () => fail("jarvis.client.configure"),
     getSessionEvents: () => fail("jarvis.client.configure"),
@@ -371,161 +334,358 @@ function makeMissingConfigurationClient(message: string): JarvisClient {
     interruptSession: () => fail("jarvis.client.configure"),
     stopSession: () => fail("jarvis.client.configure"),
     restoreCheckpoint: () => fail("jarvis.client.configure"),
-    resumeRun: () =>
-      Effect.fail(
-        new JarvisMissingContractError({
-          operation: "runs.resume",
-          missing: message,
-        }),
-      ),
+    resumeRun: () => fail("jarvis.client.configure"),
   };
 }
 
 export function makeJarvisFixtureClient(): JarvisClient {
-  const now = "2026-06-30T18:00:00+00:00";
+  const now = "2026-07-01T12:00:00+00:00";
+  const sessionRef = JarvisSessionRef.make("sessref_macbook-worker_sess_fixture_codex");
+  const runId = JarvisRunId.make("run_fixture_dashboard");
   const session: JarvisWorkerSession = {
-    session_id: JarvisWorkerSession.fields.session_id.make("sess_fixture_codex"),
+    session_ref: sessionRef,
+    worker_id: "macbook-worker" as JarvisWorkerSession["worker_id"],
+    session_id: JarvisWorkerSessionId.make("sess_fixture_codex"),
     provider: "codex",
     engine: "codex",
-    status: "waiting_provider",
-    run_id: JarvisRunId.make("run_fixture_dashboard"),
+    status: "needs_input",
+    run_id: runId,
     repo: "roughcoder/jarvis",
     branch: "jarvis/fixture-agentic-cockpit",
-    cwd: "/Users/neilbarton/Development/jarvis",
-    title: "Fixture worker session",
+    cwd_label: "jarvis",
+    title: "Fixture Codex implementation",
+    latest_event_cursor: "evt_fixture_2",
+    pending_input_count: 1,
+    pending_approval_count: 0,
+    checkpoint_count: 1,
     created_at: now,
     updated_at: now,
     metadata: {
-      surface: "t3",
+      surface: "jarvis-cockpit",
     },
   };
-  const snapshot = snapshotFromSessions([session]);
+  const run: JarvisRun = {
+    run_id: runId,
+    title: "Build Jarvis cockpit",
+    objective: "Expose Jarvis orchestration through T3 cockpit projections",
+    status: "needs_input",
+    phase: "implementing",
+    repo: "roughcoder/jarvis",
+    branch: "jarvis/fixture-agentic-cockpit",
+    session_count: 1,
+    active_session_count: 1,
+    pending_input_count: 1,
+    pending_approval_count: 0,
+    artifact_count: 2,
+    primary_artifact_ids: ["artifact_fixture_pr" as JarvisRun["primary_artifact_ids"][number]],
+    latest_activity_at: now,
+    latest_cursor: "evt_fixture_2",
+    created_at: now,
+    updated_at: now,
+    terminal_reason: null,
+    metadata: {
+      surface: "jarvis-cockpit",
+    },
+  };
   const events: ReadonlyArray<JarvisSessionEvent> = [
     {
-      event_id: JarvisSessionEvent.fields.event_id.make("ev_fixture_created"),
-      session_id: session.session_id,
+      event_id: JarvisSessionEvent.fields.event_id.make("evt_fixture_1"),
+      sequence: 1,
+      session_ref: session.session_ref,
+      run_id: session.run_id,
       type: "session.created",
-      time: now,
+      occurred_at: now,
+      turn_id: null,
+      message_id: null,
       data: {
         provider: "codex",
         engine: "codex",
       },
     },
     {
-      event_id: JarvisSessionEvent.fields.event_id.make("ev_fixture_waiting"),
-      session_id: session.session_id,
-      type: "turn.waiting_provider",
-      time: now,
+      event_id: JarvisSessionEvent.fields.event_id.make("evt_fixture_2"),
+      sequence: 2,
+      session_ref: session.session_ref,
+      run_id: session.run_id,
+      type: "input.requested",
+      occurred_at: now,
+      turn_id: "turn_fixture_1",
+      message_id: null,
       data: {
-        turn_id: "turn_fixture_1",
-        message: "provider adapter not attached yet",
+        request_id: "input_fixture_1",
+        prompt: "Choose the next worker action.",
       },
     },
   ];
+  const snapshot: JarvisRunsSnapshot = {
+    api_version: "v1",
+    schema_version: 1,
+    cursor: "evt_fixture_2",
+    generated_at: now,
+    sync: {
+      mode: "fast",
+      status: "fresh",
+      synced_at: now,
+      errors: [],
+    },
+    runs: [run],
+    sessions: [session],
+    workers: [
+      {
+        worker_id: "macbook-worker" as JarvisWorkerSession["worker_id"],
+        display_name: "MacBook Pro",
+        status: "online",
+        health: "healthy",
+        last_seen_at: now,
+        capabilities: ["code.edit", "shell.run", "browser.use", "github.pr.create"],
+        engines: [
+          {
+            engine: "codex",
+            display_name: "Codex",
+            status: "available",
+            default: true,
+            supports: {
+              streaming: true,
+              resume: true,
+              interrupt: true,
+              approval_requests: true,
+              input_requests: true,
+              checkpoints: true,
+            },
+          },
+        ],
+        capacity: {
+          max_sessions: 4,
+          active_sessions: 1,
+          queued_sessions: 0,
+        },
+        repositories: ["roughcoder/jarvis"],
+        public_metadata: {},
+      },
+    ],
+    artifacts: [
+      {
+        artifact_id: "artifact_fixture_branch" as JarvisRun["primary_artifact_ids"][number],
+        run_id: run.run_id,
+        session_ref: session.session_ref,
+        kind: "branch",
+        provider: "github",
+        external_id: null,
+        is_primary: false,
+        visibility: "public",
+        title: "jarvis/fixture-agentic-cockpit",
+        status: "ready",
+        summary: "Fixture branch for mocked cockpit mode",
+        url: "https://github.com/roughcoder/jarvis/tree/jarvis/fixture-agentic-cockpit",
+        branch: "jarvis/fixture-agentic-cockpit",
+        commit_sha: null,
+        command: null,
+        started_at: null,
+        completed_at: null,
+        created_at: now,
+        updated_at: now,
+        metadata: {},
+      },
+      {
+        artifact_id: "artifact_fixture_pr" as JarvisRun["primary_artifact_ids"][number],
+        run_id: run.run_id,
+        session_ref: session.session_ref,
+        kind: "pull_request",
+        provider: "github",
+        external_id: "1",
+        is_primary: true,
+        visibility: "public",
+        title: "PR #1",
+        status: "draft",
+        summary: "Fixture PR evidence for the cockpit dashboard",
+        url: "https://github.com/roughcoder/jarvis-cockpit/pull/1",
+        branch: "jarvis/fixture-agentic-cockpit",
+        commit_sha: null,
+        command: null,
+        started_at: null,
+        completed_at: null,
+        created_at: now,
+        updated_at: now,
+        metadata: {},
+      },
+    ],
+  };
+  const request = {
+    request_id: JarvisRequestId.make("input_fixture_1"),
+    session_ref: session.session_ref,
+    run_id: session.run_id,
+    kind: "input" as const,
+    status: "pending" as const,
+    title: "Worker direction needed",
+    detail: "Choose the next worker action.",
+    created_at: now,
+    expires_at: null,
+    questions: [
+      {
+        id: "next_action",
+        header: "Action",
+        question: "What should the worker do next?",
+        options: [
+          {
+            label: "Continue",
+            description: "Continue the current implementation.",
+          },
+        ],
+      },
+    ],
+    payload: {},
+  };
+  const checkpoint = {
+    session_ref: session.session_ref,
+    checkpoint_id: "ckpt_fixture_1",
+    label: "Fixture checkpoint",
+    provider: "codex",
+    restored: false,
+    event: {
+      type: "checkpoint.created",
+      checkpoint_id: "ckpt_fixture_1",
+      turn_id: "turn_fixture_1",
+      occurred_at: now,
+    },
+  };
 
   return {
+    getCatalog: () =>
+      Effect.succeed({
+        api_version: "v1",
+        schema_version: 1,
+        engines: [{ id: "codex", label: "Codex", description: "Codex coding agent", metadata: {} }],
+        capabilities: [
+          { id: "code.edit", label: "Edit code", description: null, metadata: {} },
+          { id: "shell.run", label: "Run shell", description: null, metadata: {} },
+        ],
+        work_sources: [{ id: "manual", label: "Manual", description: null, metadata: {} }],
+        engine_strategies: [{ id: "single", label: "Single", description: null, metadata: {} }],
+        branch_strategies: [{ id: "auto", label: "Auto", description: null, metadata: {} }],
+        landing_policies: [
+          { id: "branch_only", label: "Branch only", description: null, metadata: {} },
+        ],
+        request_kinds: [{ id: "input", label: "Input", description: null, metadata: {} }],
+        generated_at: now,
+      }),
     getSnapshot: () => Effect.succeed(snapshot),
-    getSession: (sessionId) =>
-      sessionId === session.session_id
+    getSession: (candidateSessionRef) =>
+      candidateSessionRef === session.session_ref
         ? Effect.succeed(session)
         : Effect.fail(
             new JarvisClientError({
               operation: "fixture.session.get",
               status: 404,
-              message: `No fixture session ${sessionId}.`,
+              message: `No fixture session ${candidateSessionRef}.`,
             }),
           ),
-    getSessionEvents: (sessionId) =>
+    getSessionEvents: (candidateSessionRef) =>
       Effect.succeed({
-        session_id: JarvisWorkerSession.fields.session_id.make(sessionId),
-        events,
-        cursor: null,
+        items: candidateSessionRef === session.session_ref ? events : [],
+        cursor: "evt_fixture_2",
+        has_more: false,
       }),
-    getRequests: (sessionId) =>
+    getRequests: (candidateSessionRef) =>
       Effect.succeed({
-        requests:
-          sessionId === undefined || sessionId === session.session_id
-            ? [
-                {
-                  session_id: session.session_id,
-                  request_id: JarvisRequestId.make("input_fixture_1"),
-                  kind: "input",
-                  status: "pending",
-                  event: {
-                    type: "input.requested",
-                    request_id: "input_fixture_1",
-                    prompt: "Provider adapter not attached yet.",
-                  },
-                },
-              ]
-            : [],
+        items: candidateSessionRef === session.session_ref ? [request] : [],
+        cursor: "evt_fixture_2",
+        has_more: false,
       }),
-    getCheckpoints: (sessionId) =>
+    getCheckpoints: (candidateSessionRef) =>
       Effect.succeed({
-        checkpoints:
-          sessionId === session.session_id
-            ? [
-                {
-                  session_id: session.session_id,
-                  checkpoint_id: "ckpt_fixture_1",
-                  label: "Fixture checkpoint",
-                  provider: "codex",
-                  restored: false,
-                  event: {
-                    type: "checkpoint.created",
-                    checkpoint_id: "ckpt_fixture_1",
-                    label: "Fixture checkpoint",
-                  },
-                },
-              ]
-            : [],
+        items: candidateSessionRef === session.session_ref ? [checkpoint] : [],
+        cursor: "evt_fixture_2",
+        has_more: false,
       }),
     startWork: () =>
       Effect.succeed({
         ok: true,
+        cursor: "evt_fixture_2",
+        run,
         session,
-        event: events[0],
+        events: [...events],
+        requests: [request],
+        artifacts: [...snapshot.artifacts],
       }),
     sendTurn: () =>
       Effect.succeed({
         ok: true,
+        cursor: "evt_fixture_2",
+        run,
         session,
-        turn_id: "turn_fixture_1",
-        events,
+        events: [...events],
+        requests: [request],
+        artifacts: [...snapshot.artifacts],
       }),
-    respondApproval: () => Effect.succeed({ ok: true, session }),
-    respondInput: () => Effect.succeed({ ok: true, session }),
+    respondApproval: () => Effect.succeed({ ok: true, cursor: "evt_fixture_2", run, session }),
+    respondInput: () => Effect.succeed({ ok: true, cursor: "evt_fixture_2", run, session }),
     interruptSession: () =>
       Effect.succeed({
         ok: true,
+        cursor: "evt_fixture_3",
+        run: { ...run, status: "interrupted" },
         session: { ...session, status: "interrupted" },
       }),
     stopSession: () =>
       Effect.succeed({
         ok: true,
+        cursor: "evt_fixture_3",
+        run: { ...run, status: "stopped" },
         session: { ...session, status: "stopped" },
       }),
-    restoreCheckpoint: (_sessionId, restoreInput) =>
+    restoreCheckpoint: (_sessionRef, restoreInput) =>
       Effect.succeed({
         ok: true,
+        cursor: "evt_fixture_3",
+        run,
         session,
-        event: {
-          event_id: JarvisSessionEvent.fields.event_id.make("ev_fixture_checkpoint_restored"),
-          session_id: session.session_id,
-          type: "checkpoint.restored",
-          time: now,
-          data: {
-            checkpoint_id: restoreInput.checkpoint_id,
+        events: [
+          {
+            event_id: JarvisSessionEvent.fields.event_id.make("evt_fixture_checkpoint_restored"),
+            sequence: 3,
+            session_ref: session.session_ref,
+            run_id: session.run_id,
+            type: "checkpoint.restored",
+            occurred_at: now,
+            turn_id: "turn_fixture_1",
+            message_id: null,
+            data: {
+              checkpoint_id: restoreInput.checkpoint_id,
+            },
           },
-        },
+        ],
       }),
-    resumeRun: (runId) =>
-      Effect.fail(
-        new JarvisMissingContractError({
-          operation: "runs.resume",
-          missing: `No fixture resume behavior is defined for run ${runId}.`,
-        }),
-      ),
+    resumeRun: (candidateRunId, resumeInput) =>
+      Effect.succeed({
+        ok: true,
+        cursor: "evt_fixture_3",
+        run: {
+          ...run,
+          run_id: JarvisRunId.make(candidateRunId === "latest" ? run.run_id : candidateRunId),
+        },
+        session,
+        events: [
+          {
+            event_id: JarvisSessionEvent.fields.event_id.make("evt_fixture_resume"),
+            sequence: 3,
+            session_ref: session.session_ref,
+            run_id: run.run_id,
+            type: "turn.started",
+            occurred_at: now,
+            turn_id:
+              typeof resumeInput?.turn_id === "string"
+                ? resumeInput.turn_id
+                : "turn_fixture_resume",
+            message_id: null,
+            data: {
+              prompt:
+                typeof resumeInput?.prompt === "string"
+                  ? resumeInput.prompt
+                  : "Continue from the current state.",
+            },
+          },
+        ],
+      }),
   };
 }
 
@@ -538,72 +698,6 @@ function appendQuery(path: string, params: Record<string, string | number | unde
   }
   const serialized = query.toString();
   return serialized.length > 0 ? `${path}?${serialized}` : path;
-}
-
-function snapshotFromSessions(sessions: ReadonlyArray<JarvisWorkerSession>): JarvisRunsSnapshot {
-  const runMap = new Map<string, Array<JarvisWorkerSession>>();
-  for (const session of sessions) {
-    const runId = session.run_id ?? fallbackRunIdForSession(session.session_id);
-    const current = runMap.get(runId) ?? [];
-    current.push(session);
-    runMap.set(runId, current);
-  }
-  const runs: Array<JarvisRun> = [];
-  for (const [runId, runSessions] of runMap) {
-    const latest = [...runSessions].sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0];
-    if (!latest) continue;
-    const latestMetadata = latest.metadata ?? {};
-    runs.push({
-      run_id: JarvisRunId.make(runId),
-      title: latest.title ?? latest.run_id ?? latest.session_id,
-      objective:
-        typeof latestMetadata.objective === "string" && latestMetadata.objective.trim().length > 0
-          ? latestMetadata.objective
-          : undefined,
-      status: deriveRunStatus(runSessions),
-      repo: latest.repo ?? null,
-      branch: latest.branch ?? null,
-      cwd: latest.cwd ?? null,
-      worker_count: new Set(runSessions.map((session) => session.worker_id).filter(Boolean)).size,
-      session_count: runSessions.length,
-      needs_input: runSessions.some((session) => session.status === "needs_input"),
-      needs_approval: runSessions.some((session) => session.status === "needs_approval"),
-      created_at:
-        runSessions.map((session) => session.created_at).sort((a, b) => a.localeCompare(b))[0] ??
-        latest.created_at,
-      updated_at: latest.updated_at,
-      metadata: {
-        projection_source: "jarvis-worker-sessions",
-      },
-    });
-  }
-  return {
-    runs,
-    sessions: [...sessions],
-    workers: [],
-    artifacts: [],
-    generated_at:
-      sessions.map((session) => session.updated_at).sort((a, b) => b.localeCompare(a))[0] ??
-      "1970-01-01T00:00:00.000Z",
-    cursor: null,
-  };
-}
-
-function fallbackRunIdForSession(sessionId: string): JarvisRunId {
-  return JarvisRunId.make(`run_${sessionId}`);
-}
-
-function deriveRunStatus(sessions: ReadonlyArray<JarvisWorkerSession>): JarvisRun["status"] {
-  const statuses = new Set<JarvisWorkerSessionStatus>(sessions.map((session) => session.status));
-  if (statuses.has("failed")) return "failed";
-  if (statuses.has("needs_approval")) return "needs_approval";
-  if (statuses.has("needs_input")) return "needs_input";
-  if (statuses.has("running")) return "running";
-  if (statuses.has("waiting_provider")) return "waiting_provider";
-  if (statuses.has("interrupted")) return "interrupted";
-  if (statuses.has("created")) return "created";
-  if (statuses.has("stopped")) return "stopped";
-  return "completed";
 }
 
 function truncateResponseBody(text: string): string {

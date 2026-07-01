@@ -36,13 +36,13 @@ export function loadJarvisReadModel(
       Effect.all(
         snapshot.sessions.map((session) =>
           Effect.all({
-            events: client.getSessionEvents(session.session_id),
-            checkpoints: client.getCheckpoints(session.session_id),
+            events: client.getSessionEvents(session.session_ref),
+            checkpoints: client.getCheckpoints(session.session_ref),
           }).pipe(
             Effect.map(({ events, checkpoints }) => ({
-              sessionId: session.session_id,
-              events: events.events,
-              checkpoints: checkpoints.checkpoints,
+              sessionRef: session.session_ref,
+              events: events.items,
+              checkpoints: checkpoints.items,
             })),
           ),
         ),
@@ -50,9 +50,9 @@ export function loadJarvisReadModel(
         Effect.map((entries) =>
           mapJarvisRunsSnapshotToReadModel({
             snapshot,
-            eventsBySession: new Map(entries.map((entry) => [entry.sessionId, entry.events])),
+            eventsBySession: new Map(entries.map((entry) => [entry.sessionRef, entry.events])),
             checkpointsBySession: new Map(
-              entries.map((entry) => [entry.sessionId, entry.checkpoints]),
+              entries.map((entry) => [entry.sessionRef, entry.checkpoints]),
             ),
           }),
         ),
@@ -65,16 +65,16 @@ export function loadJarvisThreadDetail(
   client: JarvisClient,
   threadId: ThreadId,
 ): Effect.Effect<Option.Option<OrchestrationThread>, JarvisClientError> {
-  const sessionId = jarvisSessionIdFromThreadId(threadId);
-  if (sessionId === null) {
+  const sessionRef = jarvisSessionIdFromThreadId(threadId);
+  if (sessionRef === null) {
     return Effect.succeed(Option.none());
   }
 
   return Effect.all({
     snapshot: client.getSnapshot(),
-    session: client.getSession(sessionId),
-    eventsPage: client.getSessionEvents(sessionId),
-    checkpointsPage: client.getCheckpoints(sessionId),
+    session: client.getSession(sessionRef),
+    eventsPage: client.getSessionEvents(sessionRef),
+    checkpointsPage: client.getCheckpoints(sessionRef),
   }).pipe(
     Effect.map(({ snapshot, session, eventsPage, checkpointsPage }) => {
       const run = snapshot.runs.find((candidate) => candidate.run_id === session.run_id);
@@ -82,8 +82,8 @@ export function loadJarvisThreadDetail(
         mapJarvisSessionToThreadDetail({
           session,
           ...(run ? { run } : {}),
-          events: eventsPage.events,
-          checkpoints: checkpointsPage.checkpoints,
+          events: eventsPage.items,
+          checkpoints: checkpointsPage.items,
         }),
       );
     }),

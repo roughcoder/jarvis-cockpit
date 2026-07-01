@@ -14,22 +14,27 @@ import {
   mapJarvisSessionToThreadDetail,
 } from "./JarvisProjectionMapper.ts";
 
-const now = "2026-06-30T18:00:00+00:00";
+const now = "2026-07-01T12:00:00+00:00";
 
 const run: JarvisRun = {
   run_id: "run_1" as JarvisRun["run_id"],
   title: "Build worker sessions",
   objective: "Expose live worker sessions",
   status: "running",
+  phase: "implementing",
   repo: "roughcoder/jarvis",
   branch: "feature/sessions",
-  cwd: "/Users/neilbarton/Development/jarvis",
-  worker_count: 1,
   session_count: 2,
-  needs_input: false,
-  needs_approval: true,
+  active_session_count: 1,
+  pending_input_count: 0,
+  pending_approval_count: 1,
+  artifact_count: 0,
+  primary_artifact_ids: [],
+  latest_activity_at: now,
+  latest_cursor: "evt_1",
   created_at: now,
   updated_at: now,
+  terminal_reason: null,
   metadata: {},
 };
 
@@ -37,22 +42,45 @@ const makeSession = (
   id: string,
   status: JarvisWorkerSession["status"] = "running",
 ): JarvisWorkerSession => ({
+  session_ref: `sessref_macbook-worker_${id}` as JarvisWorkerSession["session_ref"],
+  worker_id: "macbook-worker" as JarvisWorkerSession["worker_id"],
   session_id: id as JarvisWorkerSession["session_id"],
+  run_id: run.run_id,
+  title: `Session ${id}`,
   provider: "codex",
   engine: "codex",
   status,
-  run_id: run.run_id,
   repo: run.repo,
   branch: run.branch,
-  cwd: run.cwd,
-  title: `Session ${id}`,
+  cwd_label: "jarvis",
+  latest_event_cursor: "evt_1",
+  pending_input_count: status === "needs_input" ? 1 : 0,
+  pending_approval_count: status === "needs_approval" ? 1 : 0,
+  checkpoint_count: 0,
   created_at: now,
   updated_at: now,
   metadata: {},
 });
 
+const makeEvent = (
+  input: Partial<JarvisSessionEvent> & Pick<JarvisSessionEvent, "event_id" | "type">,
+): JarvisSessionEvent => ({
+  sequence: 1,
+  session_ref: "sessref_macbook-worker_sess_1" as JarvisSessionEvent["session_ref"],
+  run_id: run.run_id,
+  occurred_at: now,
+  turn_id: null,
+  message_id: null,
+  data: {},
+  ...input,
+});
+
 it("maps one Jarvis run with two sessions into one project and two thread shells", () => {
   const snapshot = mapJarvisRunsSnapshotToShellSnapshot({
+    api_version: "v1",
+    schema_version: 1,
+    cursor: "evt_1",
+    sync: { mode: "fast", status: "fresh", synced_at: now, errors: [] },
     runs: [run],
     sessions: [makeSession("sess_1"), makeSession("sess_2", "needs_approval")],
     workers: [],
@@ -63,56 +91,59 @@ it("maps one Jarvis run with two sessions into one project and two thread shells
   assert.strictEqual(snapshot.projects.length, 1);
   assert.strictEqual(snapshot.threads.length, 2);
   assert.strictEqual(snapshot.projects[0]?.id, "jarvis-run_run_1");
+  assert.strictEqual(snapshot.projects[0]?.workspaceRoot, "roughcoder/jarvis");
   assert.strictEqual(snapshot.threads[1]?.hasPendingApprovals, true);
 });
 
 it("preserves Jarvis provenance in generated thread ids", () => {
-  const threadId = "jarvis-session_sess_1";
+  const threadId = "jarvis-session_sessref_macbook-worker_sess_1";
   assert.strictEqual(isJarvisThreadId(threadId), true);
-  assert.strictEqual(jarvisSessionIdFromThreadId(threadId), "sess_1");
+  assert.strictEqual(jarvisSessionIdFromThreadId(threadId), "sessref_macbook-worker_sess_1");
   assert.strictEqual(isJarvisThreadId("thread_1"), false);
 });
 
-it("uses deterministic fallback workspace labels when cwd is missing", () => {
+it("uses deterministic public workspace labels when repo is missing", () => {
   const mapped = mapJarvisRunsSnapshotToShellSnapshot({
+    api_version: "v1",
+    schema_version: 1,
+    cursor: "evt_1",
+    sync: { mode: "fast", status: "fresh", synced_at: now, errors: [] },
     runs: [
       {
         ...run,
-        cwd: null,
         repo: null,
       },
     ],
-    sessions: [{ ...makeSession("sess_1"), cwd: null, repo: null }],
+    sessions: [{ ...makeSession("sess_1"), cwd_label: "jarvis", repo: null }],
     workers: [],
     artifacts: [],
     generated_at: now,
   });
 
-  assert.strictEqual(mapped.projects[0]?.workspaceRoot, "/jarvis/run_1");
+  assert.strictEqual(mapped.projects[0]?.workspaceRoot, "jarvis");
 });
 
 it("maps known and unknown events into timeline activities", () => {
   const session = makeSession("sess_1");
   const events: ReadonlyArray<JarvisSessionEvent> = [
-    {
-      event_id: "ev_1" as JarvisSessionEvent["event_id"],
-      session_id: session.session_id,
+    makeEvent({
+      event_id: "evt_1" as JarvisSessionEvent["event_id"],
       type: "assistant.message",
-      time: now,
+      turn_id: "turn_1",
+      message_id: "msg_1",
       data: {
-        turn_id: "turn_1",
         text: "Done.",
       },
-    },
-    {
-      event_id: "ev_2" as JarvisSessionEvent["event_id"],
-      session_id: session.session_id,
+    }),
+    makeEvent({
+      event_id: "evt_2" as JarvisSessionEvent["event_id"],
+      sequence: 2,
       type: "provider.future_event",
-      time: "2026-06-30T18:00:01+00:00",
+      occurred_at: "2026-07-01T12:00:01+00:00",
       data: {
         message: "Future event",
       },
-    },
+    }),
   ];
 
   const detail = mapJarvisSessionToThreadDetail({ session, run, events });
@@ -122,29 +153,29 @@ it("maps known and unknown events into timeline activities", () => {
   assert.strictEqual(detail.activities[1]?.summary, "Future event");
 });
 
-it("uses a stable assistant message id for deltas from the same turn", () => {
+it("uses a stable assistant message id for deltas from the same canonical message", () => {
   const session = makeSession("sess_1");
   const events: ReadonlyArray<JarvisSessionEvent> = [
-    {
-      event_id: "ev_delta_1" as JarvisSessionEvent["event_id"],
-      session_id: session.session_id,
+    makeEvent({
+      event_id: "evt_delta_1" as JarvisSessionEvent["event_id"],
       type: "assistant.delta",
-      time: now,
+      turn_id: "turn_1",
+      message_id: "msg_1",
       data: {
-        turn_id: "turn_1",
         text: "Hel",
       },
-    },
-    {
-      event_id: "ev_delta_2" as JarvisSessionEvent["event_id"],
-      session_id: session.session_id,
+    }),
+    makeEvent({
+      event_id: "evt_delta_2" as JarvisSessionEvent["event_id"],
+      sequence: 2,
       type: "assistant.delta",
-      time: "2026-06-30T18:00:01+00:00",
+      occurred_at: "2026-07-01T12:00:01+00:00",
+      turn_id: "turn_1",
+      message_id: "msg_1",
       data: {
-        turn_id: "turn_1",
         text: "lo",
       },
-    },
+    }),
   ];
 
   const detail = mapJarvisSessionToThreadDetail({ session, run, events });
@@ -155,27 +186,27 @@ it("uses a stable assistant message id for deltas from the same turn", () => {
 it("normalizes Jarvis input and approval request activities for T3 derivations", () => {
   const session = makeSession("sess_1", "needs_input");
   const events: ReadonlyArray<JarvisSessionEvent> = [
-    {
-      event_id: "ev_input" as JarvisSessionEvent["event_id"],
-      session_id: session.session_id,
+    makeEvent({
+      event_id: "evt_input" as JarvisSessionEvent["event_id"],
       type: "input.requested",
-      time: now,
+      turn_id: "turn_1",
       data: {
         request_id: "input_1",
         prompt: "Which worker should continue?",
       },
-    },
-    {
-      event_id: "ev_approval" as JarvisSessionEvent["event_id"],
-      session_id: session.session_id,
+    }),
+    makeEvent({
+      event_id: "evt_approval" as JarvisSessionEvent["event_id"],
+      sequence: 2,
       type: "approval.requested",
-      time: "2026-06-30T18:00:01+00:00",
+      occurred_at: "2026-07-01T12:00:01+00:00",
+      turn_id: "turn_1",
       data: {
         request_id: "approval_1",
         request_type: "file_change_approval",
         summary: "Approve file edits",
       },
-    },
+    }),
   ];
 
   const detail = mapJarvisSessionToThreadDetail({ session, run, events });
@@ -196,24 +227,18 @@ it("normalizes Jarvis input and approval request activities for T3 derivations",
 it("preserves turn start timing and active turn state from Jarvis events", () => {
   const session = makeSession("sess_1");
   const events: ReadonlyArray<JarvisSessionEvent> = [
-    {
-      event_id: "ev_started" as JarvisSessionEvent["event_id"],
-      session_id: session.session_id,
+    makeEvent({
+      event_id: "evt_started" as JarvisSessionEvent["event_id"],
       type: "turn.started",
-      time: now,
-      data: {
-        turn_id: "turn_1",
-      },
-    },
-    {
-      event_id: "ev_completed" as JarvisSessionEvent["event_id"],
-      session_id: session.session_id,
+      turn_id: "turn_1",
+    }),
+    makeEvent({
+      event_id: "evt_completed" as JarvisSessionEvent["event_id"],
+      sequence: 2,
       type: "turn.completed",
-      time: "2026-06-30T18:00:02+00:00",
-      data: {
-        turn_id: "turn_1",
-      },
-    },
+      occurred_at: "2026-07-01T12:00:02+00:00",
+      turn_id: "turn_1",
+    }),
   ];
 
   const completed = mapJarvisSessionToThreadDetail({
@@ -222,7 +247,7 @@ it("preserves turn start timing and active turn state from Jarvis events", () =>
     events,
   });
   assert.strictEqual(completed.latestTurn?.startedAt, now);
-  assert.strictEqual(completed.latestTurn?.completedAt, "2026-06-30T18:00:02+00:00");
+  assert.strictEqual(completed.latestTurn?.completedAt, "2026-07-01T12:00:02+00:00");
   assert.strictEqual(completed.session?.activeTurnId, null);
 
   const running = mapJarvisSessionToThreadDetail({
@@ -234,48 +259,27 @@ it("preserves turn start timing and active turn state from Jarvis events", () =>
   assert.strictEqual(running.session?.activeTurnId, "turn_1");
 });
 
-it("uses the same fallback project id for run-less sessions in shell and detail views", () => {
-  const session = {
-    ...makeSession("sess_orphan"),
-    run_id: undefined,
-  };
-
-  const shell = mapJarvisRunsSnapshotToShellSnapshot({
-    runs: [
-      {
-        ...run,
-        run_id: "run_sess_orphan" as JarvisRun["run_id"],
-      },
-    ],
-    sessions: [session],
-    workers: [],
-    artifacts: [],
-    generated_at: now,
-  });
-  const detail = mapJarvisSessionToThreadDetail({ session, events: [] });
-
-  assert.strictEqual(shell.threads[0]?.projectId, "jarvis-run_run_sess_orphan");
-  assert.strictEqual(detail.projectId, "jarvis-run_run_sess_orphan");
-});
-
 it("projects Jarvis checkpoints into thread checkpoint summaries", () => {
   const session = makeSession("sess_1");
   const checkpoints: ReadonlyArray<JarvisSessionCheckpoint> = [
     {
-      session_id: session.session_id,
+      session_ref: session.session_ref,
       checkpoint_id: "ckpt_1",
       label: "Before review",
       provider: "codex",
       restored: false,
       event: {
         turn_id: "turn_1",
-        time: "2026-06-30T18:03:00+00:00",
+        occurred_at: "2026-07-01T12:03:00+00:00",
       },
     },
   ];
 
   const detail = mapJarvisSessionToThreadDetail({ session, run, events: [], checkpoints });
   assert.strictEqual(detail.checkpoints[0]?.turnId, "turn_1");
-  assert.strictEqual(detail.checkpoints[0]?.checkpointRef, "jarvis:sess_1:ckpt_1");
-  assert.strictEqual(detail.checkpoints[0]?.completedAt, "2026-06-30T18:03:00+00:00");
+  assert.strictEqual(
+    detail.checkpoints[0]?.checkpointRef,
+    "jarvis:sessref_macbook-worker_sess_1:ckpt_1",
+  );
+  assert.strictEqual(detail.checkpoints[0]?.completedAt, "2026-07-01T12:03:00+00:00");
 });

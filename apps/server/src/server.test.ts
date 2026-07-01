@@ -5646,7 +5646,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       assert.equal(
         snapshotEvent.snapshot.threads[0]?.id,
-        ThreadId.make("jarvis-session_sess_fixture_codex"),
+        ThreadId.make("jarvis-session_sessref_macbook-worker_sess_fixture_codex"),
       );
       assert.equal(snapshotEvent.snapshot.threads[0]?.session?.status, "running");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
@@ -5670,7 +5670,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const events = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.subscribeThread]({
-            threadId: ThreadId.make("jarvis-session_sess_fixture_codex"),
+            threadId: ThreadId.make("jarvis-session_sessref_macbook-worker_sess_fixture_codex"),
           }).pipe(Stream.take(1), Stream.runCollect),
         ),
       );
@@ -5683,7 +5683,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }
       assert.equal(
         snapshotEvent.snapshot.thread.id,
-        ThreadId.make("jarvis-session_sess_fixture_codex"),
+        ThreadId.make("jarvis-session_sessref_macbook-worker_sess_fixture_codex"),
       );
       assert.equal(snapshotEvent.snapshot.thread.activities[0]?.summary, "Session created");
       assert.equal(snapshotEvent.snapshot.thread.session?.status, "running");
@@ -5715,7 +5715,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(response.status, 200);
       assert.equal(body.projects[0]?.id, ProjectId.make("jarvis-run_run_fixture_dashboard"));
-      assert.equal(body.threads[0]?.id, ThreadId.make("jarvis-session_sess_fixture_codex"));
+      assert.equal(
+        body.threads[0]?.id,
+        ThreadId.make("jarvis-session_sessref_macbook-worker_sess_fixture_codex"),
+      );
       assert.equal(body.threads[0]?.activities[0]?.summary, "Session created");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
