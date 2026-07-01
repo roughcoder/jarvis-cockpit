@@ -52,7 +52,6 @@ import {
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   EnvironmentAuthorizationError,
-  JarvisRequestId,
   ThreadId,
   type TerminalAttachStreamEvent,
   type TerminalError,
@@ -102,12 +101,12 @@ import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import { makeJarvisClient, type JarvisClient } from "./jarvis/JarvisClient.ts";
+import { dispatchJarvisCommand } from "./jarvis/JarvisDispatch.ts";
 import {
   loadJarvisShellSnapshot,
   loadJarvisThreadDetail,
   shouldUseJarvisCockpitReads,
 } from "./jarvis/JarvisOrchestrationReadModel.ts";
-import { jarvisSessionIdFromThreadId } from "./jarvis/JarvisProjectionMapper.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
@@ -127,38 +126,6 @@ const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchComma
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const JARVIS_COCKPIT_POLL_INTERVAL = Duration.seconds(2);
-
-function jarvisApprovalDecisionForProviderDecision(
-  decision: "accept" | "acceptForSession" | "decline" | "cancel",
-) {
-  switch (decision) {
-    case "accept":
-      return "approved" as const;
-    case "acceptForSession":
-      return "approved_for_session" as const;
-    case "decline":
-      return "denied" as const;
-    case "cancel":
-      return "cancelled" as const;
-  }
-}
-
-function textForJarvisUserInputAnswers(answers: Record<string, unknown>): string {
-  for (const value of Object.values(answers)) {
-    if (typeof value === "string" && value.trim().length > 0) {
-      return value;
-    }
-    if (Array.isArray(value)) {
-      const text = value
-        .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-        .join(", ");
-      if (text.trim().length > 0) {
-        return text;
-      }
-    }
-  }
-  return "Respond";
-}
 
 function jarvisShellPollingStream(
   jarvisClient: JarvisClient,
@@ -1044,61 +1011,6 @@ const makeWsRpcLayer = (
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
-      const dispatchJarvisCommand = (
-        normalizedCommand: OrchestrationCommand,
-      ): Effect.Effect<{ readonly sequence: number } | null, OrchestrationDispatchCommandError> => {
-        const sessionRef =
-          "threadId" in normalizedCommand
-            ? jarvisSessionIdFromThreadId(normalizedCommand.threadId)
-            : null;
-        if (!useJarvisCockpitReads || sessionRef === null) {
-          return Effect.succeed(null);
-        }
-
-        const write = (() => {
-          switch (normalizedCommand.type) {
-            case "thread.turn.start":
-              return jarvisClient.sendTurn(sessionRef, {
-                prompt: normalizedCommand.message.text,
-                idempotency_key: String(normalizedCommand.commandId),
-              });
-            case "thread.turn.interrupt":
-              return jarvisClient.interruptSession(sessionRef, normalizedCommand.turnId);
-            case "thread.approval.respond":
-              return jarvisClient.respondApproval(sessionRef, {
-                request_id: JarvisRequestId.make(String(normalizedCommand.requestId)),
-                decision: jarvisApprovalDecisionForProviderDecision(normalizedCommand.decision),
-                idempotency_key: String(normalizedCommand.commandId),
-              });
-            case "thread.user-input.respond":
-              return jarvisClient.respondInput(sessionRef, {
-                request_id: JarvisRequestId.make(String(normalizedCommand.requestId)),
-                text: textForJarvisUserInputAnswers(normalizedCommand.answers),
-                idempotency_key: String(normalizedCommand.commandId),
-              });
-            case "thread.session.stop":
-              return jarvisClient.stopSession(sessionRef);
-            default:
-              return null;
-          }
-        })();
-
-        if (write === null) {
-          return Effect.succeed(null);
-        }
-
-        return write.pipe(
-          Effect.map(() => ({ sequence: 0 })),
-          Effect.mapError(
-            (cause) =>
-              new OrchestrationDispatchCommandError({
-                message: `Failed to dispatch Jarvis cockpit command ${normalizedCommand.type}.`,
-                cause,
-              }),
-          ),
-        );
-      };
-
       return WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
@@ -1121,8 +1033,11 @@ const makeWsRpcLayer = (
                       )
                   : false;
               const result =
-                (yield* dispatchJarvisCommand(normalizedCommand)) ??
-                (yield* dispatchNormalizedCommand(normalizedCommand));
+                (yield* dispatchJarvisCommand({
+                  client: jarvisClient,
+                  enabled: useJarvisCockpitReads,
+                  command: normalizedCommand,
+                })) ?? (yield* dispatchNormalizedCommand(normalizedCommand));
               if (normalizedCommand.type === "thread.archive") {
                 if (shouldStopSessionAfterArchive) {
                   yield* Effect.gen(function* () {

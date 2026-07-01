@@ -128,7 +128,9 @@ it("maps known and unknown events into timeline activities", () => {
   const events: ReadonlyArray<JarvisSessionEvent> = [
     makeEvent({
       event_id: "evt_1" as JarvisSessionEvent["event_id"],
+      sequence: 2,
       type: "assistant.message",
+      occurred_at: "2026-07-01T11:59:59+00:00",
       turn_id: "turn_1",
       message_id: "msg_1",
       data: {
@@ -137,23 +139,36 @@ it("maps known and unknown events into timeline activities", () => {
     }),
     makeEvent({
       event_id: "evt_2" as JarvisSessionEvent["event_id"],
-      sequence: 2,
+      sequence: 3,
       type: "provider.future_event",
       occurred_at: "2026-07-01T12:00:01+00:00",
       data: {
         message: "Future event",
       },
     }),
+    makeEvent({
+      event_id: "evt_started" as JarvisSessionEvent["event_id"],
+      sequence: 1,
+      type: "turn.started",
+      occurred_at: "2026-07-01T12:00:02+00:00",
+      turn_id: "turn_1",
+      data: {
+        prompt: "Please run verification.",
+      },
+    }),
   ];
 
   const detail = mapJarvisSessionToThreadDetail({ session, run, events });
-  assert.strictEqual(detail.messages[0]?.text, "Done.");
-  assert.strictEqual(detail.activities[1]?.kind, "provider.future_event");
-  assert.strictEqual(detail.activities[1]?.tone, "info");
-  assert.strictEqual(detail.activities[1]?.summary, "Future event");
+  assert.strictEqual(detail.messages[0]?.role, "user");
+  assert.strictEqual(detail.messages[0]?.text, "Please run verification.");
+  assert.strictEqual(detail.messages[1]?.text, "Done.");
+  assert.strictEqual(detail.activities[0]?.kind, "turn.started");
+  assert.strictEqual(detail.activities[2]?.kind, "provider.future_event");
+  assert.strictEqual(detail.activities[2]?.tone, "info");
+  assert.strictEqual(detail.activities[2]?.summary, "Future event");
 });
 
-it("uses a stable assistant message id for deltas from the same canonical message", () => {
+it("coalesces assistant deltas from the same canonical message", () => {
   const session = makeSession("sess_1");
   const events: ReadonlyArray<JarvisSessionEvent> = [
     makeEvent({
@@ -179,8 +194,10 @@ it("uses a stable assistant message id for deltas from the same canonical messag
   ];
 
   const detail = mapJarvisSessionToThreadDetail({ session, run, events });
-  assert.strictEqual(detail.messages.length, 2);
-  assert.strictEqual(detail.messages[0]?.id, detail.messages[1]?.id);
+  assert.strictEqual(detail.messages.length, 1);
+  assert.strictEqual(detail.messages[0]?.id, "jarvis-message:msg_1");
+  assert.strictEqual(detail.messages[0]?.text, "Hello");
+  assert.strictEqual(detail.messages[0]?.streaming, true);
 });
 
 it("normalizes Jarvis input and approval request activities for T3 derivations", () => {
