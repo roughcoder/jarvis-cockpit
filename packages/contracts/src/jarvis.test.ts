@@ -9,9 +9,12 @@ import {
   JarvisControlResult,
   JarvisRestoreCheckpointInput,
   JarvisRunsSnapshot,
+  JarvisSessionCheckpointsResponse,
   JarvisSessionCheckpointsPage,
+  JarvisSessionDetailResponse,
   JarvisSessionEvent,
   JarvisSessionEventsPage,
+  JarvisSessionRequestsResponse,
   JarvisSessionRequestsPage,
   JarvisStartWorkInput,
   JarvisTurnInput,
@@ -24,6 +27,9 @@ const decodeEvent = Schema.decodeUnknownEffect(JarvisSessionEvent);
 const decodeEventsPage = Schema.decodeUnknownEffect(JarvisSessionEventsPage);
 const decodeRequestsPage = Schema.decodeUnknownEffect(JarvisSessionRequestsPage);
 const decodeCheckpointsPage = Schema.decodeUnknownEffect(JarvisSessionCheckpointsPage);
+const decodeSessionDetail = Schema.decodeUnknownEffect(JarvisSessionDetailResponse);
+const decodeRequestsResponse = Schema.decodeUnknownEffect(JarvisSessionRequestsResponse);
+const decodeCheckpointsResponse = Schema.decodeUnknownEffect(JarvisSessionCheckpointsResponse);
 const decodeStartWork = Schema.decodeUnknownEffect(JarvisStartWorkInput);
 const decodeTurn = Schema.decodeUnknownEffect(JarvisTurnInput);
 const decodeApproval = Schema.decodeUnknownEffect(JarvisApprovalInput);
@@ -78,18 +84,45 @@ it.effect("decodes a Jarvis cockpit catalog fixture", () =>
     const parsed = yield* decodeCatalog({
       api_version: "v1",
       schema_version: 1,
-      engines: [{ id: "codex", label: "Codex" }],
-      capabilities: [{ id: "code.edit", label: "Edit code" }],
-      work_sources: [{ id: "manual", label: "Manual" }],
-      engine_strategies: [{ id: "single", label: "Single" }],
-      branch_strategies: [{ id: "auto", label: "Auto" }],
-      landing_policies: [{ id: "branch_only", label: "Branch only" }],
-      request_kinds: [{ id: "approval", label: "Approval" }],
-      generated_at: generatedAt,
+      engines: [
+        {
+          engine: "codex",
+          display_name: "Codex",
+          description: "OpenAI Codex provider session",
+          supports: {
+            streaming: true,
+            resume: true,
+            interrupt: true,
+            approval_requests: true,
+            input_requests: true,
+            checkpoints: true,
+          },
+        },
+      ],
+      capabilities: [
+        {
+          capability: "code.edit",
+          display_name: "Edit code",
+          maps_to: ["worker.session.create", "worker.session.turn"],
+        },
+      ],
+      work_sources: ["manual", "github", "linear", "voice", "whatsapp"],
+      engine_strategies: ["single", "parallel", "review_panel"],
+      branch_strategies: ["auto", "use_existing", "create", "none"],
+      landing_policies: ["branch_only", "draft_pr", "ready_pr", "confirm_before_pr"],
+      request_kinds: ["approval", "input"],
     });
 
     assert.strictEqual(parsed.api_version, "v1");
-    assert.strictEqual(parsed.engines[0]?.id, "codex");
+    assert.strictEqual(parsed.engines[0]?.engine, "codex");
+    assert.strictEqual(parsed.capabilities[0]?.capability, "code.edit");
+    assert.deepStrictEqual(parsed.work_sources, [
+      "manual",
+      "github",
+      "linear",
+      "voice",
+      "whatsapp",
+    ]);
   }),
 );
 
@@ -158,6 +191,13 @@ it.effect("decodes a Jarvis cockpit snapshot fixture", () =>
             active_sessions: 1,
             queued_sessions: 0,
           },
+          repositories: [
+            {
+              repo: "roughcoder/jarvis",
+              status: "ready",
+              default_branch: "main",
+            },
+          ],
           public_metadata: {},
         },
       ],
@@ -180,7 +220,50 @@ it.effect("decodes a Jarvis cockpit snapshot fixture", () =>
     assert.strictEqual(parsed.runs[0]?.pending_approval_count, 1);
     assert.strictEqual(parsed.sessions[0]?.session_ref, sessionRef);
     assert.strictEqual(parsed.workers[0]?.engines[0]?.supports.resume, true);
+    const worker = parsed.workers[0];
+    assert.ok(worker);
+    assert.strictEqual(worker.repositories?.at(0)?.repo, "roughcoder/jarvis");
     assert.strictEqual(parsed.artifacts[0]?.kind, "branch");
+  }),
+);
+
+it.effect("accepts current Jarvis snapshot edge-state literals", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeSnapshot({
+      api_version: "v1",
+      schema_version: 1,
+      cursor: "evt_empty",
+      generated_at: generatedAt,
+      sync: {
+        mode: "none",
+        status: "skipped",
+        synced_at: null,
+        errors: [],
+      },
+      runs: [],
+      sessions: [],
+      workers: [
+        {
+          worker_id: "offline-worker",
+          display_name: "Offline worker",
+          status: "offline",
+          health: "unreachable",
+          last_seen_at: null,
+          capabilities: [],
+          engines: [],
+          capacity: {
+            max_sessions: 1,
+            active_sessions: 0,
+            queued_sessions: 0,
+          },
+          public_metadata: {},
+        },
+      ],
+      artifacts: [],
+    });
+
+    assert.strictEqual(parsed.sync.status, "skipped");
+    assert.strictEqual(parsed.workers[0]?.health, "unreachable");
   }),
 );
 
@@ -279,6 +362,49 @@ it.effect("decodes paginated session events, requests, and checkpoints", () =>
     assert.strictEqual(events.items.length, 2);
     assert.strictEqual(requests.items[0]?.kind, "approval");
     assert.strictEqual(checkpoints.items[0]?.checkpoint_id, "ckpt_turn_1");
+  }),
+);
+
+it.effect("decodes Jarvis session detail, requests, and checkpoints wire wrappers", () =>
+  Effect.gen(function* () {
+    const detail = yield* decodeSessionDetail({
+      session: sessionFixture,
+      raw: {
+        session_id: "sess_123",
+      },
+    });
+    const requests = yield* decodeRequestsResponse({
+      requests: [
+        {
+          request_id: "approval_turn_1",
+          session_ref: sessionRef,
+          run_id: runId,
+          kind: "approval",
+          status: "pending",
+          title: "Approve shell command",
+          detail: "Run verification",
+          created_at: generatedAt,
+          payload: {
+            request_kind: "command",
+          },
+        },
+      ],
+    });
+    const checkpoints = yield* decodeCheckpointsResponse({
+      checkpoints: [
+        {
+          session_ref: sessionRef,
+          checkpoint_id: "ckpt_turn_1",
+          label: "before review fixes",
+          provider: "codex",
+          restored: false,
+        },
+      ],
+    });
+
+    assert.strictEqual(detail.session.session_ref, sessionRef);
+    assert.strictEqual(requests.requests[0]?.kind, "approval");
+    assert.deepStrictEqual(checkpoints.checkpoints[0]?.event, {});
   }),
 );
 

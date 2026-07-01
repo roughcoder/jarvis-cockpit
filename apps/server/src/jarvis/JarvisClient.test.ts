@@ -177,7 +177,7 @@ it.effect("cockpit client reads session requests and checkpoints", () =>
         });
         if (String(url).endsWith("/requests")) {
           return jsonResponse({
-            items: [
+            requests: [
               {
                 request_id: "approval_1",
                 session_ref: sessionRef,
@@ -191,26 +191,18 @@ it.effect("cockpit client reads session requests and checkpoints", () =>
                 },
               },
             ],
-            cursor: "evt_2",
-            has_more: false,
           });
         }
         return jsonResponse({
-          items: [
+          checkpoints: [
             {
               session_ref: sessionRef,
               checkpoint_id: "ckpt_1",
               label: "before review fixes",
               provider: "codex",
               restored: false,
-              event: {
-                type: "checkpoint.created",
-                checkpoint_id: "ckpt_1",
-              },
             },
           ],
-          cursor: "evt_3",
-          has_more: false,
         });
       },
     });
@@ -228,6 +220,27 @@ it.effect("cockpit client reads session requests and checkpoints", () =>
     );
     assert.strictEqual(sessionRequests.items[0]?.kind, "approval");
     assert.strictEqual(checkpoints.items[0]?.checkpoint_id, "ckpt_1");
+    assert.strictEqual(checkpoints.has_more, false);
+  }),
+);
+
+it.effect("cockpit client unwraps Jarvis session detail responses", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async () =>
+        jsonResponse({
+          session,
+          raw: {
+            session_id: "sess_1",
+          },
+        }),
+    });
+
+    const parsedSession = yield* client.getSession(sessionRef);
+
+    assert.strictEqual(parsedSession.session_ref, sessionRef);
+    assert.strictEqual(parsedSession.title, "Codex implementation");
   }),
 );
 
