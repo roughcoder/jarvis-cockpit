@@ -162,6 +162,7 @@ import { buildDraftThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
+  markPromotedDraftThreadByRef,
   useComposerDraftStore,
   type DraftId,
 } from "../composerDraftStore";
@@ -4222,6 +4223,11 @@ function ChatViewContent(props: ChatViewProps) {
       if (startResult._tag === "Failure") {
         failure = startResult;
       } else {
+        if (draftId !== null && startResult.value.promotedThreadId !== undefined) {
+          markPromotedDraftThreadByRef(
+            scopeThreadRef(environmentId, startResult.value.promotedThreadId),
+          );
+        }
         turnStartSucceeded = true;
       }
     }

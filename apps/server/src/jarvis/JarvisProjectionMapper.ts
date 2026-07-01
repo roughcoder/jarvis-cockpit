@@ -44,11 +44,35 @@ import {
 export function mapJarvisRunsSnapshotToShellSnapshot(
   snapshot: JarvisRunsSnapshot,
 ): OrchestrationShellSnapshot {
+  return mapJarvisRunsSnapshotToShellSnapshotWithSessions(
+    snapshot,
+    activeJarvisSessions(snapshot.sessions),
+  );
+}
+
+export function mapJarvisArchivedRunsSnapshotToShellSnapshot(
+  snapshot: JarvisRunsSnapshot,
+): OrchestrationShellSnapshot {
+  const mapped = mapJarvisRunsSnapshotToShellSnapshotWithSessions(
+    snapshot,
+    archivedJarvisSessions(snapshot.sessions),
+  );
+  const projectIds = new Set(mapped.threads.map((thread) => thread.projectId));
+  return {
+    ...mapped,
+    projects: mapped.projects.filter((project) => projectIds.has(project.id)),
+  };
+}
+
+function mapJarvisRunsSnapshotToShellSnapshotWithSessions(
+  snapshot: JarvisRunsSnapshot,
+  sessions: ReadonlyArray<JarvisWorkerSession>,
+): OrchestrationShellSnapshot {
   const runsById = new Map(snapshot.runs.map((run) => [run.run_id, run]));
   return {
     snapshotSequence: 0,
-    projects: snapshot.runs.map((run) => mapRunToProjectShell(run, snapshot.sessions)),
-    threads: snapshot.sessions.map((session) =>
+    projects: snapshot.runs.map((run) => mapRunToProjectShell(run, sessions)),
+    threads: sessions.map((session) =>
       mapSessionToThreadShell(
         session,
         session.run_id !== undefined ? runsById.get(session.run_id) : undefined,
@@ -64,10 +88,11 @@ export function mapJarvisRunsSnapshotToReadModel(input: {
   readonly checkpointsBySession?: ReadonlyMap<string, ReadonlyArray<JarvisSessionCheckpoint>>;
 }): OrchestrationReadModel {
   const runsById = new Map(input.snapshot.runs.map((run) => [run.run_id, run]));
+  const activeSessions = activeJarvisSessions(input.snapshot.sessions);
   return {
     snapshotSequence: 0,
-    projects: input.snapshot.runs.map((run) => mapRunToProject(run, input.snapshot.sessions)),
-    threads: input.snapshot.sessions.map((session) => {
+    projects: input.snapshot.runs.map((run) => mapRunToProject(run, activeSessions)),
+    threads: activeSessions.map((session) => {
       const run = session.run_id !== undefined ? runsById.get(session.run_id) : undefined;
       return run
         ? mapJarvisSessionToThreadDetail({
@@ -84,6 +109,18 @@ export function mapJarvisRunsSnapshotToReadModel(input: {
     }),
     updatedAt: input.snapshot.generated_at,
   };
+}
+
+function activeJarvisSessions(
+  sessions: ReadonlyArray<JarvisWorkerSession>,
+): ReadonlyArray<JarvisWorkerSession> {
+  return sessions.filter((session) => session.archived_at == null);
+}
+
+function archivedJarvisSessions(
+  sessions: ReadonlyArray<JarvisWorkerSession>,
+): ReadonlyArray<JarvisWorkerSession> {
+  return sessions.filter((session) => session.archived_at != null);
 }
 
 export function mapJarvisSessionToThreadDetail(input: {
@@ -174,14 +211,8 @@ function mapSessionToThreadShell(
     archivedAt: session.archived_at ?? null,
     session: sessionForWorkerSession(session, null),
     latestUserMessageAt: null,
-    hasPendingApprovals:
-      session.pending_approval_count > 0 ||
-      session.status === "needs_approval" ||
-      (run?.pending_approval_count ?? 0) > 0,
-    hasPendingUserInput:
-      session.pending_input_count > 0 ||
-      session.status === "needs_input" ||
-      (run?.pending_input_count ?? 0) > 0,
+    hasPendingApprovals: session.pending_approval_count > 0 || session.status === "needs_approval",
+    hasPendingUserInput: session.pending_input_count > 0 || session.status === "needs_input",
     hasActionableProposedPlan: false,
   };
 }
