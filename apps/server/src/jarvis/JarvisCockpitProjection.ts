@@ -111,16 +111,22 @@ function eventsToMessages(
       continue;
     }
 
-    const assistantKey = event.message_id ?? readTurnId(event) ?? event.event_id;
+    const turnId = readTurnId(event);
+    const assistantKeys = assistantMessageKeys(event.message_id ?? null, turnId);
+    const assistantKey = assistantKeys[0] ?? event.event_id;
     const text = readText(event) ?? "";
-    const existingIndex = assistantMessageIndexByKey.get(assistantKey);
+    const existingIndex = assistantKeys
+      .map((key) => assistantMessageIndexByKey.get(key))
+      .find((index) => index !== undefined);
     if (existingIndex === undefined) {
-      assistantMessageIndexByKey.set(assistantKey, messages.length);
+      for (const key of assistantKeys) {
+        assistantMessageIndexByKey.set(key, messages.length);
+      }
       messages.push({
         id: `jarvis-message:${assistantKey}`,
         role: "assistant",
         text,
-        turnId: readTurnId(event),
+        turnId,
         streaming: event.type === "assistant.delta",
         createdAt: event.occurred_at,
         updatedAt: event.occurred_at,
@@ -132,6 +138,9 @@ function eventsToMessages(
     if (existing === undefined) {
       continue;
     }
+    for (const key of assistantKeys) {
+      assistantMessageIndexByKey.set(key, existingIndex);
+    }
     messages[existingIndex] = {
       ...existing,
       text:
@@ -142,6 +151,20 @@ function eventsToMessages(
   }
 
   return messages;
+}
+
+function assistantMessageKeys(
+  messageId: string | null,
+  turnId: string | null,
+): ReadonlyArray<string> {
+  const keys: string[] = [];
+  if (typeof messageId === "string" && messageId.trim().length > 0) {
+    keys.push(messageId);
+  }
+  if (typeof turnId === "string" && turnId.trim().length > 0 && turnId !== messageId) {
+    keys.push(turnId);
+  }
+  return keys;
 }
 
 function eventToActivity(event: JarvisSessionEvent, index: number): CockpitTimelineActivity {

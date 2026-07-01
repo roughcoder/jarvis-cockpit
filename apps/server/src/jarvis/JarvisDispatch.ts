@@ -2,16 +2,20 @@ import {
   JarvisRequestId,
   OrchestrationDispatchCommandError,
   type JarvisControlResult,
+  type JarvisSessionCheckpoint,
   type OrchestrationCommand,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import type { JarvisClient } from "./JarvisClient.ts";
+import type { JarvisClient, JarvisClientError } from "./JarvisClient.ts";
 import {
   jarvisCheckpointRefPartsFromCheckpointRef,
   jarvisSessionIdFromThreadId,
 } from "./JarvisIds.ts";
+
+const JARVIS_CHECKPOINTS_PAGE_LIMIT = 100;
+const JARVIS_CHECKPOINTS_MAX_PAGES = 100;
 
 export function dispatchJarvisCommand(input: {
   readonly client: JarvisClient;
@@ -98,12 +102,7 @@ function dispatchJarvisWrite(
     case "thread.checkpoint.revert": {
       const checkpointRef = jarvisCheckpointRefPartsFromCheckpointRef(command.checkpointRef);
       if (checkpointRef === null) {
-        return Effect.fail(
-          new OrchestrationDispatchCommandError({
-            message:
-              "Jarvis checkpoint restore requires a stable Jarvis checkpointRef from the selected checkpoint.",
-          }),
-        );
+        return restoreJarvisCheckpointByTurnCount(client, sessionRef, command);
       }
       if (checkpointRef.sessionRef !== sessionRef) {
         return Effect.fail(
@@ -132,6 +131,73 @@ function dispatchJarvisWrite(
     default:
       return Effect.succeed(null);
   }
+}
+
+function restoreJarvisCheckpointByTurnCount(
+  client: JarvisClient,
+  sessionRef: string,
+  command: Extract<OrchestrationCommand, { readonly type: "thread.checkpoint.revert" }>,
+): Effect.Effect<JarvisControlResult, OrchestrationDispatchCommandError> {
+  if (command.turnCount <= 0) {
+    return Effect.fail(
+      new OrchestrationDispatchCommandError({
+        message:
+          "Jarvis checkpoint restore requires a stable checkpointRef or a positive checkpoint turnCount.",
+      }),
+    );
+  }
+  return loadAllJarvisCheckpoints(client, sessionRef).pipe(
+    Effect.mapError((cause) => jarvisDispatchError(command.type, cause)),
+    Effect.flatMap((checkpoints) => {
+      const checkpoint = checkpoints[command.turnCount - 1];
+      if (checkpoint === undefined) {
+        return Effect.fail(
+          new OrchestrationDispatchCommandError({
+            message: `Jarvis checkpoint restore could not find checkpoint for turnCount ${command.turnCount}.`,
+          }),
+        );
+      }
+      return client
+        .restoreCheckpoint(sessionRef, {
+          checkpoint_id: checkpoint.checkpoint_id,
+          idempotency_key: String(command.commandId),
+        })
+        .pipe(Effect.mapError((cause) => jarvisDispatchError(command.type, cause)));
+    }),
+  );
+}
+
+function loadAllJarvisCheckpoints(
+  client: JarvisClient,
+  sessionRef: string,
+): Effect.Effect<ReadonlyArray<JarvisSessionCheckpoint>, JarvisClientError> {
+  const loadPage = (
+    after: string | undefined,
+    pagesLoaded: number,
+    accumulated: ReadonlyArray<JarvisSessionCheckpoint>,
+  ): Effect.Effect<ReadonlyArray<JarvisSessionCheckpoint>, JarvisClientError> =>
+    client
+      .getCheckpoints(sessionRef, {
+        ...(after ? { after } : {}),
+        limit: JARVIS_CHECKPOINTS_PAGE_LIMIT,
+      })
+      .pipe(
+        Effect.flatMap((page) => {
+          const next = [...accumulated, ...page.items];
+          if (
+            !page.has_more ||
+            page.cursor === undefined ||
+            page.cursor === null ||
+            page.cursor === after ||
+            pagesLoaded + 1 >= JARVIS_CHECKPOINTS_MAX_PAGES
+          ) {
+            return Effect.succeed(next);
+          }
+          return loadPage(page.cursor, pagesLoaded + 1, next);
+        }),
+      );
+
+  return loadPage(undefined, 0, []);
 }
 
 function dispatchJarvisStartWork(
