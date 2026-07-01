@@ -1,4 +1,5 @@
 import type {
+  JarvisSessionEvent,
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
   OrchestrationThread,
@@ -14,6 +15,9 @@ import {
   mapJarvisRunsSnapshotToShellSnapshot,
   mapJarvisSessionToThreadDetail,
 } from "./JarvisProjectionMapper.ts";
+
+const JARVIS_SESSION_EVENTS_PAGE_LIMIT = 100;
+const JARVIS_SESSION_EVENTS_MAX_PAGES = 100;
 
 export function shouldUseJarvisCockpitReads(config: {
   readonly jarvisCockpitEnabled: boolean;
@@ -36,12 +40,12 @@ export function loadJarvisReadModel(
       Effect.all(
         snapshot.sessions.map((session) =>
           Effect.all({
-            events: client.getSessionEvents(session.session_ref),
+            events: loadAllJarvisSessionEvents(client, session.session_ref),
             checkpoints: client.getCheckpoints(session.session_ref),
           }).pipe(
             Effect.map(({ events, checkpoints }) => ({
               sessionRef: session.session_ref,
-              events: events.items,
+              events,
               checkpoints: checkpoints.items,
             })),
           ),
@@ -73,19 +77,52 @@ export function loadJarvisThreadDetail(
   return Effect.all({
     snapshot: client.getSnapshot(),
     session: client.getSession(sessionRef),
-    eventsPage: client.getSessionEvents(sessionRef),
+    events: loadAllJarvisSessionEvents(client, sessionRef),
     checkpointsPage: client.getCheckpoints(sessionRef),
   }).pipe(
-    Effect.map(({ snapshot, session, eventsPage, checkpointsPage }) => {
+    Effect.map(({ snapshot, session, events, checkpointsPage }) => {
       const run = snapshot.runs.find((candidate) => candidate.run_id === session.run_id);
       return Option.some(
         mapJarvisSessionToThreadDetail({
           session,
           ...(run ? { run } : {}),
-          events: eventsPage.items,
+          events,
           checkpoints: checkpointsPage.items,
         }),
       );
     }),
   );
+}
+
+function loadAllJarvisSessionEvents(
+  client: JarvisClient,
+  sessionRef: string,
+): Effect.Effect<ReadonlyArray<JarvisSessionEvent>, JarvisClientError> {
+  const loadPage = (
+    after: string | undefined,
+    pagesLoaded: number,
+    accumulated: ReadonlyArray<JarvisSessionEvent>,
+  ): Effect.Effect<ReadonlyArray<JarvisSessionEvent>, JarvisClientError> =>
+    client
+      .getSessionEvents(sessionRef, {
+        ...(after ? { after } : {}),
+        limit: JARVIS_SESSION_EVENTS_PAGE_LIMIT,
+      })
+      .pipe(
+        Effect.flatMap((page) => {
+          const next = [...accumulated, ...page.items];
+          if (
+            !page.has_more ||
+            page.cursor === undefined ||
+            page.cursor === null ||
+            page.cursor === after ||
+            pagesLoaded + 1 >= JARVIS_SESSION_EVENTS_MAX_PAGES
+          ) {
+            return Effect.succeed(next);
+          }
+          return loadPage(page.cursor, pagesLoaded + 1, next);
+        }),
+      );
+
+  return loadPage(undefined, 0, []);
 }

@@ -96,8 +96,8 @@ export function mapJarvisSessionToThreadDetail(input: {
 }): OrchestrationThread {
   const threadId = jarvisThreadIdForSession(input.session.session_ref);
   const projectId = jarvisProjectIdForRun(input.session.run_id);
-  const sortedEvents = [...input.events].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
-  const messages = sortedEvents.flatMap((event) => eventToMessages(event));
+  const sortedEvents = [...input.events].sort(compareJarvisEvents);
+  const messages = eventsToMessages(sortedEvents);
   const activities = sortedEvents.map((event, index) => eventToActivity(event, index));
   const latestTurn = latestTurnForEvents(sortedEvents, messages);
   return {
@@ -208,24 +208,72 @@ function sessionForWorkerSession(
   };
 }
 
-function eventToMessages(event: JarvisSessionEvent): ReadonlyArray<OrchestrationMessage> {
-  if (event.type !== "assistant.message" && event.type !== "assistant.delta") {
-    return [];
-  }
-  const text = readText(event) ?? "";
-  return [
-    {
-      id: MessageId.make(
-        `jarvis-message:${event.message_id ?? readTurnId(event) ?? event.event_id}`,
-      ),
-      role: "assistant",
-      text,
-      turnId: readTurnId(event) ? TurnId.make(readTurnId(event) ?? "") : null,
+function compareJarvisEvents(a: JarvisSessionEvent, b: JarvisSessionEvent): number {
+  return (
+    a.sequence - b.sequence ||
+    a.occurred_at.localeCompare(b.occurred_at) ||
+    a.event_id.localeCompare(b.event_id)
+  );
+}
+
+function eventsToMessages(
+  events: ReadonlyArray<JarvisSessionEvent>,
+): ReadonlyArray<OrchestrationMessage> {
+  const messages: OrchestrationMessage[] = [];
+  const assistantMessageIndexByKey = new Map<string, number>();
+
+  for (const event of events) {
+    if (event.type === "turn.started") {
+      const prompt = readText(event);
+      if (prompt !== null) {
+        messages.push({
+          id: MessageId.make(`jarvis-message:user:${event.event_id}`),
+          role: "user",
+          text: prompt,
+          turnId: readTurnId(event) ? TurnId.make(readTurnId(event) ?? "") : null,
+          streaming: false,
+          createdAt: event.occurred_at,
+          updatedAt: event.occurred_at,
+        });
+      }
+      continue;
+    }
+
+    if (event.type !== "assistant.message" && event.type !== "assistant.delta") {
+      continue;
+    }
+
+    const assistantKey = event.message_id ?? readTurnId(event) ?? event.event_id;
+    const text = readText(event) ?? "";
+    const existingIndex = assistantMessageIndexByKey.get(assistantKey);
+    if (existingIndex === undefined) {
+      assistantMessageIndexByKey.set(assistantKey, messages.length);
+      messages.push({
+        id: MessageId.make(`jarvis-message:${assistantKey}`),
+        role: "assistant",
+        text,
+        turnId: readTurnId(event) ? TurnId.make(readTurnId(event) ?? "") : null,
+        streaming: event.type === "assistant.delta",
+        createdAt: event.occurred_at,
+        updatedAt: event.occurred_at,
+      });
+      continue;
+    }
+
+    const existing = messages[existingIndex];
+    if (existing === undefined) {
+      continue;
+    }
+    messages[existingIndex] = {
+      ...existing,
+      text:
+        event.type === "assistant.message" && text.length > 0 ? text : `${existing.text}${text}`,
       streaming: event.type === "assistant.delta",
-      createdAt: event.occurred_at,
       updatedAt: event.occurred_at,
-    },
-  ];
+    };
+  }
+
+  return messages;
 }
 
 function eventToActivity(event: JarvisSessionEvent, index: number): OrchestrationThreadActivity {
@@ -263,7 +311,9 @@ function latestTurnForEvents(
     startedAt: startedEvent?.occurred_at ?? null,
     completedAt: terminalEvent?.occurred_at ?? null,
     assistantMessageId:
-      messages.find((message) => message.turnId === TurnId.make(latestTurnId))?.id ?? null,
+      messages.find(
+        (message) => message.role === "assistant" && message.turnId === TurnId.make(latestTurnId),
+      )?.id ?? null,
   };
 }
 
@@ -511,7 +561,5 @@ function readText(event: JarvisSessionEvent): string | null {
 }
 
 function latestEventTime(events: ReadonlyArray<JarvisSessionEvent>): string | null {
-  return (
-    [...events].sort((a, b) => b.occurred_at.localeCompare(a.occurred_at))[0]?.occurred_at ?? null
-  );
+  return [...events].sort(compareJarvisEvents).toReversed()[0]?.occurred_at ?? null;
 }

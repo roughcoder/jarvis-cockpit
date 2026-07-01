@@ -14,6 +14,7 @@ import {
   requireEnvironmentScope,
 } from "../auth/http.ts";
 import { makeJarvisClient } from "../jarvis/JarvisClient.ts";
+import { dispatchJarvisCommand } from "../jarvis/JarvisDispatch.ts";
 import {
   loadJarvisReadModel,
   shouldUseJarvisCockpitReads,
@@ -61,6 +62,18 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
           const normalizedCommand = yield* normalizeDispatchCommand(args.payload).pipe(
             Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")),
           );
+          const jarvisResult = yield* dispatchJarvisCommand({
+            client: jarvisClient,
+            enabled: shouldUseJarvisCockpitReads(config),
+            command: normalizedCommand,
+          }).pipe(
+            Effect.catch((cause) =>
+              failEnvironmentInternal("orchestration_dispatch_failed", cause),
+            ),
+          );
+          if (jarvisResult !== null) {
+            return jarvisResult;
+          }
           return yield* orchestrationEngine
             .dispatch(normalizedCommand)
             .pipe(
