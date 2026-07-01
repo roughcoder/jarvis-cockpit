@@ -73,6 +73,7 @@ export interface JarvisClient {
   ) => Effect.Effect<JarvisSessionEventsPage, JarvisClientError>;
   readonly getRequests: (
     sessionRef: string,
+    options?: { readonly after?: string; readonly limit?: number },
   ) => Effect.Effect<JarvisSessionRequestsPage, JarvisClientError>;
   readonly getCheckpoints: (
     sessionRef: string,
@@ -129,6 +130,7 @@ const decodeSnapshot = Schema.decodeUnknownEffect(JarvisRunsSnapshot);
 const decodeControlResult = Schema.decodeUnknownEffect(JarvisControlResult);
 const decodeSessionDetail = Schema.decodeUnknownEffect(JarvisSessionDetailResponse);
 const decodeSessionEventsPage = Schema.decodeUnknownEffect(JarvisSessionEventsPage);
+const decodeSessionRequestsPage = Schema.decodeUnknownEffect(JarvisSessionRequestsPage);
 const decodeSessionRequestsResponse = Schema.decodeUnknownEffect(JarvisSessionRequestsResponse);
 const decodeSessionCheckpointsPage = Schema.decodeUnknownEffect(JarvisSessionCheckpointsPage);
 const decodeSessionCheckpointsResponse = Schema.decodeUnknownEffect(
@@ -233,18 +235,34 @@ export function makeJarvisCockpitClient(input: {
           limit: options?.limit,
         }),
       ).pipe(Effect.flatMap(decodeFor("sessions.events", decodeSessionEventsPage))),
-    getRequests: (sessionRef) =>
+    getRequests: (sessionRef, options) =>
       requestJson(
         "sessions.requests",
-        `/v1/sessions/${encodeURIComponent(sessionRef)}/requests`,
+        appendQuery(`/v1/sessions/${encodeURIComponent(sessionRef)}/requests`, {
+          after: options?.after,
+          limit: options?.limit,
+        }),
       ).pipe(
-        Effect.flatMap(decodeFor("sessions.requests", decodeSessionRequestsResponse)),
-        Effect.map(
-          (response): JarvisSessionRequestsPage => ({
-            items: response.requests,
-            cursor: null,
-            has_more: false,
-          }),
+        Effect.flatMap((body) =>
+          decodeFor(
+            "sessions.requests",
+            decodeSessionRequestsPage,
+          )(body).pipe(
+            Effect.catch(() =>
+              decodeFor(
+                "sessions.requests",
+                decodeSessionRequestsResponse,
+              )(body).pipe(
+                Effect.map(
+                  (response): JarvisSessionRequestsPage => ({
+                    items: response.requests,
+                    cursor: null,
+                    has_more: false,
+                  }),
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     getCheckpoints: (sessionRef, options) =>

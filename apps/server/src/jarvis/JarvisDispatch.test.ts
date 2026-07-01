@@ -138,6 +138,59 @@ it.effect("derives Jarvis start-work engine from known provider routing keys", (
   }),
 );
 
+it.effect("derives Jarvis start-work engine from the built-in Claude instance", () =>
+  Effect.gen(function* () {
+    let capturedStartWork: JarvisStartWorkInput | undefined;
+    const client = {
+      ...makeJarvisFixtureClient(),
+      startWork: (input: JarvisStartWorkInput) => {
+        capturedStartWork = input;
+        return Effect.succeed({ ok: true, cursor: "evt_start" });
+      },
+    };
+
+    yield* dispatchJarvisCommand({
+      client,
+      enabled: true,
+      command: {
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd_start_work_claude"),
+        threadId: ThreadId.make("thread_draft"),
+        message: {
+          messageId: MessageId.make("msg_user"),
+          role: "user",
+          text: "Build the cockpit dashboard.",
+          attachments: [],
+        },
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-sonnet-4",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        bootstrap: {
+          createThread: {
+            projectId: ProjectId.make("project_1"),
+            title: "Cockpit dashboard",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: "claude-sonnet-4",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: "jarvis/cockpit",
+            worktreePath: null,
+            createdAt: now,
+          },
+        },
+        createdAt: now,
+      },
+    });
+
+    assert.strictEqual(capturedStartWork?.engine, "claude");
+  }),
+);
+
 it.effect("rejects failed Jarvis control results before returning a dispatch receipt", () =>
   Effect.gen(function* () {
     const client = {
@@ -351,6 +404,40 @@ it.effect("routes checkpoint revert by stable Jarvis checkpoint ref when availab
     assert.deepStrictEqual(result, { sequence: 0 });
     assert.strictEqual(checkpointFetches, 0);
     assert.strictEqual(restoredCheckpointId, "ckpt_stable");
+  }),
+);
+
+it.effect("rejects checkpoint refs from a different Jarvis session", () =>
+  Effect.gen(function* () {
+    let restoreCalls = 0;
+    const client = {
+      ...makeJarvisFixtureClient(),
+      restoreCheckpoint: () => {
+        restoreCalls += 1;
+        return Effect.succeed({ ok: true, cursor: "evt_restore" });
+      },
+    };
+
+    const exit = yield* Effect.exit(
+      dispatchJarvisCommand({
+        client,
+        enabled: true,
+        command: {
+          type: "thread.checkpoint.revert",
+          commandId: CommandId.make("cmd_restore_wrong_session"),
+          threadId: jarvisThreadId,
+          turnCount: 1,
+          checkpointRef: CheckpointRef.make("jarvis:sessref_other_session:ckpt_stable"),
+          createdAt: now,
+        },
+      }),
+    );
+
+    assert.strictEqual(Exit.isFailure(exit), true);
+    assert.strictEqual(restoreCalls, 0);
+    if (Exit.isFailure(exit)) {
+      assert.ok(exit.cause.toString().includes("selected session"));
+    }
   }),
 );
 

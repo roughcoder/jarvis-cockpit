@@ -339,7 +339,7 @@ it("treats stopped and interrupted Jarvis session events as settled turns", () =
       sequence: 2,
       type: "session.stopped",
       occurred_at: "2026-07-01T12:00:02+00:00",
-      turn_id: "turn_1",
+      turn_id: null,
     }),
   ];
 
@@ -347,6 +347,37 @@ it("treats stopped and interrupted Jarvis session events as settled turns", () =
 
   assert.strictEqual(detail.latestTurn?.state, "interrupted");
   assert.strictEqual(detail.latestTurn?.completedAt, "2026-07-01T12:00:02+00:00");
+});
+
+it("ignores older session terminal events when a newer Jarvis turn is active", () => {
+  const session = makeSession("sess_1", "running");
+  const events: ReadonlyArray<JarvisSessionEvent> = [
+    makeEvent({
+      event_id: "evt_started_1" as JarvisSessionEvent["event_id"],
+      sequence: 1,
+      type: "turn.started",
+      turn_id: "turn_1",
+    }),
+    makeEvent({
+      event_id: "evt_stopped" as JarvisSessionEvent["event_id"],
+      sequence: 2,
+      type: "session.stopped",
+      occurred_at: "2026-07-01T12:00:02+00:00",
+      turn_id: null,
+    }),
+    makeEvent({
+      event_id: "evt_started_2" as JarvisSessionEvent["event_id"],
+      sequence: 3,
+      type: "turn.started",
+      occurred_at: "2026-07-01T12:00:03+00:00",
+      turn_id: "turn_2",
+    }),
+  ];
+
+  const detail = mapJarvisSessionToThreadDetail({ session, run, events });
+
+  assert.strictEqual(detail.latestTurn?.turnId, "turn_2");
+  assert.strictEqual(detail.latestTurn?.state, "running");
 });
 
 it("projects Jarvis checkpoints into thread checkpoint summaries", () => {
@@ -415,5 +446,54 @@ it("links Jarvis checkpoints to assistant messages instead of user prompts", () 
 
   assert.strictEqual(detail.messages[0]?.role, "user");
   assert.strictEqual(detail.messages[1]?.role, "assistant");
+  assert.strictEqual(detail.checkpoints[0]?.assistantMessageId, detail.messages[1]?.id);
+});
+
+it("links checkpoint wrappers to turns from canonical checkpoint events", () => {
+  const session = makeSession("sess_1");
+  const events: ReadonlyArray<JarvisSessionEvent> = [
+    makeEvent({
+      event_id: "evt_started" as JarvisSessionEvent["event_id"],
+      sequence: 1,
+      type: "turn.started",
+      turn_id: "turn_1",
+      data: {
+        prompt: "Please implement the change.",
+      },
+    }),
+    makeEvent({
+      event_id: "evt_assistant" as JarvisSessionEvent["event_id"],
+      sequence: 2,
+      type: "assistant.message",
+      turn_id: "turn_1",
+      message_id: "message_1",
+      data: {
+        text: "Implemented.",
+      },
+    }),
+    makeEvent({
+      event_id: "evt_checkpoint" as JarvisSessionEvent["event_id"],
+      sequence: 3,
+      type: "checkpoint.created",
+      turn_id: "turn_1",
+      data: {
+        checkpoint_id: "ckpt_1",
+      },
+    }),
+  ];
+  const checkpoints: ReadonlyArray<JarvisSessionCheckpoint> = [
+    {
+      session_ref: session.session_ref,
+      checkpoint_id: "ckpt_1",
+      label: "After implementation",
+      provider: "codex",
+      restored: false,
+      event: {},
+    },
+  ];
+
+  const detail = mapJarvisSessionToThreadDetail({ session, run, events, checkpoints });
+
+  assert.strictEqual(detail.checkpoints[0]?.turnId, "turn_1");
   assert.strictEqual(detail.checkpoints[0]?.assistantMessageId, detail.messages[1]?.id);
 });

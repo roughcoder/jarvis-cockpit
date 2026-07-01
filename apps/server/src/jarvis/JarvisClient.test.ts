@@ -187,7 +187,26 @@ it.effect("cockpit client reads session requests and checkpoints", () =>
           url: String(url),
           method: init?.method ?? "GET",
         });
-        if (String(url).endsWith("/requests")) {
+        const requestUrl = new URL(String(url));
+        if (requestUrl.pathname.endsWith("/requests") && requestUrl.searchParams.has("after")) {
+          return jsonResponse({
+            items: [
+              {
+                request_id: "input_2",
+                session_ref: sessionRef,
+                run_id: "run_1",
+                kind: "input",
+                status: "pending",
+                title: "Need input",
+                created_at: now,
+                payload: {},
+              },
+            ],
+            cursor: "input_2",
+            has_more: false,
+          });
+        }
+        if (requestUrl.pathname.endsWith("/requests")) {
           return jsonResponse({
             requests: [
               {
@@ -222,6 +241,7 @@ it.effect("cockpit client reads session requests and checkpoints", () =>
     });
 
     const sessionRequests = yield* client.getRequests(sessionRef);
+    const pagedRequests = yield* client.getRequests(sessionRef, { after: "approval_1", limit: 50 });
     const checkpoints = yield* client.getCheckpoints(sessionRef);
 
     assert.strictEqual(
@@ -230,9 +250,14 @@ it.effect("cockpit client reads session requests and checkpoints", () =>
     );
     assert.strictEqual(
       requests[1]?.url,
+      "http://jarvis.local:8787/v1/sessions/sessref_macbook-worker_sess_1/requests?after=approval_1&limit=50",
+    );
+    assert.strictEqual(
+      requests[2]?.url,
       "http://jarvis.local:8787/v1/sessions/sessref_macbook-worker_sess_1/checkpoints",
     );
     assert.strictEqual(sessionRequests.items[0]?.kind, "approval");
+    assert.strictEqual(pagedRequests.items[0]?.kind, "input");
     assert.strictEqual(checkpoints.items[0]?.checkpoint_id, "ckpt_1");
     assert.strictEqual(checkpoints.has_more, false);
   }),
@@ -357,6 +382,10 @@ it.effect("cockpit client posts work, resume, and exact-session turn intents", (
       prompt: "Continue from the current diff.",
       run_id: "wrong_run",
     });
+    yield* client.resumeRun("run_2", {
+      prompt: "",
+      run_id: "wrong_run",
+    });
     const turnResult = yield* client.sendTurn(sessionRef, {
       prompt: "Keep going.",
     });
@@ -364,12 +393,15 @@ it.effect("cockpit client posts work, resume, and exact-session turn intents", (
     assert.strictEqual(requests[0]?.url, "http://jarvis.local:8787/v1/work/start");
     assert.strictEqual(requests[1]?.url, "http://jarvis.local:8787/v1/work/resume");
     assert.strictEqual(
-      requests[2]?.url,
+      requests[3]?.url,
       "http://jarvis.local:8787/v1/sessions/sessref_macbook-worker_sess_1/turns",
     );
     assert.match(requests[0]?.body ?? "", /jarvis-cockpit/);
     assert.match(requests[1]?.body ?? "", /"run_id":"run_1"/);
     assert.strictEqual((requests[1]?.body ?? "").includes("wrong_run"), false);
+    assert.match(requests[2]?.body ?? "", /"run_id":"run_2"/);
+    assert.match(requests[2]?.body ?? "", /"prompt":"Continue from the current state\."/);
+    assert.strictEqual((requests[2]?.body ?? "").includes("wrong_run"), false);
     assert.strictEqual(turnResult.ok, true);
     assert.strictEqual(turnResult.session?.session_ref, sessionRef);
   }),
