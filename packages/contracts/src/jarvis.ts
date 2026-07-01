@@ -66,13 +66,7 @@ export type JarvisWorkerSessionStatus = typeof JarvisWorkerSessionStatus.Type;
 export const JarvisWorkerStatus = Schema.Literals(["online", "offline", "degraded", "unknown"]);
 export type JarvisWorkerStatus = typeof JarvisWorkerStatus.Type;
 
-export const JarvisWorkerHealth = Schema.Literals([
-  "healthy",
-  "degraded",
-  "unhealthy",
-  "unknown",
-  "unreachable",
-]);
+export const JarvisWorkerHealth = Schema.Literals(["healthy", "degraded", "unhealthy", "unknown"]);
 export type JarvisWorkerHealth = typeof JarvisWorkerHealth.Type;
 
 export const JarvisKnownSessionEventType = Schema.Literals([
@@ -133,14 +127,7 @@ export type JarvisBranchStrategy = typeof JarvisBranchStrategy.Type;
 export const JarvisSyncMode = Schema.Literals(["none", "fast", "probe"]);
 export type JarvisSyncMode = typeof JarvisSyncMode.Type;
 
-export const JarvisSyncStatus = Schema.Literals([
-  "fresh",
-  "partial",
-  "stale",
-  "failed",
-  "skipped",
-  "degraded",
-]);
+export const JarvisSyncStatus = Schema.Literals(["fresh", "partial", "stale", "failed"]);
 export type JarvisSyncStatus = typeof JarvisSyncStatus.Type;
 
 export const JarvisCapabilitySupport = Schema.Struct({
