@@ -2073,6 +2073,16 @@ function ChatViewContent(props: ChatViewProps) {
     }
     return byMessageId;
   }, [turnDiffSummaries]);
+  const checkpointRefByTurnCount = useMemo(() => {
+    const byTurnCount = new Map<number, TurnDiffSummary["checkpointRef"]>();
+    for (const summary of turnDiffSummaries) {
+      if (typeof summary.checkpointTurnCount !== "number" || !summary.checkpointRef) {
+        continue;
+      }
+      byTurnCount.set(summary.checkpointTurnCount, summary.checkpointRef);
+    }
+    return byTurnCount;
+  }, [turnDiffSummaries]);
   const revertTargetByUserMessageId = useMemo(() => {
     const byUserMessageId = new Map<
       MessageId,
@@ -2101,16 +2111,23 @@ function ChatViewContent(props: ChatViewProps) {
         if (typeof turnCount !== "number") {
           break;
         }
+        const targetTurnCount = Math.max(0, turnCount - 1);
+        const targetCheckpointRef = checkpointRefByTurnCount.get(targetTurnCount);
         byUserMessageId.set(entry.message.id, {
-          turnCount: Math.max(0, turnCount - 1),
-          ...(summary.checkpointRef ? { checkpointRef: summary.checkpointRef } : {}),
+          turnCount: targetTurnCount,
+          ...(targetCheckpointRef ? { checkpointRef: targetCheckpointRef } : {}),
         });
         break;
       }
     }
 
     return byUserMessageId;
-  }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
+  }, [
+    checkpointRefByTurnCount,
+    inferredCheckpointTurnCountByTurnId,
+    timelineEntries,
+    turnDiffSummaryByAssistantMessageId,
+  ]);
   const revertTurnCountByUserMessageId = useMemo(() => {
     const byUserMessageId = new Map<MessageId, number>();
     for (const [messageId, target] of revertTargetByUserMessageId) {

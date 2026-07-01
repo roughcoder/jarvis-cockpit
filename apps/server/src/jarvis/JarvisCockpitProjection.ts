@@ -200,7 +200,9 @@ function checkpointsForSession(input: {
         checkpoint.checkpoint_id,
       ),
       status: "ready",
-      assistantMessageId: input.messages.find((message) => message.turnId === turnId)?.id ?? null,
+      assistantMessageId:
+        input.messages.find((message) => message.role === "assistant" && message.turnId === turnId)
+          ?.id ?? null,
       completedAt:
         readJsonString(event, "occurred_at", "time", "created_at", "createdAt") ??
         input.session.updated_at,

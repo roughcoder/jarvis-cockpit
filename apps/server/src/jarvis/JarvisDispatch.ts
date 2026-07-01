@@ -18,7 +18,14 @@ export function dispatchJarvisCommand(input: {
   if (!input.enabled) {
     return Effect.succeed(null);
   }
-  if (input.command.type === "thread.turn.start" && input.command.message.attachments.length > 0) {
+
+  const sessionRef =
+    "threadId" in input.command ? jarvisSessionIdFromThreadId(input.command.threadId) : null;
+  if (
+    input.command.type === "thread.turn.start" &&
+    input.command.message.attachments.length > 0 &&
+    (sessionRef !== null || input.command.bootstrap?.createThread !== undefined)
+  ) {
     return Effect.fail(
       new OrchestrationDispatchCommandError({
         message:
@@ -27,8 +34,6 @@ export function dispatchJarvisCommand(input: {
     );
   }
 
-  const sessionRef =
-    "threadId" in input.command ? jarvisSessionIdFromThreadId(input.command.threadId) : null;
   if (sessionRef === null && input.command.type === "thread.turn.start") {
     return dispatchJarvisStartWork(input.client, input.command).pipe(
       Effect.flatMap((result) => dispatchReceiptForJarvisResult(result, input.command.type)),

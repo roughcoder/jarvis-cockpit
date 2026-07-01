@@ -167,6 +167,39 @@ it.effect("rejects Jarvis turn attachments instead of dropping them", () =>
   }),
 );
 
+it.effect("lets non-Jarvis turn attachments fall through to the native dispatcher", () =>
+  Effect.gen(function* () {
+    const result = yield* dispatchJarvisCommand({
+      client: makeJarvisFixtureClient(),
+      enabled: true,
+      command: {
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd_local_attachment"),
+        threadId: ThreadId.make("thread_local"),
+        message: {
+          messageId: MessageId.make("msg_attachment"),
+          role: "user",
+          text: "Inspect this image.",
+          attachments: [
+            {
+              type: "image",
+              id: "image_1",
+              name: "screenshot.png",
+              mimeType: "image/png",
+              sizeBytes: 42,
+            },
+          ],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdAt: now,
+      },
+    });
+
+    assert.strictEqual(result, null);
+  }),
+);
+
 it.effect("preserves structured user-input answers for Jarvis replies", () =>
   Effect.gen(function* () {
     let capturedAnswers: Record<string, unknown> | undefined;
