@@ -12,6 +12,7 @@ import { useEnvironmentQuery } from "../state/query";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { vcsEnvironment } from "../state/vcs";
 import { useUiStateStore } from "../uiStateStore";
+import { localFilesystemCwd } from "../filesystemCwd";
 import { resolveChangeRequestPresentation } from "../sourceControlPresentation";
 import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
 import type { SidebarThreadSummary } from "../types";
@@ -196,7 +197,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
       [thread.environmentId, thread.projectId],
     ),
   );
-  const threadProjectCwd = threadProject?.workspaceRoot ?? null;
+  const threadProjectCwd = localFilesystemCwd(threadProject?.workspaceRoot);
   const gitCwd = thread.worktreePath ?? threadProjectCwd;
   const gitStatus = useEnvironmentQuery(
     thread.branch != null && gitCwd !== null

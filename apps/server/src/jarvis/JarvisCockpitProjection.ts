@@ -91,6 +91,11 @@ function eventsToMessages(
   const assistantMessageIndexByKey = new Map<string, number>();
 
   for (const event of events) {
+    if (isTerminalEvent(event)) {
+      markLatestAssistantMessageComplete(messages, event);
+      continue;
+    }
+
     if (event.type === "turn.started") {
       const prompt = readText(event);
       if (prompt !== null) {
@@ -152,6 +157,28 @@ function eventsToMessages(
   }
 
   return messages;
+}
+
+function markLatestAssistantMessageComplete(
+  messages: CockpitTimelineMessage[],
+  event: JarvisSessionEvent,
+): void {
+  const turnId = readTurnId(event);
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message === undefined || message.role !== "assistant") {
+      continue;
+    }
+    if (turnId !== null && message.turnId !== turnId) {
+      continue;
+    }
+    messages[index] = {
+      ...message,
+      streaming: false,
+      updatedAt: event.occurred_at,
+    };
+    return;
+  }
 }
 
 function assistantMessageKeys(

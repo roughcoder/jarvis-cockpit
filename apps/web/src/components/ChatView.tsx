@@ -112,6 +112,7 @@ import {
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { isCommandPaletteOpen } from "../commandPaletteContext";
+import { isLocalFilesystemCwd } from "../filesystemCwd";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
@@ -437,12 +438,6 @@ function terminalIdListsEqual(left: readonly string[], right: readonly string[])
     }
   }
   return true;
-}
-
-function isLocalFilesystemCwd(cwd: string | null | undefined): cwd is string {
-  if (!cwd) return false;
-  if (/^[A-Za-z]:[\\/]/.test(cwd)) return true;
-  return !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(cwd);
 }
 
 /**
@@ -4037,8 +4032,7 @@ function ChatViewContent(props: ChatViewProps) {
 
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
-    const shouldCreateWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath;
+    const shouldCreateWorktree = worktreeProjectCwd !== null;
     if (shouldCreateWorktree && !activeThreadBranch) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
       return;

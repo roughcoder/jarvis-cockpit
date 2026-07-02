@@ -74,6 +74,7 @@ import {
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { isElectron } from "../env";
+import { localFilesystemCwd } from "../filesystemCwd";
 import { APP_STAGE_LABEL } from "../branding";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { isTerminalFocused } from "../lib/terminalFocus";
@@ -421,8 +422,8 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
       [thread.environmentId, thread.projectId],
     ),
   );
-  const threadProjectCwd = threadProject?.workspaceRoot ?? null;
-  const gitCwd = thread.worktreePath ?? threadProjectCwd ?? props.projectCwd;
+  const threadProjectCwd = localFilesystemCwd(threadProject?.workspaceRoot);
+  const gitCwd = thread.worktreePath ?? threadProjectCwd ?? localFilesystemCwd(props.projectCwd);
   const gitStatus = useEnvironmentQuery(
     thread.branch != null && gitCwd !== null
       ? vcsEnvironment.status({

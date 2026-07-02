@@ -97,7 +97,7 @@ it.effect("derives Jarvis start-work engine from known provider routing keys", (
       ...makeJarvisFixtureClient(),
       startWork: (input: JarvisStartWorkInput) => {
         capturedStartWork = input;
-        return Effect.succeed({ ok: true, cursor: "evt_start" });
+        return makeJarvisFixtureClient().startWork(input);
       },
     };
 
@@ -150,7 +150,7 @@ it.effect("derives Jarvis start-work engine from the built-in Claude instance", 
       ...makeJarvisFixtureClient(),
       startWork: (input: JarvisStartWorkInput) => {
         capturedStartWork = input;
-        return Effect.succeed({ ok: true, cursor: "evt_start" });
+        return makeJarvisFixtureClient().startWork(input);
       },
     };
 
@@ -193,6 +193,56 @@ it.effect("derives Jarvis start-work engine from the built-in Claude instance", 
     });
 
     assert.strictEqual(capturedStartWork?.engine, "claude");
+  }),
+);
+
+it.effect("rejects draft starts when Jarvis does not return a promoted session", () =>
+  Effect.gen(function* () {
+    const client = {
+      ...makeJarvisFixtureClient(),
+      startWork: () => Effect.succeed({ ok: true, cursor: "evt_start" }),
+    };
+
+    const exit = yield* Effect.exit(
+      dispatchJarvisCommand({
+        client,
+        enabled: true,
+        command: {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd_start_work_without_session"),
+          threadId: ThreadId.make("thread_draft"),
+          message: {
+            messageId: MessageId.make("msg_user"),
+            role: "user",
+            text: "Build the cockpit dashboard.",
+            attachments: [],
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          bootstrap: {
+            createThread: {
+              projectId: ProjectId.make("project_1"),
+              title: "Cockpit dashboard",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "codex",
+              },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: "jarvis/cockpit",
+              worktreePath: null,
+              createdAt: now,
+            },
+          },
+          createdAt: now,
+        },
+      }),
+    );
+
+    assert.strictEqual(Exit.isFailure(exit), true);
+    if (Exit.isFailure(exit)) {
+      assert.ok(exit.cause.toString().includes("did not return a session_ref"));
+    }
   }),
 );
 
@@ -641,6 +691,57 @@ it.effect("rejects unsupported commands for Jarvis-managed threads instead of fa
     assert.strictEqual(Exit.isFailure(exit), true);
     if (Exit.isFailure(exit)) {
       assert.ok(exit.cause.toString().includes("does not support command thread.delete"));
+    }
+  }),
+);
+
+it.effect("routes delete for Jarvis run project rows through Jarvis archive", () =>
+  Effect.gen(function* () {
+    let archivedRunId: string | undefined;
+    let idempotencyKey: string | undefined;
+    const client = {
+      ...makeJarvisFixtureClient(),
+      archiveRun: (runId: string, input?: JarvisArchiveInput) => {
+        archivedRunId = runId;
+        idempotencyKey = input?.idempotency_key;
+        return Effect.succeed({ ok: true, cursor: "evt_archive_run" });
+      },
+    };
+
+    const result = yield* dispatchJarvisCommand({
+      client,
+      enabled: true,
+      command: {
+        type: "project.delete",
+        commandId: CommandId.make("cmd_archive_run"),
+        projectId: ProjectId.make("jarvis-run_run_fixture_dashboard"),
+      },
+    });
+
+    assert.deepStrictEqual(result, { sequence: 0 });
+    assert.strictEqual(archivedRunId, "run_fixture_dashboard");
+    assert.strictEqual(idempotencyKey, "cmd_archive_run");
+  }),
+);
+
+it.effect("rejects unsupported Jarvis run project mutations instead of falling through", () =>
+  Effect.gen(function* () {
+    const exit = yield* Effect.exit(
+      dispatchJarvisCommand({
+        client: makeJarvisFixtureClient(),
+        enabled: true,
+        command: {
+          type: "project.meta.update",
+          commandId: CommandId.make("cmd_project_meta"),
+          projectId: ProjectId.make("jarvis-run_run_fixture_dashboard"),
+          title: "Renamed from T3",
+        },
+      }),
+    );
+
+    assert.strictEqual(Exit.isFailure(exit), true);
+    if (Exit.isFailure(exit)) {
+      assert.ok(exit.cause.toString().includes("does not support command project.meta.update"));
     }
   }),
 );
