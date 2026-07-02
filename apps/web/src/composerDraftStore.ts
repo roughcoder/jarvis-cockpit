@@ -1256,10 +1256,7 @@ function resolveComposerDraftKey(
       return scopedKey;
     }
     for (const [draftId, draftSession] of Object.entries(state.draftThreadsByThreadKey)) {
-      if (
-        draftSession.environmentId === normalizedTarget.environmentId &&
-        draftSession.threadId === normalizedTarget.threadId
-      ) {
+      if (draftThreadMatchesRef(draftSession, normalizedTarget)) {
         return draftId;
       }
     }
@@ -1381,6 +1378,14 @@ function scopedThreadRefsEqual(
 
 function isDraftThreadPromoting(draftThread: DraftThreadState | null | undefined): boolean {
   return draftThread?.promotedTo !== null && draftThread?.promotedTo !== undefined;
+}
+
+function draftThreadMatchesRef(draftThread: DraftThreadState, threadRef: ScopedThreadRef): boolean {
+  return (
+    (draftThread.environmentId === threadRef.environmentId &&
+      draftThread.threadId === threadRef.threadId) ||
+    scopedThreadRefsEqual(draftThread.promotedTo, threadRef)
+  );
 }
 
 function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThreadState): boolean {
@@ -2217,10 +2222,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
         getDraftSession: (draftId) => get().draftThreadsByThreadKey[draftId] ?? null,
         getDraftSessionByRef: (threadRef) => {
           for (const draftSession of Object.values(get().draftThreadsByThreadKey)) {
-            if (
-              draftSession.environmentId === threadRef.environmentId &&
-              draftSession.threadId === threadRef.threadId
-            ) {
+            if (draftThreadMatchesRef(draftSession, threadRef)) {
               return draftSession;
             }
           }

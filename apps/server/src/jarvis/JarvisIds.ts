@@ -8,6 +8,13 @@ const JARVIS_CHECKPOINT_REF_SEPARATOR = ":";
 export const jarvisProjectIdForRun = (runId: string): ProjectId =>
   ProjectId.make(`${JARVIS_PROJECT_ID_PREFIX}${runId}`);
 
+export const jarvisRunIdFromProjectId = (projectId: ProjectId | string): string | null => {
+  const value = String(projectId);
+  return value.startsWith(JARVIS_PROJECT_ID_PREFIX)
+    ? value.slice(JARVIS_PROJECT_ID_PREFIX.length)
+    : null;
+};
+
 export const jarvisThreadIdForSession = (sessionRef: string): ThreadId =>
   ThreadId.make(`${JARVIS_THREAD_ID_PREFIX}${sessionRef}`);
 

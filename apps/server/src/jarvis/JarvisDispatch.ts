@@ -2,6 +2,7 @@ import {
   JarvisRequestId,
   OrchestrationDispatchCommandError,
   type DispatchResult,
+  type JarvisArchiveInput,
   type JarvisControlResult,
   type JarvisSessionCheckpoint,
   type OrchestrationCommand,
@@ -12,6 +13,7 @@ import * as Schema from "effect/Schema";
 import type { JarvisClient, JarvisClientError } from "./JarvisClient.ts";
 import {
   jarvisCheckpointRefPartsFromCheckpointRef,
+  jarvisRunIdFromProjectId,
   jarvisSessionIdFromThreadId,
   jarvisThreadIdForSession,
 } from "./JarvisIds.ts";
@@ -30,6 +32,8 @@ export function dispatchJarvisCommand(input: {
 
   const sessionRef =
     "threadId" in input.command ? jarvisSessionIdFromThreadId(input.command.threadId) : null;
+  const runId =
+    "projectId" in input.command ? jarvisRunIdFromProjectId(input.command.projectId) : null;
   if (
     input.command.type === "thread.turn.start" &&
     input.command.message.attachments.length > 0 &&
@@ -43,9 +47,19 @@ export function dispatchJarvisCommand(input: {
     );
   }
 
+  if (runId !== null) {
+    return dispatchJarvisProjectWrite(input.client, runId, input.command).pipe(
+      Effect.flatMap((result) => dispatchReceiptForJarvisResult(result, input.command.type)),
+    );
+  }
+
   if (sessionRef === null && input.command.type === "thread.turn.start") {
     return dispatchJarvisStartWork(input.client, input.command).pipe(
-      Effect.flatMap((result) => dispatchReceiptForJarvisResult(result, input.command.type)),
+      Effect.flatMap((result) =>
+        dispatchReceiptForJarvisResult(result, input.command.type, {
+          requiresPromotedThread: true,
+        }),
+      ),
     );
   }
   if (sessionRef === null) {
@@ -63,6 +77,25 @@ export function dispatchJarvisCommand(input: {
       return dispatchReceiptForJarvisResult(result, input.command.type);
     }),
   );
+}
+
+function dispatchJarvisProjectWrite(
+  client: JarvisClient,
+  runId: string,
+  command: OrchestrationCommand,
+): Effect.Effect<JarvisControlResult, OrchestrationDispatchCommandError> {
+  switch (command.type) {
+    case "project.delete":
+      return client
+        .archiveRun(runId, archiveInputForCommand(command.commandId))
+        .pipe(Effect.mapError((cause) => jarvisDispatchError(command.type, cause)));
+    default:
+      return Effect.fail(
+        new OrchestrationDispatchCommandError({
+          message: `Jarvis cockpit does not support command ${command.type} for Jarvis-managed runs.`,
+        }),
+      );
+  }
 }
 
 function dispatchJarvisWrite(
@@ -219,14 +252,31 @@ function dispatchJarvisStartWork(
     .pipe(Effect.mapError((cause) => jarvisDispatchError(command.type, cause)));
 }
 
+function archiveInputForCommand(commandId: OrchestrationCommand["commandId"]): JarvisArchiveInput {
+  return {
+    idempotency_key: String(commandId),
+  };
+}
+
 function dispatchReceiptForJarvisResult(
   result: JarvisControlResult | null,
   commandType: OrchestrationCommand["type"],
+  options?: {
+    readonly requiresPromotedThread?: boolean;
+  },
 ): Effect.Effect<DispatchResult | null, OrchestrationDispatchCommandError> {
   if (result === null) {
     return Effect.succeed(null);
   }
   if (result.ok) {
+    if (options?.requiresPromotedThread === true && result.session?.session_ref === undefined) {
+      return Effect.fail(
+        new OrchestrationDispatchCommandError({
+          message:
+            "Jarvis accepted the start request but did not return a session_ref to promote the draft thread.",
+        }),
+      );
+    }
     return Effect.succeed({
       sequence: 0,
       ...(result.session?.session_ref

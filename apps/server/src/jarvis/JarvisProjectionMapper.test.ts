@@ -250,6 +250,15 @@ it("moves run-level archived sessions out of live snapshots", () => {
     archived.threads[0]?.id,
     "jarvis-session_sessref_macbook-worker_sess_run_archived",
   );
+  assert.strictEqual(archived.threads[0]?.archivedAt, archivedRun.archived_at);
+  assert.strictEqual(
+    mapJarvisSessionToThreadDetail({
+      session,
+      run: archivedRun,
+      events: [],
+    }).archivedAt,
+    archivedRun.archived_at,
+  );
 });
 
 it("synthesizes project rows for sessions when partial snapshots omit their run", () => {
@@ -424,6 +433,34 @@ it("coalesces assistant deltas by turn when later chunks omit message ids", () =
   assert.strictEqual(detail.messages.length, 1);
   assert.strictEqual(detail.messages[0]?.id, "jarvis-message:msg_1");
   assert.strictEqual(detail.messages[0]?.text, "Hello");
+});
+
+it("marks delta-only assistant replies complete when the turn completes", () => {
+  const session = makeSession("sess_1");
+  const events: ReadonlyArray<JarvisSessionEvent> = [
+    makeEvent({
+      event_id: "evt_delta_1" as JarvisSessionEvent["event_id"],
+      type: "assistant.delta",
+      turn_id: "turn_1",
+      message_id: null,
+      data: {
+        text: "Done",
+      },
+    }),
+    makeEvent({
+      event_id: "evt_completed" as JarvisSessionEvent["event_id"],
+      sequence: 2,
+      type: "turn.completed",
+      occurred_at: "2026-07-01T12:00:01+00:00",
+      turn_id: "turn_1",
+    }),
+  ];
+
+  const detail = mapJarvisSessionToThreadDetail({ session, run, events });
+  assert.strictEqual(detail.messages.length, 1);
+  assert.strictEqual(detail.messages[0]?.text, "Done");
+  assert.strictEqual(detail.messages[0]?.streaming, false);
+  assert.strictEqual(detail.messages[0]?.updatedAt, "2026-07-01T12:00:01+00:00");
 });
 
 it("normalizes Jarvis input and approval request activities for T3 derivations", () => {

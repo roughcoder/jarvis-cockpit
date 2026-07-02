@@ -979,7 +979,27 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(useComposerDraftStore.getState().getDraftThread(draftId)?.promotedTo).toEqual(
       canonicalThreadRef,
     );
+    expect(useComposerDraftStore.getState().getDraftThreadByRef(canonicalThreadRef)?.promotedTo).toEqual(
+      canonicalThreadRef,
+    );
     expect(draftByKey(draftId)?.prompt).toBe("promote me");
+  });
+
+  it("finalizes a draft promoted to a different canonical server thread", () => {
+    const canonicalThreadRef = scopeThreadRef(
+      TEST_ENVIRONMENT_ID,
+      ThreadId.make("jarvis-session_sessref_macbook-worker_sess_123"),
+    );
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setPrompt(draftId, "promote me");
+    markPromotedDraftThreadByDraftId(draftId, canonicalThreadRef);
+
+    finalizePromotedDraftThreadByRef(canonicalThreadRef);
+
+    expect(useComposerDraftStore.getState().getDraftThreadByRef(canonicalThreadRef)).toBeNull();
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)).toBeNull();
+    expect(draftByKey(draftId)).toBeUndefined();
   });
 
   it("only marks iterable promotion cleanup entries for the matching environment refs", () => {
