@@ -87,6 +87,7 @@ const makeCliTestServerConfig = (baseDir: string) =>
       jarvisCockpitEnabled: false,
       jarvisApiBaseUrl: undefined,
       jarvisApiToken: undefined,
+      jarvisDefaultRepo: undefined,
       jarvisFixtureMode: false,
     } satisfies ServerConfig.ServerConfig["Service"];
   });

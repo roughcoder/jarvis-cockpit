@@ -27,8 +27,10 @@ import {
   CornerLeftUpIcon,
   FolderIcon,
   FolderPlusIcon,
+  HistoryIcon,
   LinkIcon,
   MessageSquareIcon,
+  RocketIcon,
   SettingsIcon,
   SquarePenIcon,
 } from "lucide-react";
@@ -80,7 +82,14 @@ import {
   resolveProjectPathForDispatch,
 } from "../lib/projectPaths";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { getLatestThreadForProject } from "../lib/threadSort";
+import { getLatestThreadForProject, sortThreads } from "../lib/threadSort";
+import { isJarvisCockpitEnvironment } from "../jarvisCockpit";
+import {
+  buildStartWorkSources,
+  START_WORK_SEARCH_TERMS,
+  START_WORK_TITLE,
+  type StartWorkSourceId,
+} from "./startWork.logic";
 import { cn, isMacPlatform, isWindowsPlatform, newProjectId } from "../lib/utils";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
@@ -487,6 +496,28 @@ function OpenCommandPaletteDialog(props: {
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
+  const jarvisCockpitEnvironmentIds = useMemo(() => {
+    const ids = new Set<EnvironmentId>();
+    for (const environment of environments) {
+      if (isJarvisCockpitEnvironment(environment.serverConfig ?? undefined)) {
+        ids.add(environment.environmentId);
+      }
+    }
+    return ids;
+  }, [environments]);
+  const isJarvisCockpitMode = jarvisCockpitEnvironmentIds.size > 0;
+  const jarvisAnchorProject = useMemo(
+    () =>
+      projects.find((project) => jarvisCockpitEnvironmentIds.has(project.environmentId)) ?? null,
+    [jarvisCockpitEnvironmentIds, projects],
+  );
+  const latestJarvisThread = useMemo(() => {
+    const candidates = threads.filter(
+      (thread) =>
+        jarvisCockpitEnvironmentIds.has(thread.environmentId) && thread.archivedAt === null,
+    );
+    return sortThreads(candidates, clientSettings.sidebarThreadSortOrder)[0] ?? null;
+  }, [clientSettings.sidebarThreadSortOrder, jarvisCockpitEnvironmentIds, threads]);
 
   const addProjectEnvironmentOptions = useMemo(() => {
     const options = environments.map((environment): AddProjectEnvironmentOption => {
@@ -563,7 +594,9 @@ function OpenCommandPaletteDialog(props: {
   const isRemoteProjectCloneFlow = addProjectCloneFlow !== null;
   const isRemoteProjectRepositoryStep = addProjectCloneFlow?.step === "repository";
   const isBrowsing =
-    !isRemoteProjectRepositoryStep && isFilesystemBrowseQuery(query, browseEnvironmentPlatform);
+    !isJarvisCockpitMode &&
+    !isRemoteProjectRepositoryStep &&
+    isFilesystemBrowseQuery(query, browseEnvironmentPlatform);
   const paletteMode = getCommandPaletteMode({ currentView, isBrowsing });
   const getAddProjectInitialQueryForEnvironment = useCallback(
     (environmentId: EnvironmentId | null): string => {
@@ -897,6 +930,76 @@ function OpenCommandPaletteDialog(props: {
     [browseEnvironmentId, buildAddProjectSourceGroups, sourceControlDiscovery.data],
   );
 
+  const buildStartWorkGroups = useCallback((): CommandPaletteView["groups"] => {
+    const iconForSource = (id: StartWorkSourceId): ReactNode => {
+      switch (id) {
+        case "describe-work":
+          return <MessageSquareIcon className={ITEM_ICON_CLASS} />;
+        case "github-issue":
+          return <GitHubIcon className={ITEM_ICON_CLASS} />;
+        case "linear-ticket":
+          return <LinkIcon className={ITEM_ICON_CLASS} />;
+        case "continue-run":
+          return <HistoryIcon className={ITEM_ICON_CLASS} />;
+        case "register-repository":
+          return <FolderIcon className={ITEM_ICON_CLASS} />;
+      }
+    };
+    const items: CommandPaletteActionItem[] = buildStartWorkSources({
+      hasAnchorProject: jarvisAnchorProject !== null,
+      hasResumableThread: latestJarvisThread !== null,
+    }).map((source) => ({
+      kind: "action",
+      value: source.value,
+      searchTerms: [...source.searchTerms],
+      title: source.title,
+      description: source.enabled ? source.description : (source.disabledHint ?? ""),
+      icon: iconForSource(source.id),
+      ...(source.enabled ? {} : { disabled: true }),
+      run: async () => {
+        if (!source.enabled) {
+          return;
+        }
+        if (source.id === "describe-work") {
+          if (jarvisAnchorProject === null) {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Unable to start Jarvis work",
+                description:
+                  "Jarvis has not reported a cockpit project anchor yet. Check that the Jarvis API and worker registry are healthy.",
+              }),
+            );
+            return;
+          }
+          await handleNewThread(scopeProjectRef(jarvisAnchorProject.environmentId, jarvisAnchorProject.id), {
+            envMode: "local",
+            startFromOrigin: false,
+            branch: null,
+            worktreePath: null,
+          });
+          return;
+        }
+        if (source.id === "continue-run" && latestJarvisThread !== null) {
+          await navigate({
+            to: "/$environmentId/$threadId",
+            params: buildThreadRouteParams(
+              scopeThreadRef(latestJarvisThread.environmentId, latestJarvisThread.id),
+            ),
+          });
+        }
+      },
+    }));
+    return [{ value: "start-work-sources", label: "Start work", items }];
+  }, [handleNewThread, jarvisAnchorProject, latestJarvisThread, navigate]);
+
+  const openStartWorkFlow = useCallback(() => {
+    pushPaletteView({
+      addonIcon: <RocketIcon className={ADDON_ICON_CLASS} />,
+      groups: buildStartWorkGroups(),
+    });
+  }, [buildStartWorkGroups]);
+
   const addProjectEnvironmentItems: CommandPaletteActionItem[] = addProjectEnvironmentOptions.map(
     (option) => ({
       kind: "action",
@@ -924,6 +1027,10 @@ function OpenCommandPaletteDialog(props: {
   );
 
   const openAddProjectFlow = useCallback(() => {
+    if (isJarvisCockpitMode) {
+      openStartWorkFlow();
+      return;
+    }
     if (addProjectEnvironmentOptions.length > 1) {
       pushPaletteView({
         addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
@@ -949,6 +1056,8 @@ function OpenCommandPaletteDialog(props: {
     addProjectEnvironmentGroups,
     addProjectEnvironmentOptions.length,
     defaultAddProjectEnvironmentId,
+    isJarvisCockpitMode,
+    openStartWorkFlow,
     startAddProjectSourceSelection,
   ]);
 
@@ -1001,36 +1110,50 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  actionItems.push({
-    kind: "action",
-    value: "action:add-project",
-    searchTerms: [
-      "add project",
-      "folder",
-      "directory",
-      "browse",
-      "clone",
-      "remote",
-      "repository",
-      "repo",
-      "git",
-      "github",
-      "gitlab",
-      "bitbucket",
-      "azure",
-      "devops",
-      "url",
-      "environment",
-    ],
-    title: "Add project",
-    icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
-    keepOpen: true,
-    run: async () => {
-      openAddProjectFlow();
-    },
-  });
+  if (isJarvisCockpitMode) {
+    actionItems.push({
+      kind: "action",
+      value: "action:add-project",
+      searchTerms: [...START_WORK_SEARCH_TERMS],
+      title: START_WORK_TITLE,
+      icon: <RocketIcon className={ITEM_ICON_CLASS} />,
+      keepOpen: true,
+      run: async () => {
+        openStartWorkFlow();
+      },
+    });
+  } else {
+    actionItems.push({
+      kind: "action",
+      value: "action:add-project",
+      searchTerms: [
+        "add project",
+        "folder",
+        "directory",
+        "browse",
+        "clone",
+        "remote",
+        "repository",
+        "repo",
+        "git",
+        "github",
+        "gitlab",
+        "bitbucket",
+        "azure",
+        "devops",
+        "url",
+        "environment",
+      ],
+      title: "Add project",
+      icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
+      keepOpen: true,
+      run: async () => {
+        openAddProjectFlow();
+      },
+    });
+  }
 
-  if (wslAddProjectEnvironmentOption) {
+  if (!isJarvisCockpitMode && wslAddProjectEnvironmentOption) {
     actionItems.push({
       kind: "action",
       value: "action:add-project:wsl-folder",

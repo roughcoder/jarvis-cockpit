@@ -80,7 +80,9 @@ it.effect("routes first draft turns to Jarvis work start", () =>
 
     assert.deepStrictEqual(result, {
       sequence: 0,
-      promotedThreadId: ThreadId.make("jarvis-session_sessref_macbook-worker_sess_fixture_codex"),
+      promotedThreadId: ThreadId.make(
+        "jarvis-session_sessref_macbook-worker_sess_fixture_cockpit_dashboard_1",
+      ),
     });
     assert.strictEqual(capturedStartWork?.prompt, "Build the cockpit dashboard.");
     assert.strictEqual(capturedStartWork?.title, "Cockpit dashboard");
@@ -196,53 +198,101 @@ it.effect("derives Jarvis start-work engine from the built-in Claude instance", 
   }),
 );
 
-it.effect("rejects draft starts when Jarvis does not return a promoted session", () =>
+it.effect("defaults unknown T3 model selections to the Jarvis Codex engine", () =>
+  Effect.gen(function* () {
+    let capturedStartWork: JarvisStartWorkInput | undefined;
+    const client = {
+      ...makeJarvisFixtureClient(),
+      startWork: (input: JarvisStartWorkInput) => {
+        capturedStartWork = input;
+        return makeJarvisFixtureClient().startWork(input);
+      },
+    };
+
+    yield* dispatchJarvisCommand({
+      client,
+      enabled: true,
+      command: {
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd_start_work_unknown_model"),
+        threadId: ThreadId.make("thread_draft"),
+        message: {
+          messageId: MessageId.make("msg_user"),
+          role: "user",
+          text: "Run a smoke test.",
+          attachments: [],
+        },
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("openai-default"),
+          model: "gpt-5.5",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        bootstrap: {
+          createThread: {
+            projectId: ProjectId.make("project_1"),
+            title: "Smoke test",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("openai-default"),
+              model: "gpt-5.5",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+          },
+        },
+        createdAt: now,
+      },
+    });
+
+    assert.strictEqual(capturedStartWork?.engine, "codex");
+  }),
+);
+
+it.effect("accepts async draft starts when Jarvis does not return a promoted session yet", () =>
   Effect.gen(function* () {
     const client = {
       ...makeJarvisFixtureClient(),
       startWork: () => Effect.succeed({ ok: true, cursor: "evt_start" }),
     };
 
-    const exit = yield* Effect.exit(
-      dispatchJarvisCommand({
-        client,
-        enabled: true,
-        command: {
-          type: "thread.turn.start",
-          commandId: CommandId.make("cmd_start_work_without_session"),
-          threadId: ThreadId.make("thread_draft"),
-          message: {
-            messageId: MessageId.make("msg_user"),
-            role: "user",
-            text: "Build the cockpit dashboard.",
-            attachments: [],
-          },
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          bootstrap: {
-            createThread: {
-              projectId: ProjectId.make("project_1"),
-              title: "Cockpit dashboard",
-              modelSelection: {
-                instanceId: ProviderInstanceId.make("codex"),
-                model: "codex",
-              },
-              runtimeMode: "full-access",
-              interactionMode: "default",
-              branch: "jarvis/cockpit",
-              worktreePath: null,
-              createdAt: now,
-            },
-          },
-          createdAt: now,
+    const result = yield* dispatchJarvisCommand({
+      client,
+      enabled: true,
+      command: {
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd_start_work_without_session"),
+        threadId: ThreadId.make("thread_draft"),
+        message: {
+          messageId: MessageId.make("msg_user"),
+          role: "user",
+          text: "Build the cockpit dashboard.",
+          attachments: [],
         },
-      }),
-    );
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        bootstrap: {
+          createThread: {
+            projectId: ProjectId.make("project_1"),
+            title: "Cockpit dashboard",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "codex",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: "jarvis/cockpit",
+            worktreePath: null,
+            createdAt: now,
+          },
+        },
+        createdAt: now,
+      },
+    });
 
-    assert.strictEqual(Exit.isFailure(exit), true);
-    if (Exit.isFailure(exit)) {
-      assert.ok(exit.cause.toString().includes("did not return a session_ref"));
-    }
+    assert.deepStrictEqual(result, { sequence: 0 });
   }),
 );
 

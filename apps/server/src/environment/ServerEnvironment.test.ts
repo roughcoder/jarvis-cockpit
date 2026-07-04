@@ -41,6 +41,7 @@ const makeServerConfig = Effect.fn(function* (baseDir: string) {
     jarvisCockpitEnabled: false,
     jarvisApiBaseUrl: undefined,
     jarvisApiToken: undefined,
+    jarvisDefaultRepo: undefined,
     jarvisFixtureMode: false,
     port: 0,
     host: undefined,
@@ -71,6 +72,45 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
 
       expect(first.environmentId).toBe(second.environmentId);
       expect(second.capabilities.repositoryIdentity).toBe(true);
+    }),
+  );
+
+  it.effect("reports the jarvis cockpit capability from server config", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-test-",
+      });
+      const config = yield* makeServerConfig(baseDir);
+      yield* ServerConfig.ensureServerDirectories(config);
+
+      const getDescriptor = Effect.gen(function* () {
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        return yield* serverEnvironment.getDescriptor;
+      });
+
+      const defaultDescriptor = yield* getDescriptor.pipe(
+        Effect.provide(ServerEnvironment.layer.pipe(Layer.provide(ServerConfig.layer(config)))),
+      );
+      expect(defaultDescriptor.capabilities.jarvisCockpit).toBe(false);
+
+      const cockpitDescriptor = yield* getDescriptor.pipe(
+        Effect.provide(
+          ServerEnvironment.layer.pipe(
+            Layer.provide(ServerConfig.layer({ ...config, jarvisCockpitEnabled: true })),
+          ),
+        ),
+      );
+      expect(cockpitDescriptor.capabilities.jarvisCockpit).toBe(true);
+
+      const fixtureDescriptor = yield* getDescriptor.pipe(
+        Effect.provide(
+          ServerEnvironment.layer.pipe(
+            Layer.provide(ServerConfig.layer({ ...config, jarvisFixtureMode: true })),
+          ),
+        ),
+      );
+      expect(fixtureDescriptor.capabilities.jarvisCockpit).toBe(true);
     }),
   );
 

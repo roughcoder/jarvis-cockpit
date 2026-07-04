@@ -9,8 +9,12 @@ artifact data, then posts operator actions back to Jarvis. The fork must not
 spawn Codex or Claude directly for Jarvis-managed work, and it must not create a
 second durable project model.
 
-## Current Fork Plan
+## Current Build
 
+- [Current state and end goal](./jarvis-cockpit-current-state-and-end-goal.md):
+  live capabilities, known gaps, run commands, and the target product shape.
+- [Progress log](./jarvis-cockpit-phase7-progress.md): what this branch has
+  implemented and verified so far.
 - [Phase 7 plan](./jarvis-cockpit-phase7-plan.md): full implementation plan for
   adapting T3 into the Jarvis cockpit.
 - [Phase 7 PRD](./jarvis-cockpit-phase7-prd.md): product requirements,
@@ -21,8 +25,9 @@ second durable project model.
   original scope, constraints, and missing-spec packet rules.
 - [Worker-session pivot](./agentic-worker-session-pivot.md): Jarvis-side pivot
   from one-shot jobs to live durable provider sessions.
-- [Progress log](./jarvis-cockpit-phase7-progress.md): what this branch has
-  implemented and verified so far.
+- [Onboarding pivot](./jarvis-cockpit-onboarding-pivot-plan.md): product and
+  implementation plan for replacing upstream local-project onboarding with a
+  Jarvis-first `Start work` flow.
 
 ## Contract Reference
 
@@ -30,18 +35,25 @@ second durable project model.
   worker-session resources, endpoints, event types, and UI integration notes
   copied from the current Jarvis worker-sessions branch.
 
-## First Slice In This Branch
+## Implemented In This Branch
 
-The committed implementation is the read/projection foundation:
+The current implementation is no longer read-only. It includes the read
+projection foundation plus a working live start-work path:
 
 - shared Jarvis contracts and fixtures;
 - server-side Jarvis client and fixture mode;
 - projection from Jarvis runs, sessions, and events into T3 shell/thread models;
 - HTTP and WebSocket read-path integration;
 - guardrails so Jarvis-managed thread ids do not trigger native T3 branch sync;
+- Jarvis write dispatch for start, turn, approval, input, interrupt, stop,
+  archive, checkpoint restore, and resume paths;
+- a Jarvis-first `Start work -> Describe work` UI path;
+- a synthetic `Start Jarvis work` anchor for zero-run and terminal-run states;
+- compatibility with the current live Jarvis v1 projection values;
 - verification and dogfood summary in the progress log.
 
-The next slices should add live aggregate APIs, start-work controls, approval and
-input controls, stop/interrupt/resume controls, and artifact/evidence surfaces.
+The next slices should replace the temporary `JARVIS_DEFAULT_REPO` bridge with a
+Jarvis-owned repository/default-repo projection, build the full start-work
+wizard, and add richer approval/input/control and artifact/evidence surfaces.
 Any missing Jarvis-side contract should be handled as a missing-spec packet, not
 guessed inside the UI.

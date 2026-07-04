@@ -139,6 +139,23 @@ it.effect("decodes a Jarvis cockpit catalog fixture", () =>
   }),
 );
 
+it.effect("defaults optional Jarvis catalog option groups omitted by live v1 servers", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeCatalog({
+      api_version: "v1",
+      schema_version: 1,
+      engines: [],
+      capabilities: [],
+      work_sources: ["manual", "github", "linear"],
+      engine_strategies: ["single", "parallel"],
+      request_kinds: ["approval", "input"],
+    });
+
+    assert.deepStrictEqual(parsed.branch_strategies, []);
+    assert.deepStrictEqual(parsed.landing_policies, []);
+  }),
+);
+
 it.effect("decodes a Jarvis cockpit snapshot fixture", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeSnapshot({
@@ -238,6 +255,125 @@ it.effect("decodes a Jarvis cockpit snapshot fixture", () =>
     assert.ok(worker);
     assert.strictEqual(worker.repositories?.at(0)?.repo, "roughcoder/jarvis");
     assert.strictEqual(parsed.artifacts[0]?.kind, "branch");
+  }),
+);
+
+it.effect("accepts live Jarvis terminal run snapshots with absent repo and branch labels", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeSnapshot({
+      api_version: "v1",
+      schema_version: 1,
+      cursor: "evt_terminal",
+      generated_at: generatedAt,
+      sync: {
+        mode: "fast",
+        status: "fresh",
+        synced_at: generatedAt,
+        errors: [],
+      },
+      runs: [
+        {
+          authority: "jarvis",
+          supported_controls: ["archive"],
+          run_id: runId,
+          title: "Orchestration smoke test",
+          objective: "Verify worker dispatch",
+          status: "terminal",
+          phase: "needs_human",
+          repo: "",
+          branch: "",
+          session_count: 0,
+          active_session_count: 0,
+          pending_input_count: 0,
+          pending_approval_count: 0,
+          artifact_count: 0,
+          primary_artifact_ids: [],
+          latest_activity_at: generatedAt,
+          latest_cursor: "evt_terminal",
+          created_at: generatedAt,
+          updated_at: generatedAt,
+          archived_at: null,
+          terminal_reason: "Worker dispatch failed",
+        },
+      ],
+      sessions: [],
+      workers: [],
+      artifacts: [],
+    });
+
+    assert.strictEqual(parsed.runs[0]?.status, "terminal");
+    assert.strictEqual(parsed.runs[0]?.repo, "");
+    assert.strictEqual(parsed.runs[0]?.branch, "");
+  }),
+);
+
+it.effect("accepts live Jarvis active run snapshots with lightweight branch artifacts", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeSnapshot({
+      api_version: "v1",
+      schema_version: 1,
+      cursor: "evt_active",
+      generated_at: generatedAt,
+      sync: {
+        mode: "probe",
+        status: "fresh",
+        synced_at: generatedAt,
+        errors: [],
+      },
+      runs: [
+        {
+          authority: "jarvis",
+          supported_controls: ["archive"],
+          run_id: runId,
+          title: "Dogfood UI fleet Codex smoke test",
+          objective: "Dogfood UI fleet Codex smoke test",
+          status: "active",
+          phase: "running",
+          repo: "roughcoder/jarvis-cockpit",
+          branch: "jarvis/dogfood",
+          session_count: 1,
+          active_session_count: 1,
+          pending_input_count: 0,
+          pending_approval_count: 0,
+          artifact_count: 1,
+          primary_artifact_ids: ["artifact_branch_1"],
+          latest_activity_at: generatedAt,
+          latest_cursor: "evt_active",
+          created_at: generatedAt,
+          updated_at: generatedAt,
+          archived_at: null,
+          terminal_reason: null,
+        },
+      ],
+      sessions: [],
+      workers: [],
+      artifacts: [
+        {
+          artifact_id: "artifact_branch_1",
+          run_id: runId,
+          session_ref: sessionRef,
+          kind: "branch",
+          provider: "git",
+          external_id: "jarvis/dogfood",
+          is_primary: true,
+          visibility: "public-safe",
+          title: "jarvis/dogfood",
+          status: "running",
+          summary: "",
+          url: "",
+          branch: "jarvis/dogfood",
+          commit_sha: "",
+          created_at: generatedAt,
+          updated_at: generatedAt,
+          metadata: {},
+        },
+      ],
+    });
+
+    assert.strictEqual(parsed.runs[0]?.status, "active");
+    assert.strictEqual(parsed.artifacts[0]?.summary, "");
+    assert.strictEqual(parsed.artifacts[0]?.url, "");
+    assert.strictEqual(parsed.artifacts[0]?.commit_sha, "");
   }),
 );
 
@@ -355,6 +491,20 @@ it.effect("accepts unknown event types when the envelope is valid", () =>
     });
 
     assert.strictEqual(parsed.type, "provider.future_event");
+  }),
+);
+
+it.effect("accepts empty provider correlation ids on session events", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeEvent({
+      ...eventFixture,
+      type: "session.created",
+      turn_id: "",
+      message_id: "",
+    });
+
+    assert.strictEqual(parsed.turn_id, "");
+    assert.strictEqual(parsed.message_id, "");
   }),
 );
 

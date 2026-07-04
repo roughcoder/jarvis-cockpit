@@ -1,6 +1,6 @@
 # Jarvis Cockpit Phase 7 Progress
 
-Last updated: 2026-06-30
+Last updated: 2026-07-04
 
 ## Goal
 
@@ -12,6 +12,7 @@ spawning Codex or Claude directly for Jarvis-managed work.
 ## Plan And Spec Sources
 
 - [Project docs index](./README.md)
+- [Current state and end goal](./jarvis-cockpit-current-state-and-end-goal.md)
 - [Phase 7 plan](./jarvis-cockpit-phase7-plan.md)
 - [Phase 7 PRD](./jarvis-cockpit-phase7-prd.md)
 - [Phase 7 test spec](./jarvis-cockpit-phase7-test-spec.md)
@@ -19,13 +20,15 @@ spawning Codex or Claude directly for Jarvis-managed work.
 - [Worker-session pivot](./agentic-worker-session-pivot.md)
 - [Worker sessions API reference](../reference/jarvis-worker-sessions-api.md)
 
-## Implemented slice
+## Implemented foundation slice
 
 - Added shared Jarvis contracts in `packages/contracts/src/jarvis.ts`.
 - Added a server-side Jarvis client in `apps/server/src/jarvis/JarvisClient.ts`.
 - Added projection mappers from Jarvis runs, sessions, and events into T3
   orchestration read models.
 - Added fixture mode with `JARVIS_FIXTURE_MODE=true` for local UI and test work.
+- Added real API mode with `JARVIS_COCKPIT_ENABLED=true` and
+  `JARVIS_API_BASE_URL`.
 - Wired HTTP `/api/orchestration/snapshot` and WebSocket `subscribeShell` /
   `subscribeThread` read paths to Jarvis when cockpit reads are enabled.
 - Added a web guard so Jarvis-managed thread ids do not trigger T3-local branch
@@ -33,12 +36,62 @@ spawning Codex or Claude directly for Jarvis-managed work.
 - Added transport-level tests proving Jarvis fixture reads bypass native T3
   projection storage.
 
+## Onboarding pivot slice (2026-07-04)
+
+Implements slice 1 and the manual `Describe work` entry of
+[the onboarding pivot plan](./jarvis-cockpit-onboarding-pivot-plan.md):
+
+- Added a `jarvisCockpit` capability to `ExecutionEnvironmentCapabilities`
+  (`packages/contracts/src/environment.ts`), populated by the server from
+  `shouldUseJarvisCockpitReads` (`apps/server/src/environment/ServerEnvironment.ts`),
+  so clients detect cockpit mode per environment.
+- Added web cockpit-mode helpers in `apps/web/src/jarvisCockpit.ts`.
+- Command palette (`apps/web/src/components/CommandPalette.tsx`): in cockpit
+  mode the root CTA is `Start work` (keeps "add project" search aliases) and
+  opens the Jarvis work-source view built from
+  `apps/web/src/components/startWork.logic.ts`:
+  - `Describe work`: creates a draft thread anchored to the synthetic
+    `Start Jarvis work` project; the first composer send promotes it through
+    `thread.turn.start` bootstrap, which `JarvisDispatch` routes to
+    `POST /v1/work/start`.
+  - `Continue run` (enabled when a Jarvis session thread exists): reopens the
+    latest Jarvis session timeline.
+  - `GitHub issue or PR`, `Linear ticket`, `Register repository`: visible but
+    disabled, naming the missing Jarvis source-resolver/repo-registry contract.
+  - Local folder, Git URL, provider clone rows, the WSL folder row, and
+    root filesystem-path browsing are unreachable in cockpit mode.
+- Sidebar: add button/tooltip says `Start work`, empty state says `No runs
+yet` in cockpit mode. `NoActiveThreadState` uses session language.
+- The synthetic `Start Jarvis work` project remains visible whenever Jarvis
+  reports workers, including zero-run and historical terminal-run states.
+- Tests: `apps/web/src/components/startWork.logic.test.ts` (source rows,
+  no local/clone/worktree affordances), `apps/web/src/jarvisCockpit.test.ts`,
+  and a `ServerEnvironment` test proving the capability follows
+  `JARVIS_COCKPIT_ENABLED`/`JARVIS_FIXTURE_MODE`.
+
+Follow-ups for the next slice:
+
+- Worker/engine selectors are not built; manual start uses `Auto`-style defaults
+  through `JarvisDispatch` (`branch_strategy: auto`, engine from model
+  selection when set).
+- Repository selection is not built; current real-fleet manual starts can use
+  `JARVIS_DEFAULT_REPO` as a temporary bridge until Jarvis exposes repo/default
+  repo catalog data.
+- Source-specific starts for GitHub and Linear remain visible but disabled until
+  Jarvis exposes source resolvers.
+
 ## Current schema alignment
 
-The connector is aligned with
-[the tracked worker sessions API reference](../reference/jarvis-worker-sessions-api.md)
-as of 2026-06-30:
+The connector is aligned with the current Jarvis cockpit API shape used in live
+testing plus the tracked worker-session reference:
 
+- `GET /v1/cockpit/catalog`
+- `GET /v1/cockpit/snapshot?sync=none|fast|probe`
+- `GET /v1/cockpit/events?after=`
+- `GET /v1/runs`
+- `GET /v1/runs/:run_id`
+- `GET /v1/runs/:run_id/events`
+- `GET /v1/runs/:run_id/artifacts`
 - `GET /sessions`
 - `GET /sessions/:id`
 - `GET /sessions/:id/events?after=&limit=`
@@ -52,10 +105,12 @@ as of 2026-06-30:
 - `POST /sessions/:id/checkpoints/restore`
 - `POST /sessions/:id/interrupt`
 - `POST /sessions/:id/stop`
+- `POST /v1/work/start`
+- `POST /v1/work/resume`
 
-The first slice still synthesizes a run snapshot from worker-local sessions when
-only `/sessions` exists. A future Jarvis aggregate API should replace that
-synthesis.
+The contract accepts live public-safe projection values currently emitted by
+Jarvis, including `run.status: "active"`, empty public artifact strings, and
+empty event correlation ids on non-message events.
 
 ## How to run locally
 
@@ -72,48 +127,62 @@ fixture worker session. The detail route should look like:
 /5a90644a-790f-4245-82d7-e0018830cd9e/jarvis-session_sess_fixture_codex
 ```
 
+Real fleet mode:
+
+```bash
+JARVIS_COCKPIT_ENABLED=true \
+JARVIS_API_BASE_URL=http://127.0.0.1:8791 \
+JARVIS_DEFAULT_REPO=roughcoder/jarvis-cockpit \
+volta run --node 24.13.1 --pnpm 10.24.0 pnpm dev
+```
+
+`JARVIS_DEFAULT_REPO` is temporary. It should be removed once Jarvis exposes
+repo/default-repo data through the cockpit API.
+
 ## Verification run
 
-Latest successful targeted checks:
+Latest successful checks:
 
 ```bash
-volta run --node 24.13.1 --pnpm 10.24.0 pnpm --filter @t3tools/contracts typecheck
-volta run --node 24.13.1 --pnpm 10.24.0 pnpm --filter @t3tools/contracts test -- jarvis
-volta run --node 24.13.1 --pnpm 10.24.0 pnpm --filter t3 exec vitest run src/jarvis/JarvisClient.test.ts src/jarvis/JarvisProjectionMapper.test.ts src/jarvis/JarvisOrchestrationReadModel.test.ts src/cli/config.test.ts src/server.test.ts -t "jarvis|Jarvis|orchestration (shell snapshots|thread details|snapshots) from Jarvis fixtures"
-```
-
-Earlier successful broader checks before the final formatting pass:
-
-```bash
+volta run --node 24.13.1 --pnpm 10.24.0 pnpm --dir apps/server exec vitest run src/jarvis/JarvisProjectionMapper.test.ts src/jarvis/JarvisClient.test.ts src/jarvis/JarvisDispatch.test.ts src/cli/config.test.ts src/environment/ServerEnvironment.test.ts src/bin.test.ts
+volta run --node 24.13.1 --pnpm 10.24.0 pnpm --filter @t3tools/contracts test -- src/jarvis.test.ts
 volta run --node 24.13.1 --pnpm 10.24.0 pnpm --filter t3 typecheck
 volta run --node 24.13.1 --pnpm 10.24.0 pnpm --filter @t3tools/web typecheck
-volta run --node 24.13.1 --pnpm 10.24.0 pnpm --filter t3 build:bundle
+volta run --node 24.13.1 --pnpm 10.24.0 pnpm --filter @t3tools/contracts typecheck
+git diff --check
 ```
 
-Dogfood summary from the latest focused browser pass:
+Dogfood summary from the latest real-fleet browser pass:
 
-- Paired a fresh browser profile with the local dev server using a one-time token
-  issued against the dev state namespace.
-- Verified the dashboard renders the Jarvis fixture project and worker session.
-- Opened the Jarvis-managed session detail route for
-  `jarvis-session_sess_fixture_codex`.
-- Verified the detail timeline renders `Work Log` and `Session created`.
-- Checked browser errors after refresh; no current errors were reported after
-  the authenticated session was established.
+- Ran cockpit against a real Jarvis fleet API via `JARVIS_API_BASE_URL`.
+- Verified `macbook-worker` projected as healthy with Codex and Claude engines.
+- Started a real `Describe work` request from the cockpit UI.
+- Jarvis created run `run_1783161652_4f57bcca` and session
+  `sessref_b4NDM8c61wuB4Uir`.
+- The laptop Codex worker completed the smoke command and emitted
+  `JARVIS_COCKPIT_DOGFOOD`.
+- Re-paired a clean browser session and verified the completed Jarvis session
+  rendered in the T3 detail view with `Work Log`, `Session created`, and the
+  assistant output.
+
+Dogfood evidence is ignored by git and stored locally under:
+
+```text
+dogfood-output/jarvis-cockpit-fleet-2026-07-04/
+```
 
 ## Remaining Jarvis-side gaps
 
-The worker-session API now covers live session reads, pending requests,
-checkpoint restore, input, approval, interrupt, and stop. The remaining blocker
-for a full cockpit is the aggregate orchestration layer:
+The current live API is enough for a minimal start-work loop. The remaining
+Jarvis-side improvements that would simplify cockpit UX are:
 
-- List runs across all workers.
-- List worker registry and health across workers.
-- Return artifacts/evidence/branch/PR metadata for runs.
-- Start work from a high-level `WorkCommand` into an `OrchestrationRun` plus one
-  or more `WorkerSession` records.
-- Resume an `OrchestrationRun` or session with documented semantics.
-- Provide polling cursor, SSE, or WebSocket updates for aggregate changes.
+- Repo registry/default repo projection to replace `JARVIS_DEFAULT_REPO`.
+- `/v1/work/start` should return `session_ref` when it creates a session
+  synchronously.
+- Dry-run validation for start-work wizard preflight.
+- Catalog-level start defaults and required fields.
+- Stable SSE for aggregate run/session/artifact updates.
+- Fully documented live projection values and provider event aliases.
 
-Until those exist, this fork should keep using worker-session fixture or
-worker-local compatibility reads and should not invent a durable project model.
+Until these exist, the fork should continue to treat Jarvis as authoritative and
+avoid inventing durable project, repository, worker, or session truth in the UI.
