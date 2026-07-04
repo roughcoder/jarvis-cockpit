@@ -4,6 +4,10 @@ import {
   JarvisArtifact,
   JarvisCockpitCatalog,
   JarvisControlResult,
+  DEFAULT_JARVIS_API_BASE_URL,
+  type JarvisBrainCheckResult,
+  type JarvisBrainConnection,
+  type JarvisConnectionSource,
   JarvisRequestId,
   JarvisRestoreCheckpointInput,
   JarvisRun,
@@ -23,8 +27,11 @@ import {
   JarvisUserInputInput,
   JarvisWorkerSession,
   JarvisWorkerSessionId,
+  type ServerSettings,
+  type ServerSettingsError,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -130,6 +137,67 @@ export class JarvisClientService extends Context.Service<JarvisClientService, Ja
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
+type JarvisConnectionConfig = Pick<
+  ServerConfig["Service"],
+  "jarvisCockpitEnabled" | "jarvisApiBaseUrl" | "jarvisApiToken" | "jarvisFixtureMode"
+>;
+
+// Jarvis is the source of truth for this boundary. Keep endpoint semantics aligned with:
+// - https://github.com/roughcoder/jarvis/blob/main/docs/COCKPIT_API.md
+// - https://github.com/roughcoder/jarvis/blob/main/docs/FLEET.md
+export function resolveJarvisBrainConnection(
+  config: JarvisConnectionConfig,
+  settings: ServerSettings,
+): JarvisBrainConnection {
+  const savedApiBaseUrl = settings.jarvis.apiBaseUrl.trim();
+  const envApiBaseUrl = config.jarvisApiBaseUrl?.toString();
+  const apiBaseUrl = envApiBaseUrl ?? savedApiBaseUrl ?? DEFAULT_JARVIS_API_BASE_URL;
+  const apiBaseUrlSource: JarvisConnectionSource =
+    envApiBaseUrl !== undefined
+      ? "environment"
+      : savedApiBaseUrl.length > 0 && savedApiBaseUrl !== DEFAULT_JARVIS_API_BASE_URL
+        ? "settings"
+        : "default";
+  const savedApiToken = settings.jarvis.apiToken.trim();
+  const apiTokenSource: JarvisConnectionSource | undefined =
+    config.jarvisApiToken !== undefined
+      ? "environment"
+      : savedApiToken.length > 0 || settings.jarvis.apiTokenRedacted
+        ? "settings"
+        : undefined;
+
+  return {
+    enabled: config.jarvisCockpitEnabled,
+    fixtureMode: config.jarvisFixtureMode,
+    apiBaseUrl,
+    apiBaseUrlSource,
+    apiTokenConfigured:
+      config.jarvisApiToken !== undefined ||
+      savedApiToken.length > 0 ||
+      Boolean(settings.jarvis.apiTokenRedacted),
+    ...(apiTokenSource !== undefined ? { apiTokenSource } : {}),
+  };
+}
+
+function makeJarvisClientFromConnection(input: {
+  readonly config: JarvisConnectionConfig;
+  readonly settings: ServerSettings;
+}): JarvisClient {
+  if (input.config.jarvisFixtureMode) {
+    return makeJarvisFixtureClient();
+  }
+  if (!input.config.jarvisCockpitEnabled) {
+    return makeMissingConfigurationClient("Jarvis cockpit mode is disabled.");
+  }
+  const connection = resolveJarvisBrainConnection(input.config, input.settings);
+  const baseUrl = new URL(connection.apiBaseUrl);
+  const token = input.config.jarvisApiToken ?? input.settings.jarvis.apiToken.trim();
+  return makeJarvisCockpitClient({
+    baseUrl,
+    ...(token.length > 0 ? { token } : {}),
+  });
+}
+
 const decodeCatalog = Schema.decodeUnknownEffect(JarvisCockpitCatalog);
 const decodeSnapshot = Schema.decodeUnknownEffect(JarvisRunsSnapshot);
 const decodeControlResult = Schema.decodeUnknownEffect(JarvisControlResult);
@@ -225,7 +293,7 @@ export function makeJarvisCockpitClient(input: {
         Effect.flatMap(decodeFor("cockpit.catalog", decodeCatalog)),
       ),
     getSnapshot: () =>
-      requestJson("cockpit.snapshot", "/v1/cockpit/snapshot?sync=fast").pipe(
+      requestJson("cockpit.snapshot", "/v1/cockpit/snapshot?sync=probe").pipe(
         Effect.flatMap(decodeFor("cockpit.snapshot", decodeSnapshot)),
       ),
     getSession: (sessionRef) =>
@@ -384,17 +452,148 @@ export function makeJarvisClient(config: {
   readonly jarvisApiBaseUrl: URL | undefined;
   readonly jarvisApiToken: string | undefined;
   readonly jarvisFixtureMode: boolean;
+  readonly getSettings?: Effect.Effect<ServerSettings, ServerSettingsError>;
 }): JarvisClient {
-  if (
-    config.jarvisFixtureMode ||
-    !config.jarvisCockpitEnabled ||
-    config.jarvisApiBaseUrl === undefined
-  ) {
+  if (config.getSettings !== undefined) {
+    const getSettings = config.getSettings;
+    const withClient = <A, E>(
+      operation: string,
+      run: (client: JarvisClient) => Effect.Effect<A, E>,
+    ): Effect.Effect<A, E | JarvisClientError> =>
+      getSettings.pipe(
+        Effect.mapError(
+          (cause) =>
+            new JarvisClientError({
+              operation,
+              message: "Failed to load Jarvis brain settings.",
+              cause,
+            }),
+        ),
+        Effect.flatMap((settings) =>
+          Effect.try({
+            try: () => makeJarvisClientFromConnection({ config, settings }),
+            catch: (cause) =>
+              new JarvisClientError({
+                operation,
+                message: "Jarvis brain URL is not valid.",
+                cause,
+              }),
+          }),
+        ),
+        Effect.flatMap(run),
+      );
+
+    return {
+      getCatalog: () => withClient("cockpit.catalog", (client) => client.getCatalog()),
+      getSnapshot: () => withClient("cockpit.snapshot", (client) => client.getSnapshot()),
+      getSession: (sessionRef) =>
+        withClient("sessions.get", (client) => client.getSession(sessionRef)),
+      getSessionEvents: (sessionRef, options) =>
+        withClient("sessions.events", (client) => client.getSessionEvents(sessionRef, options)),
+      getRequests: (sessionRef, options) =>
+        withClient("sessions.requests", (client) => client.getRequests(sessionRef, options)),
+      getCheckpoints: (sessionRef, options) =>
+        withClient("sessions.checkpoints", (client) => client.getCheckpoints(sessionRef, options)),
+      startWork: (input) => withClient("work.start", (client) => client.startWork(input)),
+      validateWork: (input) =>
+        withClient("work.validate", (client) => client.validateWork(input)),
+      sendTurn: (sessionRef, input) =>
+        withClient("sessions.turns", (client) => client.sendTurn(sessionRef, input)),
+      respondApproval: (sessionRef, input) =>
+        withClient("sessions.approval", (client) => client.respondApproval(sessionRef, input)),
+      respondInput: (sessionRef, input) =>
+        withClient("sessions.input", (client) => client.respondInput(sessionRef, input)),
+      interruptSession: (sessionRef, turnId) =>
+        withClient("sessions.interrupt", (client) => client.interruptSession(sessionRef, turnId)),
+      stopSession: (sessionRef) =>
+        withClient("sessions.stop", (client) => client.stopSession(sessionRef)),
+      archiveSession: (sessionRef, input) =>
+        withClient("sessions.archive", (client) => client.archiveSession(sessionRef, input)),
+      archiveRun: (runId, input) =>
+        withClient("runs.archive", (client) => client.archiveRun(runId, input)),
+      restoreCheckpoint: (sessionRef, input) =>
+        withClient("sessions.checkpoints.restore", (client) =>
+          client.restoreCheckpoint(sessionRef, input),
+        ),
+      resumeRun: (runId, input) =>
+        withClient("work.resume", (client) => client.resumeRun(runId, input)),
+    };
+  }
+
+  if (config.jarvisFixtureMode) {
     return makeJarvisFixtureClient();
   }
+  if (!config.jarvisCockpitEnabled) {
+    return makeMissingConfigurationClient("Jarvis cockpit mode is disabled.");
+  }
   return makeJarvisCockpitClient({
-    baseUrl: config.jarvisApiBaseUrl,
+    baseUrl: config.jarvisApiBaseUrl ?? new URL(DEFAULT_JARVIS_API_BASE_URL),
     ...(config.jarvisApiToken ? { token: config.jarvisApiToken } : {}),
+  });
+}
+
+export function checkJarvisBrain(input: {
+  readonly config: JarvisConnectionConfig;
+  readonly settings: ServerSettings;
+  readonly apiBaseUrl?: string;
+  readonly apiToken?: string;
+  readonly fetch?: FetchLike;
+}): Effect.Effect<JarvisBrainCheckResult, JarvisClientError> {
+  return Effect.tryPromise({
+    try: async () => {
+      const connection = resolveJarvisBrainConnection(input.config, input.settings);
+      const apiBaseUrl = input.apiBaseUrl?.trim() || connection.apiBaseUrl;
+      const apiToken =
+        input.apiToken !== undefined
+          ? input.apiToken.trim()
+          : input.config.jarvisApiToken ?? input.settings.jarvis.apiToken.trim();
+      const checkedAt = DateTime.formatIso(DateTime.nowUnsafe());
+      let healthUrl: URL;
+      try {
+        healthUrl = new URL("/v1/health", new URL(apiBaseUrl));
+      } catch (cause) {
+        return {
+          ok: false,
+          checkedAt,
+          apiBaseUrl,
+          message: "Jarvis brain URL is not valid.",
+          response: { cause: cause instanceof Error ? cause.message : String(cause) },
+        };
+      }
+
+      const response = await (input.fetch ?? fetch)(healthUrl, {
+        headers: {
+          accept: "application/json",
+          ...(apiToken.length > 0 ? { authorization: `Bearer ${apiToken}` } : {}),
+        },
+      });
+      const text = await response.text();
+      let body: unknown = undefined;
+      if (text.trim().length > 0) {
+        try {
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          body = JSON.parse(text);
+        } catch {
+          body = text.slice(0, 2_000);
+        }
+      }
+      return {
+        ok: response.ok,
+        checkedAt,
+        apiBaseUrl,
+        status: response.status,
+        message: response.ok
+          ? "Jarvis brain is reachable."
+          : `Jarvis brain returned HTTP ${response.status}.`,
+        ...(body !== undefined ? { response: body } : {}),
+      };
+    },
+    catch: (cause) =>
+      new JarvisClientError({
+        operation: "jarvis.health",
+        message: "Jarvis brain health check failed.",
+        cause,
+      }),
   });
 }
 

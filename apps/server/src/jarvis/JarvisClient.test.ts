@@ -186,7 +186,7 @@ it.effect("cockpit client attaches bearer token and reads the v1 snapshot endpoi
     });
 
     const parsedSnapshot = yield* client.getSnapshot();
-    assert.strictEqual(requests[0]?.url, "http://jarvis.local:8787/v1/cockpit/snapshot?sync=fast");
+    assert.strictEqual(requests[0]?.url, "http://jarvis.local:8787/v1/cockpit/snapshot?sync=probe");
     assert.strictEqual(requests[0]?.authorization, "Bearer worker-token");
     assert.strictEqual(parsedSnapshot.runs[0]?.run_id, "run_1");
     assert.strictEqual(parsedSnapshot.runs[0]?.objective, "Do the work");
@@ -206,7 +206,7 @@ it.effect("worker-session client export remains an alias for cockpit v1 live mod
 
     yield* client.getSnapshot();
 
-    assert.deepStrictEqual(requests, ["http://jarvis.local:8787/v1/cockpit/snapshot?sync=fast"]);
+    assert.deepStrictEqual(requests, ["http://jarvis.local:8787/v1/cockpit/snapshot?sync=probe"]);
   }),
 );
 

@@ -186,6 +186,18 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    checkJarvisBrain: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:check-jarvis-brain",
+      tag: WS_METHODS.serverCheckJarvisBrain,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
+    jarvisSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:jarvis-snapshot",
+      tag: WS_METHODS.serverGetJarvisSnapshot,
+    }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,

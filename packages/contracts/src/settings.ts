@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
+import { IsoDateTime, TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
@@ -361,6 +361,46 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+export const DEFAULT_JARVIS_API_BASE_URL = "http://127.0.0.1:8791";
+
+export const JarvisSettings = Schema.Struct({
+  apiBaseUrl: TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_JARVIS_API_BASE_URL)),
+  ),
+  apiToken: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  apiTokenRedacted: Schema.optionalKey(Schema.Boolean),
+});
+export type JarvisSettings = typeof JarvisSettings.Type;
+
+export const JarvisConnectionSource = Schema.Literals(["environment", "settings", "default"]);
+export type JarvisConnectionSource = typeof JarvisConnectionSource.Type;
+
+export const JarvisBrainConnection = Schema.Struct({
+  enabled: Schema.Boolean,
+  fixtureMode: Schema.Boolean,
+  apiBaseUrl: TrimmedString,
+  apiBaseUrlSource: JarvisConnectionSource,
+  apiTokenConfigured: Schema.Boolean,
+  apiTokenSource: Schema.optional(JarvisConnectionSource),
+});
+export type JarvisBrainConnection = typeof JarvisBrainConnection.Type;
+
+export const JarvisBrainCheckInput = Schema.Struct({
+  apiBaseUrl: Schema.optionalKey(TrimmedString),
+  apiToken: Schema.optionalKey(TrimmedString),
+});
+export type JarvisBrainCheckInput = typeof JarvisBrainCheckInput.Type;
+
+export const JarvisBrainCheckResult = Schema.Struct({
+  ok: Schema.Boolean,
+  checkedAt: IsoDateTime,
+  apiBaseUrl: TrimmedString,
+  status: Schema.optional(Schema.Number),
+  message: TrimmedNonEmptyString,
+  response: Schema.optional(Schema.Unknown),
+});
+export type JarvisBrainCheckResult = typeof JarvisBrainCheckResult.Type;
+
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 
 export const ServerSettings = Schema.Struct({
@@ -409,6 +449,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  jarvis: JarvisSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -514,6 +555,13 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  jarvis: Schema.optionalKey(
+    Schema.Struct({
+      apiBaseUrl: Schema.optionalKey(TrimmedString),
+      apiToken: Schema.optionalKey(TrimmedString),
+      apiTokenRedacted: Schema.optionalKey(Schema.Boolean),
     }),
   ),
   providers: Schema.optionalKey(

@@ -32,6 +32,7 @@ import type {
   ProjectWriteFileResult,
 } from "./project.ts";
 import type { ProviderInstanceId } from "./providerInstance.ts";
+import type { JarvisCockpitSnapshotResult } from "./jarvis.ts";
 import type {
   ServerConfig,
   ServerProcessDiagnosticsResult,
@@ -103,7 +104,13 @@ import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } fr
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { EditorId } from "./editor.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
-import type { ClientSettings, ServerSettings, ServerSettingsPatch } from "./settings.ts";
+import type {
+  ClientSettings,
+  JarvisBrainCheckInput,
+  JarvisBrainCheckResult,
+  ServerSettings,
+  ServerSettingsPatch,
+} from "./settings.ts";
 import type {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
@@ -1114,6 +1121,8 @@ export interface LocalApi {
     removeKeybinding: (input: ServerRemoveKeybindingInput) => Promise<ServerRemoveKeybindingResult>;
     getSettings: () => Promise<ServerSettings>;
     updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
+    checkJarvisBrain: (input: JarvisBrainCheckInput) => Promise<JarvisBrainCheckResult>;
+    getJarvisSnapshot: () => Promise<JarvisCockpitSnapshotResult>;
     discoverSourceControl: () => Promise<SourceControlDiscoveryResult>;
     getTraceDiagnostics: () => Promise<ServerTraceDiagnosticsResult>;
     getProcessDiagnostics: () => Promise<ServerProcessDiagnosticsResult>;

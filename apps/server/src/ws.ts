@@ -100,7 +100,12 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
-import { makeJarvisClient, type JarvisClient } from "./jarvis/JarvisClient.ts";
+import {
+  checkJarvisBrain,
+  makeJarvisClient,
+  resolveJarvisBrainConnection,
+  type JarvisClient,
+} from "./jarvis/JarvisClient.ts";
 import { dispatchJarvisCommand } from "./jarvis/JarvisDispatch.ts";
 import {
   loadJarvisArchivedShellSnapshot,
@@ -358,6 +363,8 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverRemoveKeybinding, AuthOrchestrationOperateScope],
   [WS_METHODS.serverGetSettings, AuthOrchestrationReadScope],
   [WS_METHODS.serverUpdateSettings, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverCheckJarvisBrain, AuthOrchestrationReadScope],
+  [WS_METHODS.serverGetJarvisSnapshot, AuthOrchestrationReadScope],
   [WS_METHODS.serverDiscoverSourceControl, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetTraceDiagnostics, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetProcessDiagnostics, AuthOrchestrationReadScope],
@@ -477,9 +484,12 @@ const makeWsRpcLayer = (
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const config = yield* ServerConfig.ServerConfig;
-      const jarvisClient = makeJarvisClient(config);
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const jarvisClient = makeJarvisClient({
+        ...config,
+        getSettings: serverSettings.getSettings,
+      });
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
@@ -977,9 +987,8 @@ const makeWsRpcLayer = (
       const loadServerConfig = Effect.gen(function* () {
         const keybindingsConfig = yield* keybindings.loadConfigState;
         const providers = yield* providerRegistry.getProviders;
-        const settings = ServerSettings.redactServerSettingsForClient(
-          yield* serverSettings.getSettings,
-        );
+        const materializedSettings = yield* serverSettings.getSettings;
+        const settings = ServerSettings.redactServerSettingsForClient(materializedSettings);
         const environment = yield* serverEnvironment.getDescriptor;
         const auth = yield* serverAuth.getDescriptor();
 
@@ -1002,6 +1011,7 @@ const makeWsRpcLayer = (
               : {}),
             otlpMetricsEnabled: config.otlpMetricsUrl !== undefined,
           },
+          jarvisBrain: resolveJarvisBrainConnection(config, materializedSettings),
           settings,
         };
       });
@@ -1356,6 +1366,56 @@ const makeWsRpcLayer = (
             serverSettings
               .updateSettings(patch)
               .pipe(Effect.map(ServerSettings.redactServerSettingsForClient)),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverCheckJarvisBrain]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverCheckJarvisBrain,
+            serverSettings.getSettings.pipe(
+              Effect.flatMap((settings) => checkJarvisBrain({ config, settings, ...input })),
+              Effect.catch((error) =>
+                nowIso.pipe(
+                  Effect.map((checkedAt) => ({
+                    ok: false,
+                    checkedAt,
+                    apiBaseUrl:
+                      input.apiBaseUrl ??
+                      config.jarvisApiBaseUrl?.toString() ??
+                      "http://127.0.0.1:8791",
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis brain health check failed.",
+                  })),
+                ),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverGetJarvisSnapshot]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetJarvisSnapshot,
+            jarvisClient.getSnapshot().pipe(
+              Effect.map((snapshot) => ({
+                ok: true,
+                snapshot,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis cockpit snapshot request failed.",
+                  },
+                }),
+              ),
+            ),
             {
               "rpc.aggregate": "server",
             },

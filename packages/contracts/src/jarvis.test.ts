@@ -249,11 +249,17 @@ it.effect("decodes a Jarvis cockpit snapshot fixture", () =>
             {
               repo: "roughcoder/jarvis",
               status: "ready",
-              default_branch: "main",
+              default_branch: "",
               is_default: true,
               can_start_work: true,
             },
           ],
+          system: {
+            hostname: "Neils-Mac-mini",
+            platform: "darwin",
+            arch: "arm64",
+            memory_used_percent: 72.9,
+          },
           public_metadata: {},
         },
       ],
@@ -303,8 +309,10 @@ it.effect("decodes a Jarvis cockpit snapshot fixture", () =>
     const worker = parsed.workers[0];
     assert.ok(worker);
     assert.strictEqual(worker.repositories?.at(0)?.repo, "roughcoder/jarvis");
+    assert.strictEqual(worker.repositories?.at(0)?.default_branch, "");
     assert.strictEqual(worker.repositories?.at(0)?.is_default, true);
     assert.strictEqual(worker.repositories?.at(0)?.can_start_work, true);
+    assert.strictEqual(worker.system?.hostname, "Neils-Mac-mini");
     assert.strictEqual(parsed.artifacts[0]?.kind, "branch");
     assert.strictEqual(parsed.requests?.[0]?.kind, "approval");
     assert.strictEqual(parsed.checkpoints?.[0]?.checkpoint_id, "ckpt_turn_1");
@@ -443,8 +451,39 @@ it.effect("accepts current Jarvis snapshot edge-state literals", () =>
         synced_at: null,
         errors: [],
       },
-      runs: [],
-      sessions: [],
+      runs: [
+        {
+          authority: "jarvis",
+          supported_controls: ["archive"],
+          run_id: runId,
+          title: "Completed dogfood",
+          objective: null,
+          status: "completed",
+          phase: null,
+          repo: "roughcoder/jarvis-cockpit",
+          branch: "jarvis/dogfood",
+          session_count: 1,
+          active_session_count: 0,
+          pending_input_count: 0,
+          pending_approval_count: 0,
+          artifact_count: 0,
+          primary_artifact_ids: [],
+          latest_activity_at: generatedAt,
+          latest_cursor: "",
+          created_at: generatedAt,
+          updated_at: generatedAt,
+          archived_at: null,
+          terminal_reason: null,
+        },
+      ],
+      sessions: [
+        {
+          ...sessionFixture,
+          status: "completed",
+          latest_event_cursor: "",
+          pending_approval_count: 0,
+        },
+      ],
       workers: [
         {
           worker_id: "offline-worker",
@@ -466,6 +505,8 @@ it.effect("accepts current Jarvis snapshot edge-state literals", () =>
     });
 
     assert.strictEqual(parsed.sync.status, "stale");
+    assert.strictEqual(parsed.runs[0]?.latest_cursor, "");
+    assert.strictEqual(parsed.sessions[0]?.latest_event_cursor, "");
     assert.strictEqual(parsed.workers[0]?.health, "unknown");
   }),
 );
