@@ -1478,6 +1478,38 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
       const memberProjectRef = scopeProjectRef(member.environmentId, member.id);
       const memberThreadCount = memberThreadCountByPhysicalKey.get(member.physicalProjectKey) ?? 0;
+      if (isJarvisCockpitMode) {
+        const confirmed = await api.dialogs.confirm(
+          [
+            `Archive run "${member.title}"?`,
+            ...(member.environmentLabel ? [`Environment: ${member.environmentLabel}`] : []),
+            "This removes the run from the active sidebar.",
+          ].join("\n"),
+        );
+        if (!confirmed) {
+          return;
+        }
+
+        const result = await removeProject(member);
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          const message = error instanceof Error ? error.message : "Unknown error archiving run.";
+          console.error("Failed to archive run", {
+            projectId: member.id,
+            environmentId: member.environmentId,
+            ...safeErrorLogAttributes(error),
+          });
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: `Failed to archive "${member.title}"`,
+              description: message,
+            }),
+          );
+        }
+        return;
+      }
+
       if (memberThreadCount > 0) {
         const warningToastId = toastManager.add(
           stackedThreadToast({
@@ -1594,15 +1626,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         );
       }
     },
-    [memberThreadCountByPhysicalKey, removeProject],
+    [isJarvisCockpitMode, memberThreadCountByPhysicalKey, removeProject],
   );
 
   const handleProjectButtonContextMenu = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       event.preventDefault();
-      if (isJarvisCockpitMode) {
-        return;
-      }
       suppressProjectClickForContextMenuRef.current = true;
       void (async () => {
         const api = readLocalApi();
@@ -1675,20 +1704,25 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           };
         };
 
-        const clicked = await api.contextMenu.show(
-          [
-            buildTargetedItem("rename", "Rename"),
-            buildTargetedItem("grouping", "Group into..."),
-            buildTargetedItem("copy-path", "Copy Path"),
-            buildTargetedItem("delete", "Remove", {
-              destructive: true,
-            }),
-          ],
-          {
-            x: event.clientX,
-            y: event.clientY,
-          },
-        );
+        const items = isJarvisCockpitMode
+          ? [
+              buildTargetedItem("delete", "Archive", {
+                destructive: true,
+              }),
+            ]
+          : [
+              buildTargetedItem("rename", "Rename"),
+              buildTargetedItem("grouping", "Group into..."),
+              buildTargetedItem("copy-path", "Copy Path"),
+              buildTargetedItem("delete", "Remove", {
+                destructive: true,
+              }),
+            ];
+
+        const clicked = await api.contextMenu.show(items, {
+          x: event.clientX,
+          y: event.clientY,
+        });
 
         if (!clicked) {
           return;
