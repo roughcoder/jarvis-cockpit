@@ -15,6 +15,7 @@ import {
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
   resolveSidebarStageBadgeLabel,
+  resolveSidebarSurfaceCopy,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
@@ -72,6 +73,38 @@ describe("resolveSidebarStageBadgeLabel", () => {
         fallbackStageLabel: "Alpha",
       }),
     ).toBe("Alpha");
+  });
+});
+
+describe("resolveSidebarSurfaceCopy", () => {
+  it("uses project/thread vocabulary for the default app surface", () => {
+    const copy = resolveSidebarSurfaceCopy({ isJarvisCockpitMode: false });
+
+    expect(copy.topLevelLabel).toBe("Projects");
+    expect(copy.topLevelSortLabel).toBe("Sort projects");
+    expect(copy.childSortLabel).toBe("Sort threads");
+    expect(copy.visibleChildLabel).toBe("Visible threads");
+    expect(copy.emptyTopLevelLabel).toBe("No projects yet");
+    expect(copy.emptyChildLabel).toBe("No threads yet");
+    expect(copy.groupedTopLevelCountLabel(2)).toBe("2 projects");
+    expect(copy.createChildActionLabel("App")).toBe("Create new thread in App");
+    expect(copy.createChildTooltipLabel("Mod+N")).toBe("New thread (Mod+N)");
+  });
+
+  it("uses run/session vocabulary for Jarvis cockpit mode", () => {
+    const copy = resolveSidebarSurfaceCopy({ isJarvisCockpitMode: true });
+
+    expect(copy.topLevelLabel).toBe("Runs");
+    expect(copy.topLevelSortLabel).toBe("Sort runs");
+    expect(copy.childSortLabel).toBe("Sort sessions");
+    expect(copy.visibleChildLabel).toBe("Visible sessions");
+    expect(copy.emptyTopLevelLabel).toBe("No runs yet");
+    expect(copy.emptyChildLabel).toBe("No sessions yet");
+    expect(copy.groupedTopLevelCountLabel(2)).toBe("2 runs");
+    expect(copy.createChildActionLabel("Build worker sessions")).toBe(
+      "Start session for Build worker sessions",
+    );
+    expect(copy.createChildTooltipLabel(null)).toBe("New session");
   });
 });
 

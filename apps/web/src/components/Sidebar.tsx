@@ -195,6 +195,7 @@ import {
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
   resolveSidebarStageBadgeLabel,
+  resolveSidebarSurfaceCopy,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
@@ -202,6 +203,7 @@ import {
   sortProjectsForSidebar,
   useThreadJumpHintVisibility,
   ThreadStatusPill,
+  type SidebarSurfaceCopy,
 } from "./Sidebar.logic";
 import { sortThreads } from "../lib/threadSort";
 import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
@@ -934,6 +936,7 @@ interface SidebarProjectThreadListProps {
   openPrLink: (event: React.MouseEvent<HTMLElement>, prUrl: string) => void;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
+  surfaceCopy: SidebarSurfaceCopy;
 }
 
 const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
@@ -974,6 +977,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     openPrLink,
     expandThreadListForProject,
     collapseThreadListForProject,
+    surfaceCopy,
   } = props;
   const showMoreButtonRender = useMemo(() => <button type="button" />, []);
   const showLessButtonRender = useMemo(() => <button type="button" />, []);
@@ -989,7 +993,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
             data-thread-selection-safe
             className="flex h-6 w-full translate-x-0 items-center px-2 text-left text-[10px] text-muted-foreground/60"
           >
-            <span>No threads yet</span>
+            <span>{surfaceCopy.emptyChildLabel}</span>
           </div>
         </SidebarMenuSubItem>
       ) : null}
@@ -1081,6 +1085,8 @@ interface SidebarProjectItemProps {
   suppressProjectClickForContextMenuRef: React.RefObject<boolean>;
   isManualProjectSorting: boolean;
   dragHandleProps: SortableProjectHandleProps | null;
+  isJarvisCockpitMode: boolean;
+  surfaceCopy: SidebarSurfaceCopy;
 }
 
 const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjectItemProps) {
@@ -1101,6 +1107,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     suppressProjectClickForContextMenuRef,
     isManualProjectSorting,
     dragHandleProps,
+    isJarvisCockpitMode,
+    surfaceCopy,
   } = props;
   const threadSortOrder = useClientSettings<SidebarThreadSortOrder>(
     (settings) => settings.sidebarThreadSortOrder,
@@ -1592,6 +1600,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const handleProjectButtonContextMenu = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       event.preventDefault();
+      if (isJarvisCockpitMode) {
+        return;
+      }
       suppressProjectClickForContextMenuRef.current = true;
       void (async () => {
         const api = readLocalApi();
@@ -1689,6 +1700,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [
       copyPathToClipboard,
       handleRemoveProject,
+      isJarvisCockpitMode,
       openProjectGroupingDialog,
       openProjectRenameDialog,
       project.groupedProjectCount,
@@ -1900,14 +1912,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Could not create thread",
+              title: surfaceCopy.createChildErrorTitle,
               description: error instanceof Error ? error.message : "An error occurred.",
             }),
           );
         }
       })();
     },
-    [handleNewThread, isMobile, router, serverConfigs, setOpenMobile],
+    [handleNewThread, isMobile, router, serverConfigs, setOpenMobile, surfaceCopy],
   );
 
   const handleCreateThreadClick = useCallback(
@@ -2244,14 +2256,18 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               }`}
             />
           )}
-          <ProjectFavicon environmentId={project.environmentId} cwd={project.workspaceRoot} />
+          {isJarvisCockpitMode ? (
+            <TerminalIcon className="size-3.5 shrink-0 text-muted-foreground/50" />
+          ) : (
+            <ProjectFavicon environmentId={project.environmentId} cwd={project.workspaceRoot} />
+          )}
           <span className="flex min-w-0 flex-1 items-center gap-2">
             <span className="truncate text-xs font-medium text-foreground/90">
               {project.displayName}
             </span>
             {project.groupedProjectCount > 1 ? (
               <span className="shrink-0 text-[10px] text-muted-foreground/60">
-                {project.groupedProjectCount} projects
+                {surfaceCopy.groupedTopLevelCountLabel(project.groupedProjectCount)}
               </span>
             ) : null}
           </span>
@@ -2286,26 +2302,28 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             </TooltipPopup>
           </Tooltip>
         )}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <div className="pointer-events-none absolute top-[calc(50%+1px)] right-0.5 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
-                <button
-                  type="button"
-                  aria-label={`Create new thread in ${project.displayName}`}
-                  data-testid="new-thread-button"
-                  className={SIDEBAR_ICON_ACTION_BUTTON_CLASS}
-                  onClick={handleCreateThreadClick}
-                >
-                  <SquarePenIcon className="size-3.5" />
-                </button>
-              </div>
-            }
-          />
-          <TooltipPopup side="top">
-            {newThreadShortcutLabel ? `New thread (${newThreadShortcutLabel})` : "New thread"}
-          </TooltipPopup>
-        </Tooltip>
+        {!isJarvisCockpitMode ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <div className="pointer-events-none absolute top-[calc(50%+1px)] right-0.5 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
+                  <button
+                    type="button"
+                    aria-label={surfaceCopy.createChildActionLabel(project.displayName)}
+                    data-testid="new-thread-button"
+                    className={SIDEBAR_ICON_ACTION_BUTTON_CLASS}
+                    onClick={handleCreateThreadClick}
+                  >
+                    <SquarePenIcon className="size-3.5" />
+                  </button>
+                </div>
+              }
+            />
+            <TooltipPopup side="top">
+              {surfaceCopy.createChildTooltipLabel(newThreadShortcutLabel)}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
       </div>
 
       <SidebarProjectThreadList
@@ -2343,6 +2361,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         openPrLink={openPrLink}
         expandThreadListForProject={expandThreadListForProject}
         collapseThreadListForProject={collapseThreadListForProject}
+        surfaceCopy={surfaceCopy}
       />
 
       <Dialog
@@ -2559,6 +2578,8 @@ function ProjectSortMenu({
   threadSortOrder,
   projectGroupingMode,
   threadPreviewCount,
+  surfaceCopy,
+  showProjectGrouping,
   onProjectSortOrderChange,
   onThreadSortOrderChange,
   onProjectGroupingModeChange,
@@ -2568,6 +2589,8 @@ function ProjectSortMenu({
   threadSortOrder: SidebarThreadSortOrder;
   projectGroupingMode: SidebarProjectGroupingMode;
   threadPreviewCount: SidebarThreadPreviewCount;
+  surfaceCopy: SidebarSurfaceCopy;
+  showProjectGrouping: boolean;
   onProjectSortOrderChange: (sortOrder: SidebarProjectSortOrder) => void;
   onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
   onProjectGroupingModeChange: (mode: SidebarProjectGroupingMode) => void;
@@ -2602,7 +2625,7 @@ function ProjectSortMenu({
       <MenuPopup align="end" side="bottom" className="min-w-52">
         <MenuGroup>
           <div className="px-2 py-1 sm:text-xs font-medium text-muted-foreground">
-            Sort projects
+            {surfaceCopy.topLevelSortLabel}
           </div>
           <MenuRadioGroup
             value={projectSortOrder}
@@ -2621,7 +2644,7 @@ function ProjectSortMenu({
         </MenuGroup>
         <MenuGroup>
           <div className="px-2 pt-2 pb-1 sm:text-xs font-medium text-muted-foreground">
-            Sort threads
+            {surfaceCopy.childSortLabel}
           </div>
           <MenuRadioGroup
             value={threadSortOrder}
@@ -2640,11 +2663,11 @@ function ProjectSortMenu({
         </MenuGroup>
         <MenuGroup>
           <div className="px-2 pt-2 pb-1 text-muted-foreground sm:text-xs font-medium">
-            Visible threads
+            {surfaceCopy.visibleChildLabel}
           </div>
           <div className="px-2 py-1">
             <NumberField
-              aria-label="Visible thread count"
+              aria-label={`${surfaceCopy.visibleChildLabel} count`}
               className="w-28 gap-0"
               max={MAX_SIDEBAR_THREAD_PREVIEW_COUNT}
               min={MIN_SIDEBAR_THREAD_PREVIEW_COUNT}
@@ -2655,11 +2678,11 @@ function ProjectSortMenu({
             >
               <NumberFieldGroup className="h-7 rounded-md sm:h-6.5">
                 <NumberFieldDecrement
-                  aria-label="Decrease visible thread count"
+                  aria-label={`Decrease ${surfaceCopy.visibleChildLabel.toLowerCase()} count`}
                   className="px-2 sm:px-2 [&_svg]:size-3.5"
                 />
                 <NumberFieldInput
-                  aria-label="Visible thread count"
+                  aria-label={`${surfaceCopy.visibleChildLabel} count`}
                   className="h-7 w-9 grow-0 px-0 text-xs leading-7 sm:h-6.5 sm:leading-6.5"
                   inputMode="numeric"
                   onKeyDownCapture={(event) => {
@@ -2667,37 +2690,45 @@ function ProjectSortMenu({
                   }}
                 />
                 <NumberFieldIncrement
-                  aria-label="Increase visible thread count"
+                  aria-label={`Increase ${surfaceCopy.visibleChildLabel.toLowerCase()} count`}
                   className="px-2 sm:px-2 [&_svg]:size-3.5"
                 />
               </NumberFieldGroup>
             </NumberField>
           </div>
         </MenuGroup>
-        <MenuSeparator />
-        <MenuGroup>
-          <div className="px-2 pt-2 pb-1 font-medium text-muted-foreground sm:text-xs">
-            Group projects
-          </div>
-          <MenuRadioGroup
-            value={projectGroupingMode}
-            onValueChange={(value) => {
-              if (value === "repository" || value === "repository_path" || value === "separate") {
-                onProjectGroupingModeChange(value);
-              }
-            }}
-          >
-            {(
-              Object.entries(PROJECT_GROUPING_MODE_LABELS) as Array<
-                [SidebarProjectGroupingMode, string]
+        {showProjectGrouping ? (
+          <>
+            <MenuSeparator />
+            <MenuGroup>
+              <div className="px-2 pt-2 pb-1 font-medium text-muted-foreground sm:text-xs">
+                Group projects
+              </div>
+              <MenuRadioGroup
+                value={projectGroupingMode}
+                onValueChange={(value) => {
+                  if (
+                    value === "repository" ||
+                    value === "repository_path" ||
+                    value === "separate"
+                  ) {
+                    onProjectGroupingModeChange(value);
+                  }
+                }}
               >
-            ).map(([value, label]) => (
-              <MenuRadioItem key={value} value={value} className="min-h-7 py-1 sm:text-xs">
-                {label}
-              </MenuRadioItem>
-            ))}
-          </MenuRadioGroup>
-        </MenuGroup>
+                {(
+                  Object.entries(PROJECT_GROUPING_MODE_LABELS) as Array<
+                    [SidebarProjectGroupingMode, string]
+                  >
+                ).map(([value, label]) => (
+                  <MenuRadioItem key={value} value={value} className="min-h-7 py-1 sm:text-xs">
+                    {label}
+                  </MenuRadioItem>
+                ))}
+              </MenuRadioGroup>
+            </MenuGroup>
+          </>
+        ) : null}
       </MenuPopup>
     </Menu>
   );
@@ -2879,6 +2910,10 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
   const isJarvisCockpitMode = sidebarEnvironments.some((environment) =>
     isJarvisCockpitEnvironment(environment.serverConfig ?? undefined),
   );
+  const surfaceCopy = useMemo(
+    () => resolveSidebarSurfaceCopy({ isJarvisCockpitMode }),
+    [isJarvisCockpitMode],
+  );
   const addWorkLabel = isJarvisCockpitMode ? "Start work" : "Add project";
   const {
     showArm64IntelBuildWarning,
@@ -2995,7 +3030,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
       <SidebarGroup className="px-2 py-2">
         <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
           <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
-            Projects
+            {surfaceCopy.topLevelLabel}
           </span>
           <div className="flex items-center gap-1">
             <ProjectSortMenu
@@ -3003,6 +3038,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
               threadSortOrder={threadSortOrder}
               projectGroupingMode={projectGroupingMode}
               threadPreviewCount={threadPreviewCount}
+              surfaceCopy={surfaceCopy}
+              showProjectGrouping={!isJarvisCockpitMode}
               onProjectSortOrderChange={handleProjectSortOrderChange}
               onThreadSortOrderChange={handleThreadSortOrderChange}
               onProjectGroupingModeChange={handleProjectGroupingModeChange}
@@ -3069,6 +3106,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         }
                         isManualProjectSorting={isManualProjectSorting}
                         dragHandleProps={dragHandleProps}
+                        isJarvisCockpitMode={isJarvisCockpitMode}
+                        surfaceCopy={surfaceCopy}
                       />
                     )}
                   </SortableProjectItem>
@@ -3099,6 +3138,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
                 isManualProjectSorting={isManualProjectSorting}
                 dragHandleProps={null}
+                isJarvisCockpitMode={isJarvisCockpitMode}
+                surfaceCopy={surfaceCopy}
               />
             ))}
           </SidebarMenu>
@@ -3106,7 +3147,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
 
         {projectsLength === 0 && (
           <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
-            {isJarvisCockpitMode ? "No runs yet" : "No projects yet"}
+            {surfaceCopy.emptyTopLevelLabel}
           </div>
         )}
       </SidebarGroup>

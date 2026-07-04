@@ -141,6 +141,15 @@ export function isLoopbackHostname(hostname: string): boolean {
   return LOOPBACK_HOSTNAMES.has(normalizeHostname(hostname));
 }
 
+function isSameLoopbackOrigin(left: URL, right: URL): boolean {
+  return (
+    left.protocol === right.protocol &&
+    left.port === right.port &&
+    isLoopbackHostname(left.hostname) &&
+    isLoopbackHostname(right.hostname)
+  );
+}
+
 function resolveHttpRequestBaseUrl(primaryTarget: PrimaryEnvironmentTarget): string {
   const httpBaseUrl = primaryTarget.target.httpBaseUrl;
   const configuredDevServerUrl = import.meta.env.VITE_DEV_SERVER_URL?.trim();
@@ -167,7 +176,7 @@ function resolveHttpRequestBaseUrl(primaryTarget: PrimaryEnvironmentTarget): str
 
   const isCurrentOriginDevServer =
     (currentUrl.protocol === "http:" || currentUrl.protocol === "https:") &&
-    currentUrl.origin === devServerUrl.origin;
+    (currentUrl.origin === devServerUrl.origin || isSameLoopbackOrigin(currentUrl, devServerUrl));
 
   if (
     !isCurrentOriginDevServer ||
