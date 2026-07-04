@@ -193,6 +193,75 @@ it.effect("cockpit client attaches bearer token and reads the v1 snapshot endpoi
   }),
 );
 
+it.effect("cockpit client prefers OAuth token over legacy bearer token", () =>
+  Effect.gen(function* () {
+    const requests: Array<{ authorization: string | null }> = [];
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      token: "legacy-token",
+      tokenProvider: () => Effect.succeed("oauth-token"),
+      fetch: async (_url, init) => {
+        requests.push({
+          authorization: new Headers(init?.headers).get("authorization"),
+        });
+        return jsonResponse(snapshot);
+      },
+    });
+
+    yield* client.getSnapshot();
+
+    assert.strictEqual(requests[0]?.authorization, "Bearer oauth-token");
+  }),
+);
+
+it.effect("cockpit client falls back to legacy bearer token when OAuth is unavailable", () =>
+  Effect.gen(function* () {
+    const requests: Array<{ authorization: string | null }> = [];
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      token: "legacy-token",
+      tokenProvider: () => Effect.map(Effect.void, () => undefined),
+      fetch: async (_url, init) => {
+        requests.push({
+          authorization: new Headers(init?.headers).get("authorization"),
+        });
+        return jsonResponse(snapshot);
+      },
+    });
+
+    yield* client.getSnapshot();
+
+    assert.strictEqual(requests[0]?.authorization, "Bearer legacy-token");
+  }),
+);
+
+it.effect("cockpit client falls back to legacy bearer token when OAuth issuance fails", () =>
+  Effect.gen(function* () {
+    const requests: Array<{ authorization: string | null }> = [];
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      token: "legacy-token",
+      tokenProvider: () =>
+        Effect.fail(
+          new JarvisClientError({
+            operation: "test",
+            message: "OAuth unavailable.",
+          }),
+        ),
+      fetch: async (_url, init) => {
+        requests.push({
+          authorization: new Headers(init?.headers).get("authorization"),
+        });
+        return jsonResponse(snapshot);
+      },
+    });
+
+    yield* client.getSnapshot();
+
+    assert.strictEqual(requests[0]?.authorization, "Bearer legacy-token");
+  }),
+);
+
 it.effect("worker-session client export remains an alias for cockpit v1 live mode", () =>
   Effect.gen(function* () {
     const requests: string[] = [];

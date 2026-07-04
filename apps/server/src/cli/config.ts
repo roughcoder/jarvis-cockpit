@@ -138,6 +138,33 @@ const EnvServerConfig = Config.all({
     Config.map(Option.getOrUndefined),
   ),
   jarvisFixtureMode: Config.boolean("JARVIS_FIXTURE_MODE").pipe(Config.withDefault(false)),
+  betterAuthUrl: Config.url("BETTER_AUTH_URL").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  betterAuthSecret: Config.string("BETTER_AUTH_SECRET").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  jarvisOAuthIssuer: Config.string("JARVIS_OAUTH_ISSUER").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  jarvisOAuthAudience: Config.string("JARVIS_OAUTH_AUDIENCE").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  jarvisOAuthScopes: Config.string("JARVIS_OAUTH_SCOPES").pipe(
+    Config.withDefault("jarvis:read jarvis:operate"),
+  ),
+  jarvisOAuthUserEmail: Config.string("JARVIS_OAUTH_USER_EMAIL").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  jarvisOAuthJarvisUser: Config.string("JARVIS_OAUTH_JARVIS_USER").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 export interface CliServerFlags {
@@ -342,6 +369,8 @@ export const resolveServerConfig = (
       () => (mode === "desktop" ? "127.0.0.1" : undefined),
     );
     const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
+    const defaultIssuer = new URL(`http://${host ?? "127.0.0.1"}:${port}`);
+    const betterAuthUrl = env.betterAuthUrl ?? defaultIssuer;
 
     const config: ServerConfig.ServerConfig["Service"] = {
       logLevel,
@@ -380,6 +409,14 @@ export const resolveServerConfig = (
       jarvisApiBaseUrl: env.jarvisApiBaseUrl,
       jarvisApiToken: env.jarvisApiToken,
       jarvisFixtureMode: env.jarvisFixtureMode,
+      betterAuthUrl,
+      betterAuthSecret: env.betterAuthSecret,
+      jarvisOAuthIssuer:
+        env.jarvisOAuthIssuer?.trim() || env.betterAuthUrl?.toString() || betterAuthUrl.toString(),
+      jarvisOAuthAudience: env.jarvisOAuthAudience,
+      jarvisOAuthScopes: env.jarvisOAuthScopes,
+      jarvisOAuthUserEmail: env.jarvisOAuthUserEmail,
+      jarvisOAuthJarvisUser: env.jarvisOAuthJarvisUser,
     };
 
     return config;

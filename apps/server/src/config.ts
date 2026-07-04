@@ -79,6 +79,13 @@ export class ServerConfig extends Context.Service<
     readonly jarvisApiBaseUrl: URL | undefined;
     readonly jarvisApiToken: string | undefined;
     readonly jarvisFixtureMode: boolean;
+    readonly betterAuthUrl?: URL | undefined;
+    readonly betterAuthSecret?: string | undefined;
+    readonly jarvisOAuthIssuer?: string | undefined;
+    readonly jarvisOAuthAudience?: string | undefined;
+    readonly jarvisOAuthScopes?: string | undefined;
+    readonly jarvisOAuthUserEmail?: string | undefined;
+    readonly jarvisOAuthJarvisUser?: string | undefined;
   }
 >()("t3/config/ServerConfig") {
   /** @deprecated Import and use `layerTest` from this module. */
@@ -182,6 +189,13 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     jarvisApiBaseUrl: undefined,
     jarvisApiToken: undefined,
     jarvisFixtureMode: false,
+    betterAuthUrl: undefined,
+    betterAuthSecret: undefined,
+    jarvisOAuthIssuer: undefined,
+    jarvisOAuthAudience: undefined,
+    jarvisOAuthScopes: "jarvis:read jarvis:operate",
+    jarvisOAuthUserEmail: undefined,
+    jarvisOAuthJarvisUser: undefined,
     port: 0,
     host: undefined,
     desktopBootstrapToken: undefined,

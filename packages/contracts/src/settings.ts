@@ -382,6 +382,8 @@ export const JarvisBrainConnection = Schema.Struct({
   apiBaseUrlSource: JarvisConnectionSource,
   apiTokenConfigured: Schema.Boolean,
   apiTokenSource: Schema.optional(JarvisConnectionSource),
+  oauthTokenConfigured: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  oauthTokenSource: Schema.optional(JarvisConnectionSource),
 });
 export type JarvisBrainConnection = typeof JarvisBrainConnection.Type;
 

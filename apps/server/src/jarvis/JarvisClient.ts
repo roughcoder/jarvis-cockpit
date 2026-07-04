@@ -37,6 +37,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import { ServerConfig } from "../config.ts";
+import { isJarvisOAuthConfigured } from "./JarvisOAuth.ts";
 
 export class JarvisClientError extends Error {
   readonly _tag = "JarvisClientError";
@@ -140,7 +141,21 @@ type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 type JarvisConnectionConfig = Pick<
   ServerConfig["Service"],
   "jarvisCockpitEnabled" | "jarvisApiBaseUrl" | "jarvisApiToken" | "jarvisFixtureMode"
->;
+> &
+  Partial<
+    Pick<
+      ServerConfig["Service"],
+      | "jarvisOAuthIssuer"
+      | "jarvisOAuthAudience"
+      | "jarvisOAuthScopes"
+      | "jarvisOAuthUserEmail"
+      | "jarvisOAuthJarvisUser"
+    >
+  >;
+
+type JarvisAccessTokenProvider = (
+  operation: string,
+) => Effect.Effect<string | undefined, JarvisClientError>;
 
 // Jarvis is the source of truth for this boundary. Keep endpoint semantics aligned with:
 // - https://github.com/roughcoder/jarvis/blob/main/docs/COCKPIT_API.md
@@ -176,12 +191,15 @@ export function resolveJarvisBrainConnection(
       savedApiToken.length > 0 ||
       Boolean(settings.jarvis.apiTokenRedacted),
     ...(apiTokenSource !== undefined ? { apiTokenSource } : {}),
+    oauthTokenConfigured: isJarvisOAuthConfigured(config),
+    ...(isJarvisOAuthConfigured(config) ? { oauthTokenSource: "environment" as const } : {}),
   };
 }
 
 function makeJarvisClientFromConnection(input: {
   readonly config: JarvisConnectionConfig;
   readonly settings: ServerSettings;
+  readonly oauthAccessToken?: JarvisAccessTokenProvider;
 }): JarvisClient {
   if (input.config.jarvisFixtureMode) {
     return makeJarvisFixtureClient();
@@ -195,6 +213,7 @@ function makeJarvisClientFromConnection(input: {
   return makeJarvisCockpitClient({
     baseUrl,
     ...(token.length > 0 ? { token } : {}),
+    ...(input.oauthAccessToken !== undefined ? { tokenProvider: input.oauthAccessToken } : {}),
   });
 }
 
@@ -240,46 +259,67 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function resolveBearerToken(
+  input: {
+    readonly token?: string;
+    readonly tokenProvider?: JarvisAccessTokenProvider;
+  },
+  operation: string,
+): Effect.Effect<string | undefined, JarvisClientError> {
+  if (input.tokenProvider === undefined) {
+    return Effect.succeed(input.token);
+  }
+  return input.tokenProvider(operation).pipe(
+    Effect.catch((error) => (input.token ? Effect.succeed(input.token) : Effect.fail(error))),
+    Effect.map((token) => token ?? input.token),
+  );
+}
+
 export function makeJarvisCockpitClient(input: {
   readonly baseUrl: URL;
   readonly token?: string;
+  readonly tokenProvider?: JarvisAccessTokenProvider;
   readonly fetch?: FetchLike;
 }): JarvisClient {
   const fetchImpl = input.fetch ?? fetch;
   const requestJson = (operation: string, path: string, init?: RequestInit) =>
-    Effect.tryPromise({
-      try: async () => {
-        const response = await fetchImpl(new URL(path, input.baseUrl), {
-          ...init,
-          headers: {
-            accept: "application/json",
-            ...(init?.body !== undefined ? { "content-type": "application/json" } : {}),
-            ...(input.token ? { authorization: `Bearer ${input.token}` } : {}),
-            ...init?.headers,
+    resolveBearerToken(input, operation).pipe(
+      Effect.flatMap((token) =>
+        Effect.tryPromise({
+          try: async () => {
+            const response = await fetchImpl(new URL(path, input.baseUrl), {
+              ...init,
+              headers: {
+                accept: "application/json",
+                ...(init?.body !== undefined ? { "content-type": "application/json" } : {}),
+                ...(token ? { authorization: `Bearer ${token}` } : {}),
+                ...init?.headers,
+              },
+            });
+            const text = await response.text();
+            if (!response.ok) {
+              throw new JarvisClientError({
+                operation,
+                status: response.status,
+                responseBody: truncateResponseBody(text),
+                message: `Jarvis request ${operation} failed with HTTP ${response.status}.`,
+              });
+            }
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            const body = text.trim().length > 0 ? JSON.parse(text) : {};
+            return body as unknown;
           },
-        });
-        const text = await response.text();
-        if (!response.ok) {
-          throw new JarvisClientError({
-            operation,
-            status: response.status,
-            responseBody: truncateResponseBody(text),
-            message: `Jarvis request ${operation} failed with HTTP ${response.status}.`,
-          });
-        }
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
-        const body = text.trim().length > 0 ? JSON.parse(text) : {};
-        return body as unknown;
-      },
-      catch: (cause) =>
-        cause instanceof JarvisClientError
-          ? cause
-          : new JarvisClientError({
-              operation,
-              message: `Jarvis request ${operation} failed before a valid response was decoded.`,
-              cause,
-            }),
-    });
+          catch: (cause) =>
+            cause instanceof JarvisClientError
+              ? cause
+              : new JarvisClientError({
+                  operation,
+                  message: `Jarvis request ${operation} failed before a valid response was decoded.`,
+                  cause,
+                }),
+        }),
+      ),
+    );
 
   const postJson = (operation: string, path: string, payload: unknown) =>
     requestJson(operation, path, {
@@ -370,11 +410,7 @@ export function makeJarvisCockpitClient(input: {
         ),
       ),
     startWork: (workInput) =>
-      postJson(
-        "work.start",
-        "/v1/work/start",
-        withSurfaceMetadata(workInput),
-      ).pipe(
+      postJson("work.start", "/v1/work/start", withSurfaceMetadata(workInput)).pipe(
         Effect.flatMap(decodeFor("work.start", decodeControlResult)),
       ),
     validateWork: (workInput) =>
@@ -453,6 +489,7 @@ export function makeJarvisClient(config: {
   readonly jarvisApiToken: string | undefined;
   readonly jarvisFixtureMode: boolean;
   readonly getSettings?: Effect.Effect<ServerSettings, ServerSettingsError>;
+  readonly oauthAccessToken?: JarvisAccessTokenProvider;
 }): JarvisClient {
   if (config.getSettings !== undefined) {
     const getSettings = config.getSettings;
@@ -471,7 +508,14 @@ export function makeJarvisClient(config: {
         ),
         Effect.flatMap((settings) =>
           Effect.try({
-            try: () => makeJarvisClientFromConnection({ config, settings }),
+            try: () =>
+              makeJarvisClientFromConnection({
+                config,
+                settings,
+                ...(config.oauthAccessToken !== undefined
+                  ? { oauthAccessToken: config.oauthAccessToken }
+                  : {}),
+              }),
             catch: (cause) =>
               new JarvisClientError({
                 operation,
@@ -495,8 +539,7 @@ export function makeJarvisClient(config: {
       getCheckpoints: (sessionRef, options) =>
         withClient("sessions.checkpoints", (client) => client.getCheckpoints(sessionRef, options)),
       startWork: (input) => withClient("work.start", (client) => client.startWork(input)),
-      validateWork: (input) =>
-        withClient("work.validate", (client) => client.validateWork(input)),
+      validateWork: (input) => withClient("work.validate", (client) => client.validateWork(input)),
       sendTurn: (sessionRef, input) =>
         withClient("sessions.turns", (client) => client.sendTurn(sessionRef, input)),
       respondApproval: (sessionRef, input) =>
@@ -529,6 +572,7 @@ export function makeJarvisClient(config: {
   return makeJarvisCockpitClient({
     baseUrl: config.jarvisApiBaseUrl ?? new URL(DEFAULT_JARVIS_API_BASE_URL),
     ...(config.jarvisApiToken ? { token: config.jarvisApiToken } : {}),
+    ...(config.oauthAccessToken !== undefined ? { tokenProvider: config.oauthAccessToken } : {}),
   });
 }
 
@@ -537,63 +581,84 @@ export function checkJarvisBrain(input: {
   readonly settings: ServerSettings;
   readonly apiBaseUrl?: string;
   readonly apiToken?: string;
+  readonly oauthAccessToken?: Effect.Effect<string | undefined, JarvisClientError>;
   readonly fetch?: FetchLike;
 }): Effect.Effect<JarvisBrainCheckResult, JarvisClientError> {
-  return Effect.tryPromise({
-    try: async () => {
-      const connection = resolveJarvisBrainConnection(input.config, input.settings);
-      const apiBaseUrl = input.apiBaseUrl?.trim() || connection.apiBaseUrl;
-      const apiToken =
-        input.apiToken !== undefined
-          ? input.apiToken.trim()
-          : input.config.jarvisApiToken ?? input.settings.jarvis.apiToken.trim();
-      const checkedAt = DateTime.formatIso(DateTime.nowUnsafe());
-      let healthUrl: URL;
-      try {
-        healthUrl = new URL("/v1/health", new URL(apiBaseUrl));
-      } catch (cause) {
-        return {
-          ok: false,
-          checkedAt,
-          apiBaseUrl,
+  return Effect.gen(function* () {
+    const connection = resolveJarvisBrainConnection(input.config, input.settings);
+    const apiBaseUrl = input.apiBaseUrl?.trim() || connection.apiBaseUrl;
+    const legacyToken =
+      input.apiToken !== undefined
+        ? input.apiToken.trim()
+        : (input.config.jarvisApiToken ?? input.settings.jarvis.apiToken.trim());
+    const oauthToken =
+      input.apiToken === undefined && input.oauthAccessToken !== undefined
+        ? yield* input.oauthAccessToken
+        : undefined;
+    const apiToken = oauthToken ?? legacyToken;
+    const checkedAt = DateTime.formatIso(DateTime.nowUnsafe());
+    const healthUrl = yield* Effect.try({
+      try: () => new URL("/v1/health", new URL(apiBaseUrl)),
+      catch: (cause) =>
+        new JarvisClientError({
+          operation: "jarvis.health",
           message: "Jarvis brain URL is not valid.",
-          response: { cause: cause instanceof Error ? cause.message : String(cause) },
-        };
-      }
-
-      const response = await (input.fetch ?? fetch)(healthUrl, {
-        headers: {
-          accept: "application/json",
-          ...(apiToken.length > 0 ? { authorization: `Bearer ${apiToken}` } : {}),
-        },
-      });
-      const text = await response.text();
-      let body: unknown = undefined;
-      if (text.trim().length > 0) {
-        try {
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
-          body = JSON.parse(text);
-        } catch {
-          body = text.slice(0, 2_000);
-        }
-      }
+          cause,
+        }),
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.succeed({
+          _tag: "invalid" as const,
+          error,
+        }),
+      ),
+    );
+    if ("_tag" in healthUrl) {
       return {
-        ok: response.ok,
+        ok: false,
         checkedAt,
         apiBaseUrl,
-        status: response.status,
-        message: response.ok
-          ? "Jarvis brain is reachable."
-          : `Jarvis brain returned HTTP ${response.status}.`,
-        ...(body !== undefined ? { response: body } : {}),
+        message: "Jarvis brain URL is not valid.",
+        response: { cause: healthUrl.error.cause },
       };
-    },
-    catch: (cause) =>
-      new JarvisClientError({
-        operation: "jarvis.health",
-        message: "Jarvis brain health check failed.",
-        cause,
-      }),
+    }
+
+    return yield* Effect.tryPromise({
+      try: async () => {
+        const response = await (input.fetch ?? fetch)(healthUrl, {
+          headers: {
+            accept: "application/json",
+            ...(apiToken.length > 0 ? { authorization: `Bearer ${apiToken}` } : {}),
+          },
+        });
+        const text = await response.text();
+        let body: unknown = undefined;
+        if (text.trim().length > 0) {
+          try {
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            body = JSON.parse(text);
+          } catch {
+            body = text.slice(0, 2_000);
+          }
+        }
+        return {
+          ok: response.ok,
+          checkedAt,
+          apiBaseUrl,
+          status: response.status,
+          message: response.ok
+            ? "Jarvis brain is reachable."
+            : `Jarvis brain returned HTTP ${response.status}.`,
+          ...(body !== undefined ? { response: body } : {}),
+        };
+      },
+      catch: (cause) =>
+        new JarvisClientError({
+          operation: "jarvis.health",
+          message: "Jarvis brain health check failed.",
+          cause,
+        }),
+    });
   });
 }
 
@@ -1027,7 +1092,8 @@ export function makeJarvisFixtureClient(): JarvisClient {
     ];
     const branchArtifact: JarvisArtifact = {
       ...fixtureSnapshot.artifacts[0]!,
-      artifact_id: `artifact_fixture_${runSlug}_${generatedWorkCount}_branch` as JarvisArtifact["artifact_id"],
+      artifact_id:
+        `artifact_fixture_${runSlug}_${generatedWorkCount}_branch` as JarvisArtifact["artifact_id"],
       run_id: syntheticRunId,
       session_ref: syntheticSessionRef,
       title: syntheticBranch,
@@ -1240,8 +1306,7 @@ export function makeJarvisFixtureClient(): JarvisClient {
       const source = firstTrimmed(workInput.source) ?? "manual";
       const repo = firstTrimmed(workInput.repo) ?? "roughcoder/jarvis";
       const phrase = firstTrimmed(workInput.phrase, workInput.title, workInput.prompt);
-      const missing =
-        source === "manual" && phrase === null ? ["phrase or work_item.title"] : [];
+      const missing = source === "manual" && phrase === null ? ["phrase or work_item.title"] : [];
       return Effect.succeed({
         ok: true,
         api_version: "v1" as const,

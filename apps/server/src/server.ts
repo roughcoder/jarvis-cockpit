@@ -53,6 +53,7 @@ import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import { jarvisOAuthJwksRouteLayer } from "./jarvis/JarvisOAuth.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
@@ -348,14 +349,15 @@ export const makeRoutesLayer = Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
       Layer.provide(authHttpApiLayer),
       Layer.provide(connectHttpApiLayer),
-      Layer.provide(orchestrationHttpApiLayer),
+      Layer.provide(orchestrationHttpApiLayer.pipe(Layer.provide(ServerSecretStore.layer))),
       Layer.provide(serverEnvironmentHttpApiLayer),
       Layer.provide(environmentAuthenticatedAuthLayer),
     ),
     otlpTracesProxyRouteLayer,
+    jarvisOAuthJwksRouteLayer.pipe(Layer.provide(ServerSecretStore.layer)),
     assetRouteLayer,
     staticAndDevRouteLayer,
-    websocketRpcRouteLayer,
+    websocketRpcRouteLayer.pipe(Layer.provide(ServerSecretStore.layer)),
   ),
   McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
 ).pipe(Layer.provide(PreviewAutomationBroker.layer), Layer.provide(browserApiCorsLayer));

@@ -137,6 +137,14 @@ const SERVER_CONFIG: ServerConfigType = {
     otlpTracesEnabled: false,
     otlpMetricsEnabled: false,
   },
+  jarvisBrain: {
+    enabled: false,
+    fixtureMode: false,
+    apiBaseUrl: "http://127.0.0.1:8791",
+    apiBaseUrlSource: "default",
+    apiTokenConfigured: false,
+    oauthTokenConfigured: false,
+  },
   settings: DEFAULT_SERVER_SETTINGS,
 };
 

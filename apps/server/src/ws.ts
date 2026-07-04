@@ -102,10 +102,12 @@ import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import {
   checkJarvisBrain,
+  JarvisClientError,
   makeJarvisClient,
   resolveJarvisBrainConnection,
   type JarvisClient,
 } from "./jarvis/JarvisClient.ts";
+import { makeJarvisOAuthAccessToken } from "./jarvis/JarvisOAuth.ts";
 import { dispatchJarvisCommand } from "./jarvis/JarvisDispatch.ts";
 import {
   loadJarvisArchivedShellSnapshot,
@@ -126,6 +128,7 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
+import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
@@ -486,9 +489,22 @@ const makeWsRpcLayer = (
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      const jarvisOAuthAccessToken = (operation: string) =>
+        makeJarvisOAuthAccessToken({ config, secrets: secretStore }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new JarvisClientError({
+                operation,
+                message: "Failed to issue Jarvis OAuth access token.",
+                cause,
+              }),
+          ),
+        );
       const jarvisClient = makeJarvisClient({
         ...config,
         getSettings: serverSettings.getSettings,
+        oauthAccessToken: jarvisOAuthAccessToken,
       });
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
@@ -1374,7 +1390,14 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.serverCheckJarvisBrain,
             serverSettings.getSettings.pipe(
-              Effect.flatMap((settings) => checkJarvisBrain({ config, settings, ...input })),
+              Effect.flatMap((settings) =>
+                checkJarvisBrain({
+                  config,
+                  settings,
+                  ...input,
+                  oauthAccessToken: jarvisOAuthAccessToken(WS_METHODS.serverCheckJarvisBrain),
+                }),
+              ),
               Effect.catch((error) =>
                 nowIso.pipe(
                   Effect.map((checkedAt) => ({

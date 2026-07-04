@@ -13,13 +13,15 @@ import {
   failEnvironmentInvalidRequest,
   requireEnvironmentScope,
 } from "../auth/http.ts";
-import { makeJarvisClient } from "../jarvis/JarvisClient.ts";
+import { JarvisClientError, makeJarvisClient } from "../jarvis/JarvisClient.ts";
+import { makeJarvisOAuthAccessToken } from "../jarvis/JarvisOAuth.ts";
 import { dispatchJarvisCommand } from "../jarvis/JarvisDispatch.ts";
 import {
   loadJarvisReadModel,
   shouldUseJarvisCockpitReads,
 } from "../jarvis/JarvisOrchestrationReadModel.ts";
 import { ServerConfig } from "../config.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
@@ -32,9 +34,22 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
     const orchestrationEngine = yield* OrchestrationEngineService;
     const config = yield* ServerConfig;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
+    const secretStore = yield* ServerSecretStore.ServerSecretStore;
+    const jarvisOAuthAccessToken = (operation: string) =>
+      makeJarvisOAuthAccessToken({ config, secrets: secretStore }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new JarvisClientError({
+              operation,
+              message: "Failed to issue Jarvis OAuth access token.",
+              cause,
+            }),
+        ),
+      );
     const jarvisClient = makeJarvisClient({
       ...config,
       getSettings: serverSettings.getSettings,
+      oauthAccessToken: jarvisOAuthAccessToken,
     });
 
     return handlers
