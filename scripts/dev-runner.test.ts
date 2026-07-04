@@ -17,6 +17,7 @@ import {
   createDevRunnerEnv,
   findFirstAvailableOffset,
   getDevRunnerModeArgs,
+  resolvePortlessWebPort,
   resolveModePortOffsets,
   resolveOffset,
   runDevRunnerWithInput,
@@ -299,6 +300,79 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.equal(env.T3CODE_PORT, "13773");
         assert.equal(env.VITE_HTTP_URL, "http://localhost:13773");
         assert.equal(env.VITE_WS_URL, "ws://localhost:13773");
+      }),
+    );
+
+    it.effect("honors the Portless-assigned web port and public URL", () =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode: "dev",
+          baseEnv: {
+            PORT: "4488",
+            PORTLESS_URL: "https://cockpit.localhost",
+          },
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: undefined,
+          noBrowser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+        });
+
+        assert.equal(env.PORT, "4488");
+        assert.equal(env.VITE_DEV_SERVER_URL, "https://cockpit.localhost/");
+        assert.equal(env.T3CODE_PORT, "13773");
+        assert.equal(env.VITE_HTTP_URL, "http://localhost:13773");
+        assert.equal(env.VITE_WS_URL, "ws://localhost:13773");
+      }),
+    );
+
+    it.effect("keeps an explicit dev URL ahead of the Portless public URL", () =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode: "dev",
+          baseEnv: {
+            PORT: "4488",
+            PORTLESS_URL: "https://cockpit.localhost",
+          },
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: undefined,
+          noBrowser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: new URL("http://localhost:5733"),
+        });
+
+        assert.equal(env.PORT, "4488");
+        assert.equal(env.VITE_DEV_SERVER_URL, "http://localhost:5733/");
+      }),
+    );
+  });
+
+  describe("resolvePortlessWebPort", () => {
+    it.effect("uses PORT only when it came from Portless", () =>
+      Effect.sync(() => {
+        assert.equal(resolvePortlessWebPort({ PORT: "4488" }), undefined);
+        assert.equal(
+          resolvePortlessWebPort({
+            PORT: "4488",
+            PORTLESS_URL: "https://cockpit.localhost",
+          }),
+          4488,
+        );
+        assert.equal(
+          resolvePortlessWebPort({
+            PORT: "not-a-port",
+            PORTLESS_URL: "https://cockpit.localhost",
+          }),
+          undefined,
+        );
       }),
     );
   });

@@ -6,6 +6,17 @@
   - If changing native mobile code, `vp run lint:mobile` must also pass.
 - Use `vp test` for the built-in Vite+ test command and `vp run test` when you specifically need the `test` package script.
 
+## Local Development
+
+- `pnpm dev` is the default web/server dev entrypoint. It runs through Portless
+  as `https://cockpit.localhost`.
+- `pnpm dev:app` runs the same web/server dev stack without Portless.
+- `pnpm dev:web`, `pnpm dev:server`, and `pnpm dev:desktop` remain direct
+  dev-runner commands.
+- The direct dev-runner defaults are web port `5733` and server port `13773`;
+  use `T3CODE_DEV_INSTANCE` or `T3CODE_PORT_OFFSET` for isolated direct port
+  sets.
+
 ## Project Snapshot
 
 T3 Code is a minimal web GUI for using coding agents like Codex and Claude.

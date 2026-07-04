@@ -121,6 +121,8 @@ Fixture mode:
 JARVIS_FIXTURE_MODE=true volta run --node 24.13.1 --pnpm 10.24.0 pnpm dev
 ```
 
+Open `https://cockpit.localhost`.
+
 Real fleet mode:
 
 ```bash

@@ -92,15 +92,15 @@ Issue dev pairing token:
 ```bash
 volta run --node 24.13.1 --pnpm 10.24.0 node apps/server/dist/bin.mjs auth pairing create \
   --base-dir /Users/neilbarton/.t3 \
-  --dev-url http://localhost:5733 \
-  --base-url http://localhost:5733 \
+  --dev-url https://cockpit.localhost \
+  --base-url https://cockpit.localhost \
   --json
 ```
 
 Open with a fresh browser session and wait:
 
 ```bash
-agent-browser --session jarvis-cockpit-smoke open 'http://localhost:5733/pair#token=TOKEN'
+agent-browser --session jarvis-cockpit-smoke open 'https://cockpit.localhost/pair#token=TOKEN'
 agent-browser --session jarvis-cockpit-smoke wait --load networkidle
 agent-browser --session jarvis-cockpit-smoke wait 10000
 agent-browser --session jarvis-cockpit-smoke get url
@@ -108,7 +108,7 @@ agent-browser --session jarvis-cockpit-smoke snapshot -i
 agent-browser --session jarvis-cockpit-smoke screenshot --annotate /Users/neilbarton/Development/jarvis-cockpit/dogfood-output/screenshots/<slice>.png
 ```
 
-Expected baseline: URL is `http://localhost:5733/` and shell shows `Projects`, `No projects yet`, `Add project`, and settings controls.
+Expected baseline: URL is `https://cockpit.localhost/` and shell shows `Projects`, `No projects yet`, `Add project`, and settings controls.
 
 ## Dogfood Scope
 

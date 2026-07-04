@@ -104,6 +104,9 @@ importers:
       '@typescript/native-preview':
         specifier: 'catalog:'
         version: 7.0.0-dev.20260604.1
+      portless:
+        specifier: 0.15.1
+        version: 0.15.1
       vite-plus:
         specifier: 'catalog:'
         version: 0.2.1(@types/node@24.12.4)(bufferutil@4.1.0)(esbuild@0.28.1)(jiti@2.7.0)(msw@2.12.11(@types/node@24.12.4)(typescript@6.0.3))(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
@@ -8505,6 +8508,10 @@ packages:
   postcss@8.5.15:
     resolution: {integrity: sha512-FfR8sjd4em2T6fb3I2MwAJU7HWVMr9zba+enmQeeWFfCbm+UOC/0X4DS8XtpUTMwWMGbjKYP7xjfNekzyGmB3A==}
     engines: {node: ^10 || ^12 || >=14}
+
+  portless@0.15.1:
+    resolution: {integrity: sha512-MQTt405HrcIa3m9OSKpH6WjJDbfNP4oFMNg0VzAoUO4B19l1eFJBFcSWfQY8KYMhzZVfa+Gea2OUrlDm8+/M4A==}
+    hasBin: true
 
   postgres-array@2.0.0:
     resolution: {integrity: sha512-VpZrUqU5A69eQyW2c5CA1jtLecCsN2U/bD6VilrFDWq5+5UIEVO7nazS3TEcHf1zuPYO/sqGvUvW62g86RXZuA==}
@@ -18504,6 +18511,8 @@ snapshots:
       nanoid: 3.3.12
       picocolors: 1.1.1
       source-map-js: 1.2.1
+
+  portless@0.15.1: {}
 
   postgres-array@2.0.0: {}
 
