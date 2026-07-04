@@ -6,6 +6,7 @@ import {
   Clock3Icon,
   GitBranchIcon,
   KeyRoundIcon,
+  LogInIcon,
   RefreshCwIcon,
   ServerCogIcon,
   ServerIcon,
@@ -56,8 +57,11 @@ function sourceLabel(source: JarvisBrainConnection["apiBaseUrlSource"]): string 
 }
 
 function tokenLabel(connection: JarvisBrainConnection | null): string {
+  if (connection?.oauthTokenConfigured) {
+    return "OAuth configured";
+  }
   if (!connection?.apiTokenConfigured) {
-    return "No token";
+    return "Not connected";
   }
   return connection.apiTokenSource === "environment" ? "Token from env" : "Stored token";
 }
@@ -284,6 +288,7 @@ export function JarvisSettingsPanel() {
 
   const envControlsUrl = connection?.apiBaseUrlSource === "environment";
   const envControlsToken = connection?.apiTokenSource === "environment";
+  const oauthConfigured = Boolean(connection?.oauthTokenConfigured);
   const canCheck = primaryEnvironment !== null && apiBaseUrl.trim().length > 0;
   const effectiveUrl = connection?.apiBaseUrl ?? settings.jarvis.apiBaseUrl;
   const statusVariant = connection?.fixtureMode
@@ -405,13 +410,34 @@ export function JarvisSettingsPanel() {
       >
         <SettingsRow
           title="Effective brain"
-          description="Cockpit reads and writes go through the Jarvis brain; fixture mode is explicit only."
+          description="Cockpit reads and writes go through the Jarvis brain; OAuth is used before recovery tokens when configured."
           status={
             <span className="break-all">
               {sourceLabel(connection?.apiBaseUrlSource ?? "default")}: {effectiveUrl}
             </span>
           }
           control={<Badge variant="outline">{tokenLabel(connection)}</Badge>}
+        />
+
+        <SettingsRow
+          title="Account pairing"
+          description={
+            oauthConfigured
+              ? "The server has an admin-seeded OAuth mapping for this Jarvis brain."
+              : "Sign in, then connect the Jarvis brain. Manual tokens are only needed for recovery or headless setups."
+          }
+          control={
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" variant="outline" disabled={oauthConfigured}>
+                <LogInIcon className="size-3.5" />
+                Sign in
+              </Button>
+              <Button size="sm" disabled={oauthConfigured}>
+                <KeyRoundIcon className="size-3.5" />
+                Connect brain
+              </Button>
+            </div>
+          }
         />
 
         <SettingsRow
@@ -434,11 +460,11 @@ export function JarvisSettingsPanel() {
         />
 
         <SettingsRow
-          title="Bearer token"
+          title="Manual recovery token"
           description={
             envControlsToken
               ? "JARVIS_API_TOKEN is set, so the environment token is used for checks and cockpit calls."
-              : "Leave blank to keep the stored token. Enter a new value to replace it."
+              : "Fallback for Pi/headless/admin recovery. Leave blank to keep the stored token."
           }
           control={
             <Input
@@ -447,9 +473,9 @@ export function JarvisSettingsPanel() {
               value={apiToken}
               onChange={(event) => setApiToken(event.target.value)}
               placeholder={
-                settings.jarvis.apiTokenRedacted ? "Stored token configured" : "Optional"
+                settings.jarvis.apiTokenRedacted ? "Stored recovery token configured" : "Optional"
               }
-              aria-label="Jarvis brain bearer token"
+              aria-label="Jarvis brain manual recovery token"
             />
           }
         />
@@ -458,7 +484,7 @@ export function JarvisSettingsPanel() {
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <KeyRoundIcon className="size-3.5" />
             <span>
-              The browser never receives the stored token; checks run through the T3 server.
+              The browser never receives OAuth or manual tokens; checks run through the T3 server.
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
