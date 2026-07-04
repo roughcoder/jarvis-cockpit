@@ -20,6 +20,13 @@ The core boundary is unchanged:
 The current branch can run against a real Jarvis fleet API and start work through
 Jarvis into a Codex worker session.
 
+Real fleet assumptions come from the upstream
+[Jarvis Fleet Deployment](https://github.com/roughcoder/jarvis/blob/main/docs/FLEET.md)
+guide: Jarvis roles are independently supervised services, installed mode is
+managed through `launchd`/`systemd`, status is exposed through
+`jarvis fleet-status --json`, and cockpit talks to the Jarvis API/brain boundary
+rather than directly owning brain, worker, intercom, or WhatsApp service state.
+
 Verified live on 2026-07-04:
 
 - Cockpit server connected to a real fleet API through `JARVIS_API_BASE_URL`.

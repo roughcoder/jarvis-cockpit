@@ -34,6 +34,10 @@ second durable project model.
 - [Jarvis worker sessions API](../reference/jarvis-worker-sessions-api.md):
   worker-session resources, endpoints, event types, and UI integration notes
   copied from the current Jarvis worker-sessions branch.
+- [Jarvis fleet deployment](https://github.com/roughcoder/jarvis/blob/main/docs/FLEET.md):
+  upstream fleet roles, development vs installed mode, service supervision,
+  `jarvis fleet-status --json`, and network binding expectations for real
+  brain/worker/intercom deployments.
 
 ## Implemented In This Branch
 

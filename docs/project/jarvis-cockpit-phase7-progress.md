@@ -19,6 +19,7 @@ spawning Codex or Claude directly for Jarvis-managed work.
 - [Deep-interview spec](./jarvis-cockpit-phase7-deep-interview-spec.md)
 - [Worker-session pivot](./agentic-worker-session-pivot.md)
 - [Worker sessions API reference](../reference/jarvis-worker-sessions-api.md)
+- [Jarvis fleet deployment](https://github.com/roughcoder/jarvis/blob/main/docs/FLEET.md)
 
 ## Implemented foundation slice
 
