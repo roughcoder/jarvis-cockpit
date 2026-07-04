@@ -73,6 +73,7 @@ it.effect("routes first draft turns to Jarvis work start", () =>
             baseBranch: "main",
             branch: "jarvis/cockpit",
           },
+          jarvisWorkerId: "macbook-worker",
         },
         createdAt: now,
       },
@@ -87,6 +88,7 @@ it.effect("routes first draft turns to Jarvis work start", () =>
     assert.strictEqual(capturedStartWork?.prompt, "Build the cockpit dashboard.");
     assert.strictEqual(capturedStartWork?.title, "Cockpit dashboard");
     assert.strictEqual(capturedStartWork?.engine, "codex");
+    assert.strictEqual(capturedStartWork?.worker_id, "macbook-worker");
     assert.strictEqual(capturedStartWork?.base_ref, "main");
     assert.strictEqual(capturedStartWork?.branch, "jarvis/cockpit");
   }),
@@ -718,12 +720,14 @@ it.effect("rejects session controls that Jarvis does not advertise", () =>
     const client = {
       ...makeJarvisFixtureClient(),
       getSession: (sessionRef: string) =>
-        makeJarvisFixtureClient().getSession(sessionRef).pipe(
-          Effect.map((session) => ({
-            ...session,
-            supported_controls: ["turn" as const],
-          })),
-        ),
+        makeJarvisFixtureClient()
+          .getSession(sessionRef)
+          .pipe(
+            Effect.map((session) => ({
+              ...session,
+              supported_controls: ["turn" as const],
+            })),
+          ),
       stopSession: () => {
         stopCalls += 1;
         return Effect.succeed({ ok: true, cursor: "evt_stop" });
@@ -768,25 +772,27 @@ it.effect("treats Jarvis-managed thread metadata updates as no-ops", () =>
   }),
 );
 
-it.effect("rejects unsupported commands for Jarvis-managed threads instead of falling through", () =>
-  Effect.gen(function* () {
-    const exit = yield* Effect.exit(
-      dispatchJarvisCommand({
-        client: makeJarvisFixtureClient(),
-        enabled: true,
-        command: {
-          type: "thread.delete",
-          commandId: CommandId.make("cmd_delete"),
-          threadId: jarvisThreadId,
-        },
-      }),
-    );
+it.effect(
+  "rejects unsupported commands for Jarvis-managed threads instead of falling through",
+  () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        dispatchJarvisCommand({
+          client: makeJarvisFixtureClient(),
+          enabled: true,
+          command: {
+            type: "thread.delete",
+            commandId: CommandId.make("cmd_delete"),
+            threadId: jarvisThreadId,
+          },
+        }),
+      );
 
-    assert.strictEqual(Exit.isFailure(exit), true);
-    if (Exit.isFailure(exit)) {
-      assert.ok(exit.cause.toString().includes("does not support command thread.delete"));
-    }
-  }),
+      assert.strictEqual(Exit.isFailure(exit), true);
+      if (Exit.isFailure(exit)) {
+        assert.ok(exit.cause.toString().includes("does not support command thread.delete"));
+      }
+    }),
 );
 
 it.effect("routes delete for Jarvis run project rows through Jarvis archive", () =>
