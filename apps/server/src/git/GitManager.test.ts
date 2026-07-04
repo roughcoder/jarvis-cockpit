@@ -636,6 +636,7 @@ function preparePullRequestThread(
 
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
+  gitDriver?: GitVcsDriver.GitVcsDriver["Service"];
   textGeneration?: Partial<FakeGitTextGeneration>;
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
 }) {
@@ -647,11 +648,13 @@ function makeManager(input?: {
 
   const serverSettingsLayer = ServerSettings.ServerSettingsService.layerTest();
 
-  const vcsDriverLayer = GitVcsDriver.layer.pipe(
-    Layer.provideMerge(VcsProcess.layer),
-    Layer.provideMerge(NodeServices.layer),
-    Layer.provideMerge(serverConfigLayer),
-  );
+  const vcsDriverLayer = input?.gitDriver
+    ? Layer.succeed(GitVcsDriver.GitVcsDriver, input.gitDriver)
+    : GitVcsDriver.layer.pipe(
+        Layer.provideMerge(VcsProcess.layer),
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(serverConfigLayer),
+      );
   const sourceControlRegistryLayer = Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
     GitHubSourceControlProvider.make.pipe(
@@ -685,6 +688,107 @@ function makeManager(input?: {
   );
 }
 
+function makeStatusGitDriver(input: {
+  branch: string | null;
+  isDefaultBranch?: boolean;
+  hasOriginRemote?: boolean;
+  upstreamRef?: string | null;
+  remoteName?: string | null;
+  remoteUrl?: string | null;
+}): GitVcsDriver.GitVcsDriver["Service"] {
+  const branch = input.branch;
+  const upstreamRef = input.upstreamRef ?? null;
+  const remoteName = input.remoteName ?? null;
+  const remoteUrl = input.remoteUrl ?? "git@github.com:pingdotgg/codething-mvp.git";
+  const statusDetails = {
+    isRepo: true,
+    hasOriginRemote: input.hasOriginRemote ?? true,
+    isDefaultBranch: input.isDefaultBranch ?? false,
+    branch,
+    upstreamRef,
+    hasWorkingTreeChanges: false,
+    workingTree: {
+      files: [],
+      insertions: 0,
+      deletions: 0,
+    },
+    hasUpstream: upstreamRef !== null,
+    aheadCount: 0,
+    behindCount: 0,
+    aheadOfDefaultCount: 0,
+  } satisfies GitVcsDriver.GitStatusDetails;
+  const remoteStatusDetails = {
+    isRepo: true,
+    isDefaultBranch: statusDetails.isDefaultBranch,
+    branch,
+    upstreamRef,
+    hasUpstream: upstreamRef !== null,
+    aheadCount: 0,
+    behindCount: 0,
+    aheadOfDefaultCount: 0,
+  } satisfies GitVcsDriver.GitRemoteStatusDetails;
+  const readConfigValue = (_cwd: string, key: string) => {
+    if (branch !== null && key === `branch.${branch}.remote`) {
+      return Effect.succeed(remoteName);
+    }
+    if (remoteUrl !== null && key === "remote.origin.url") {
+      return Effect.succeed(remoteUrl);
+    }
+    if (remoteUrl !== null && remoteName !== null && key === `remote.${remoteName}.url`) {
+      return Effect.succeed(remoteUrl);
+    }
+    return Effect.succeed(null);
+  };
+  const unexpected = (method: string) =>
+    Effect.die(new Error(`Unexpected GitVcsDriver.${method} call in status test`));
+
+  return {
+    execute: () => unexpected("execute"),
+    status: () => unexpected("status"),
+    statusDetails: () => Effect.succeed(statusDetails),
+    statusDetailsLocal: () => Effect.succeed(statusDetails),
+    statusDetailsRemote: () => Effect.succeed(remoteStatusDetails),
+    prepareCommitContext: () => unexpected("prepareCommitContext"),
+    commit: () => unexpected("commit"),
+    pushCurrentBranch: () => unexpected("pushCurrentBranch"),
+    readRangeContext: () => unexpected("readRangeContext"),
+    getReviewDiffPreview: () => unexpected("getReviewDiffPreview"),
+    readConfigValue,
+    listRefs: () => unexpected("listRefs"),
+    pullCurrentBranch: () => unexpected("pullCurrentBranch"),
+    createWorktree: () => unexpected("createWorktree"),
+    fetchPullRequestBranch: () => unexpected("fetchPullRequestBranch"),
+    ensureRemote: () => unexpected("ensureRemote"),
+    resolvePrimaryRemoteName: () => unexpected("resolvePrimaryRemoteName"),
+    fetchRemote: () => unexpected("fetchRemote"),
+    resolveRemoteTrackingCommit: () => unexpected("resolveRemoteTrackingCommit"),
+    fetchRemoteBranch: () => unexpected("fetchRemoteBranch"),
+    fetchRemoteTrackingBranch: () => unexpected("fetchRemoteTrackingBranch"),
+    setBranchUpstream: () => unexpected("setBranchUpstream"),
+    removeWorktree: () => unexpected("removeWorktree"),
+    renameBranch: () => unexpected("renameBranch"),
+    createRef: () => unexpected("createRef"),
+    switchRef: () => unexpected("switchRef"),
+    initRepo: () => unexpected("initRepo"),
+    listLocalBranchNames: () => unexpected("listLocalBranchNames"),
+  };
+}
+
+function makeStatusManager(input: {
+  branch: string | null;
+  isDefaultBranch?: boolean;
+  ghScenario?: FakeGhScenario;
+}) {
+  const cwd = `/tmp/t3-git-manager-status-${input.branch ?? "detached"}`;
+  return makeManager({
+    ...(input.ghScenario !== undefined ? { ghScenario: input.ghScenario } : {}),
+    gitDriver: makeStatusGitDriver({
+      branch: input.branch,
+      ...(input.isDefaultBranch !== undefined ? { isDefaultBranch: input.isDefaultBranch } : {}),
+    }),
+  }).pipe(Effect.map((result) => ({ ...result, cwd })));
+}
+
 const asThreadId = (threadId: string) => threadId as ThreadId;
 
 const GitManagerTestLayer = GitVcsDriver.layer.pipe(
@@ -696,14 +800,8 @@ const GitManagerTestLayer = GitVcsDriver.layer.pipe(
 it.layer(GitManagerTestLayer)("GitManager", (it) => {
   it.effect("status includes PR metadata when branch already has an open PR", () =>
     Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/status-open-pr"]);
-      const remoteDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "feature/status-open-pr"]);
-
-      const { manager } = yield* makeManager({
+      const { manager, cwd } = yield* makeStatusManager({
+        branch: "feature/status-open-pr",
         ghScenario: {
           prListSequence: [
             // @effect-diagnostics-next-line preferSchemaOverJson:off
@@ -720,7 +818,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         },
       });
 
-      const status = yield* manager.status({ cwd: repoDir });
+      const status = yield* manager.status({ cwd });
       expect(status.isRepo).toBe(true);
       expect(status.hasPrimaryRemote).toBe(true);
       expect(status.isDefaultRef).toBe(false);
@@ -738,14 +836,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
   it.effect("status trims PR metadata returned by gh before publishing it", () =>
     Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/status-trimmed-pr"]);
-      const remoteDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "feature/status-trimmed-pr"]);
-
-      const { manager } = yield* makeManager({
+      const { manager, cwd } = yield* makeStatusManager({
+        branch: "feature/status-trimmed-pr",
         ghScenario: {
           prListSequence: [
             // @effect-diagnostics-next-line preferSchemaOverJson:off
@@ -762,7 +854,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         },
       });
 
-      const status = yield* manager.status({ cwd: repoDir });
+      const status = yield* manager.status({ cwd });
 
       expect(status.pr).toEqual({
         number: 14,
@@ -777,14 +869,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
   it.effect("status ignores invalid gh pr list entries and keeps valid ones", () =>
     Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/status-valid-pr-entry"]);
-      const remoteDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "feature/status-valid-pr-entry"]);
-
-      const { manager } = yield* makeManager({
+      const { manager, cwd } = yield* makeStatusManager({
+        branch: "feature/status-valid-pr-entry",
         ghScenario: {
           prListSequence: [
             // @effect-diagnostics-next-line preferSchemaOverJson:off
@@ -814,7 +900,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         },
       });
 
-      const status = yield* manager.status({ cwd: repoDir });
+      const status = yield* manager.status({ cwd });
 
       expect(status.pr).toEqual({
         number: 15,
@@ -829,14 +915,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
   it.effect("status preserves lowercase merged and closed PR states from gh json", () =>
     Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/status-lowercase-state"]);
-      const remoteDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "feature/status-lowercase-state"]);
-
-      const { manager } = yield* makeManager({
+      const { manager, cwd } = yield* makeStatusManager({
+        branch: "feature/status-lowercase-state",
         ghScenario: {
           prListSequence: [
             // @effect-diagnostics-next-line preferSchemaOverJson:off
@@ -864,7 +944,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         },
       });
 
-      const status = yield* manager.status({ cwd: repoDir });
+      const status = yield* manager.status({ cwd });
 
       expect(status.pr).toEqual({
         number: 17,
@@ -936,13 +1016,6 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
   it.effect("status briefly caches repeated lookups for the same cwd", () =>
     Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/status-cache"]);
-      const remoteDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "feature/status-cache"]);
-
       const existingPr = {
         number: 113,
         title: "Cached PR",
@@ -950,15 +1023,16 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         baseRefName: "main",
         headRefName: "feature/status-cache",
       };
-      const { manager, ghCalls } = yield* makeManager({
+      const { manager, ghCalls, cwd } = yield* makeStatusManager({
+        branch: "feature/status-cache",
         ghScenario: {
           // @effect-diagnostics-next-line preferSchemaOverJson:off
           prListSequence: [JSON.stringify([existingPr]), JSON.stringify([existingPr])],
         },
       });
 
-      const first = yield* manager.status({ cwd: repoDir });
-      const second = yield* manager.status({ cwd: repoDir });
+      const first = yield* manager.status({ cwd });
+      const second = yield* manager.status({ cwd });
 
       expect(first.pr?.number).toBe(113);
       expect(second.pr?.number).toBe(113);
@@ -1195,11 +1269,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
   it.effect("status returns merged PR state when latest PR was merged", () =>
     Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/status-merged-pr"]);
-
-      const { manager } = yield* makeManager({
+      const { manager, cwd } = yield* makeStatusManager({
+        branch: "feature/status-merged-pr",
         ghScenario: {
           prListSequence: [
             // @effect-diagnostics-next-line preferSchemaOverJson:off
@@ -1219,7 +1290,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         },
       });
 
-      const status = yield* manager.status({ cwd: repoDir });
+      const status = yield* manager.status({ cwd });
       expect(status.refName).toBe("feature/status-merged-pr");
       expect(status.pr).toEqual({
         number: 22,
@@ -1234,10 +1305,9 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
   it.effect("status hides merged PRs on the default branch", () =>
     Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-
-      const { manager } = yield* makeManager({
+      const { manager, cwd } = yield* makeStatusManager({
+        branch: "main",
+        isDefaultBranch: true,
         ghScenario: {
           prListSequence: [
             // @effect-diagnostics-next-line preferSchemaOverJson:off
@@ -1257,7 +1327,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         },
       });
 
-      const status = yield* manager.status({ cwd: repoDir });
+      const status = yield* manager.status({ cwd });
       expect(status.refName).toBe("main");
       expect(status.pr).toBeNull();
     }),
@@ -1265,11 +1335,8 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
   it.effect("status prefers open PR when merged PR has newer updatedAt", () =>
     Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/status-open-over-merged"]);
-
-      const { manager } = yield* makeManager({
+      const { manager, cwd } = yield* makeStatusManager({
+        branch: "feature/status-open-over-merged",
         ghScenario: {
           prListSequence: [
             // @effect-diagnostics-next-line preferSchemaOverJson:off
@@ -1298,7 +1365,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         },
       });
 
-      const status = yield* manager.status({ cwd: repoDir });
+      const status = yield* manager.status({ cwd });
       expect(status.refName).toBe("feature/status-open-over-merged");
       expect(status.pr).toEqual({
         number: 46,
@@ -1313,24 +1380,18 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
   it.effect("status is resilient to gh lookup failures and returns pr null", () =>
     Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/status-no-gh"]);
-      const remoteDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "feature/status-no-gh"]);
-
-      const { manager } = yield* makeManager({
+      const { manager, cwd } = yield* makeStatusManager({
+        branch: "feature/status-no-gh",
         ghScenario: {
           failWith: new GitHubCli.GitHubCliUnavailableError({
             command: "gh",
-            cwd: repoDir,
+            cwd: "/tmp/t3-git-manager-status-feature/status-no-gh",
             cause: new Error("gh is not available on PATH"),
           }),
         },
       });
 
-      const status = yield* manager.status({ cwd: repoDir });
+      const status = yield* manager.status({ cwd });
       expect(status.refName).toBe("feature/status-no-gh");
       expect(status.pr).toBeNull();
     }),
