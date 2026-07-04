@@ -19,6 +19,7 @@ import {
   type JarvisBrainConnection,
   type JarvisCockpitSnapshot,
   type JarvisRun,
+  type JarvisWorkerSession,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -114,6 +115,31 @@ function syncStatusVariant(status: JarvisCockpitSnapshot["sync"]["status"]): Sta
 
 function isActiveRun(run: JarvisRun): boolean {
   return ACTIVE_RUN_STATUSES.has(run.status);
+}
+
+function isArchivedRun(run: JarvisRun): boolean {
+  return run.archived_at != null;
+}
+
+function activeSnapshotRuns(runs: ReadonlyArray<JarvisRun>): ReadonlyArray<JarvisRun> {
+  return runs.filter((run) => !isArchivedRun(run));
+}
+
+function activeSnapshotSessions(
+  snapshot: JarvisCockpitSnapshot | null,
+): ReadonlyArray<JarvisWorkerSession> {
+  if (!snapshot) return [];
+  const archivedRunIds = new Set(snapshot.runs.filter(isArchivedRun).map((run) => run.run_id));
+  return snapshot.sessions.filter(
+    (session) => session.archived_at == null && !archivedRunIds.has(session.run_id),
+  );
+}
+
+function pendingRunWorkCount(runs: ReadonlyArray<JarvisRun>): number {
+  return runs.reduce(
+    (total, run) => total + run.pending_input_count + run.pending_approval_count,
+    0,
+  );
 }
 
 function SnapshotMetric({
@@ -272,14 +298,15 @@ export function JarvisSettingsPanel() {
       : "Disabled";
   const snapshotResult = snapshotQuery.data;
   const snapshot = snapshotResult?.snapshot ?? null;
-  const snapshotRuns = snapshot?.runs ?? [];
-  const snapshotSessions = snapshot?.sessions ?? [];
+  const snapshotRuns = activeSnapshotRuns(snapshot?.runs ?? []);
+  const snapshotSessions = activeSnapshotSessions(snapshot);
   const snapshotWorkers = snapshot?.workers ?? [];
   const activeRuns = snapshotRuns.filter(isActiveRun);
   const onlineWorkers = snapshotWorkers.filter((worker) => worker.status === "online");
   const pendingRequests = (snapshot?.requests ?? []).filter(
     (request) => request.status === "pending",
   );
+  const pendingWork = Math.max(pendingRunWorkCount(snapshotRuns), pendingRequests.length);
   const latestRuns = useMemo(
     () =>
       [...snapshotRuns]
@@ -329,7 +356,9 @@ export function JarvisSettingsPanel() {
       },
     });
     setApiToken("");
-  }, [apiBaseUrl, apiToken, settings.jarvis, updateSettings]);
+    snapshotQuery.refresh();
+    window.setTimeout(snapshotQuery.refresh, 500);
+  }, [apiBaseUrl, apiToken, settings.jarvis, snapshotQuery, updateSettings]);
 
   const clearToken = useCallback(() => {
     updateSettings({
@@ -340,7 +369,9 @@ export function JarvisSettingsPanel() {
       },
     });
     setApiToken("");
-  }, [settings.jarvis, updateSettings]);
+    snapshotQuery.refresh();
+    window.setTimeout(snapshotQuery.refresh, 500);
+  }, [settings.jarvis, snapshotQuery, updateSettings]);
 
   const check = useCallback(async () => {
     if (!primaryEnvironment || !canCheck) return;
@@ -478,19 +509,31 @@ export function JarvisSettingsPanel() {
           </Button>
         }
       >
-        <div className="grid grid-cols-3 border-b border-border/60 text-center sm:grid-cols-6">
-          <SnapshotMetric label="Workers" value={snapshotWorkers.length} />
-          <SnapshotMetric label="Online" value={onlineWorkers.length} border />
-          <SnapshotMetric label="Runs" value={snapshotRuns.length} border />
-          <SnapshotMetric label="Active" value={activeRuns.length} border />
-          <SnapshotMetric label="Sessions" value={snapshotSessions.length} border />
-          <SnapshotMetric label="Pending" value={pendingRequests.length} border />
-        </div>
+        {snapshot ? (
+          <div className="grid grid-cols-3 border-b border-border/60 text-center sm:grid-cols-6">
+            <SnapshotMetric label="Workers" value={snapshotWorkers.length} />
+            <SnapshotMetric label="Online" value={onlineWorkers.length} border />
+            <SnapshotMetric label="Runs" value={snapshotRuns.length} border />
+            <SnapshotMetric label="Active" value={activeRuns.length} border />
+            <SnapshotMetric label="Sessions" value={snapshotSessions.length} border />
+            <SnapshotMetric label="Pending" value={pendingWork} border />
+          </div>
+        ) : null}
 
         {snapshotQuery.isPending && !snapshotResult ? (
           <div className="flex items-center gap-2 px-4 py-5 text-sm text-muted-foreground sm:px-5">
             <Spinner className="size-4" />
             Loading Jarvis snapshot
+          </div>
+        ) : null}
+
+        {snapshotQuery.error !== null && !snapshot ? (
+          <div className="px-4 py-4 sm:px-5">
+            <Alert variant="error">
+              <TriangleAlertIcon />
+              <AlertTitle>Snapshot request failed</AlertTitle>
+              <AlertDescription>{snapshotQuery.error}</AlertDescription>
+            </Alert>
           </div>
         ) : null}
 
