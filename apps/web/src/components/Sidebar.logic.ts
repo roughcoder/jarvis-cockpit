@@ -17,6 +17,56 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // nearby thread usually reuses an already-hot subscription.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
 export type SidebarNewThreadEnvMode = "local" | "worktree";
+export interface SidebarSurfaceCopy {
+  topLevelLabel: string;
+  topLevelSortLabel: string;
+  childLabel: string;
+  childSortLabel: string;
+  visibleChildLabel: string;
+  emptyTopLevelLabel: string;
+  emptyChildLabel: string;
+  groupedTopLevelCountLabel: (count: number) => string;
+  createChildActionLabel: (topLevelName: string) => string;
+  createChildTooltipLabel: (shortcutLabel: string | null) => string;
+  createChildErrorTitle: string;
+}
+
+export function resolveSidebarSurfaceCopy(input: {
+  isJarvisCockpitMode: boolean;
+}): SidebarSurfaceCopy {
+  if (input.isJarvisCockpitMode) {
+    return {
+      topLevelLabel: "Runs",
+      topLevelSortLabel: "Sort runs",
+      childLabel: "sessions",
+      childSortLabel: "Sort sessions",
+      visibleChildLabel: "Visible sessions",
+      emptyTopLevelLabel: "No runs yet",
+      emptyChildLabel: "No sessions yet",
+      groupedTopLevelCountLabel: (count) => `${count} runs`,
+      createChildActionLabel: (topLevelName) => `Start session for ${topLevelName}`,
+      createChildTooltipLabel: (shortcutLabel) =>
+        shortcutLabel ? `New session (${shortcutLabel})` : "New session",
+      createChildErrorTitle: "Could not start session",
+    };
+  }
+
+  return {
+    topLevelLabel: "Projects",
+    topLevelSortLabel: "Sort projects",
+    childLabel: "threads",
+    childSortLabel: "Sort threads",
+    visibleChildLabel: "Visible threads",
+    emptyTopLevelLabel: "No projects yet",
+    emptyChildLabel: "No threads yet",
+    groupedTopLevelCountLabel: (count) => `${count} projects`,
+    createChildActionLabel: (topLevelName) => `Create new thread in ${topLevelName}`,
+    createChildTooltipLabel: (shortcutLabel) =>
+      shortcutLabel ? `New thread (${shortcutLabel})` : "New thread",
+    createChildErrorTitle: "Could not create thread",
+  };
+}
+
 type SidebarProject = {
   id: string;
   title: string;

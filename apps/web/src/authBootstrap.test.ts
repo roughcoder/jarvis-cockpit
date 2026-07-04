@@ -200,6 +200,23 @@ describe("resolveInitialServerAuthGateState", () => {
     );
   });
 
+  it("uses the current loopback origin when localhost and 127.0.0.1 differ", async () => {
+    await installAuthApi({ session: () => unauthenticatedSession(LOOPBACK_AUTH) });
+    vi.stubEnv("VITE_DEV_SERVER_URL", "http://localhost:5735");
+    installTestBrowser("http://127.0.0.1:5735/");
+
+    const { resolveInitialServerAuthGateState, resolvePrimaryEnvironmentHttpUrl } =
+      await import("./environments/primary");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "requires-auth",
+      auth: LOOPBACK_AUTH,
+    });
+    expect(resolvePrimaryEnvironmentHttpUrl("/api/auth/session")).toBe(
+      "http://127.0.0.1:5735/api/auth/session",
+    );
+  });
+
   it("uses the vite proxy for desktop-managed loopback auth requests during local dev", async () => {
     await installAuthApi({ session: () => unauthenticatedSession(DESKTOP_AUTH) });
     vi.stubEnv("VITE_DEV_SERVER_URL", "http://127.0.0.1:5733");
