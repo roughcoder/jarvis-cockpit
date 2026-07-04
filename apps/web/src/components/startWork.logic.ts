@@ -45,24 +45,74 @@ export interface StartWorkSourceDescriptor {
   readonly disabledHint?: string;
 }
 
+export interface StartWorkCatalogInput {
+  readonly sources?: ReadonlyArray<string>;
+  readonly defaults?: {
+    readonly repo?: string | null;
+    readonly worker_id?: string | null;
+    readonly engine?: string | null;
+    readonly engine_strategy?: string | null;
+    readonly landing_mode?: string | null;
+  };
+}
+
+export interface StartWorkWorkerRepositoryInput {
+  readonly repo: string;
+  readonly status?: string | null;
+  readonly default_branch?: string | null;
+  readonly is_default?: boolean;
+  readonly can_start_work?: boolean;
+}
+
+export interface StartWorkWorkerInput {
+  readonly worker_id: string;
+  readonly display_name?: string | null;
+  readonly repositories?: ReadonlyArray<StartWorkWorkerRepositoryInput>;
+}
+
 export interface BuildStartWorkSourcesInput {
   /** A Jarvis run projection exists to anchor a new draft thread. */
   readonly hasAnchorProject: boolean;
   /** A Jarvis session thread exists that can be reopened. */
   readonly hasResumableThread: boolean;
+  /** Jarvis-owned form/source defaults from `/v1/cockpit/catalog`. */
+  readonly catalog?: StartWorkCatalogInput | null;
+  /** Public-safe worker rows from the Jarvis snapshot. */
+  readonly workers?: ReadonlyArray<StartWorkWorkerInput>;
 }
 
 export function buildStartWorkSources(
   input: BuildStartWorkSourcesInput,
 ): StartWorkSourceDescriptor[] {
+  const catalogSources = new Set(input.catalog?.sources ?? ["manual"]);
+  const repositoryOptions = buildStartWorkRepositoryOptions(input.workers ?? []);
+  const defaultRepo = firstNonEmpty(
+    input.catalog?.defaults?.repo,
+    repositoryOptions.find((repo) => repo.isDefault && repo.canStartWork)?.repo,
+    repositoryOptions.find((repo) => repo.canStartWork)?.repo,
+  );
+  const defaultEngine = firstNonEmpty(input.catalog?.defaults?.engine);
+  const defaultLandingMode = firstNonEmpty(input.catalog?.defaults?.landing_mode);
+  const describeDetails = [
+    defaultRepo ? `Repo: ${defaultRepo}` : "Repo selected by Jarvis",
+    defaultEngine ? `Engine: ${defaultEngine}` : null,
+    defaultLandingMode ? `Landing: ${defaultLandingMode}` : null,
+  ].filter((item): item is string => item !== null);
+
   return [
     {
       id: "describe-work",
       value: "action:start-work:describe",
       title: "Describe work",
-      description: "Freeform objective, dispatched to Jarvis",
+      description:
+        describeDetails.length > 0
+          ? `Freeform objective, dispatched to Jarvis. ${describeDetails.join(" · ")}`
+          : "Freeform objective, dispatched to Jarvis",
       searchTerms: ["describe", "objective", "prompt", "freeform", "new work"],
-      enabled: true,
+      enabled: catalogSources.has("manual"),
+      ...(catalogSources.has("manual")
+        ? {}
+        : { disabledHint: "Jarvis catalog does not currently expose manual work starts." }),
     },
     {
       id: "github-issue",
@@ -70,9 +120,10 @@ export function buildStartWorkSources(
       title: "GitHub issue or PR",
       description: "Start from an issue or pull request",
       searchTerms: ["github", "issue", "pull request", "pr"],
-      enabled: false,
-      disabledHint:
-        "Jarvis does not expose a GitHub issue/PR source resolver yet. Needs a Jarvis endpoint that turns an issue/PR reference into a run source.",
+      enabled: catalogSources.has("github"),
+      ...(catalogSources.has("github")
+        ? {}
+        : { disabledHint: "Jarvis catalog does not currently expose GitHub starts." }),
     },
     {
       id: "linear-ticket",
@@ -80,9 +131,10 @@ export function buildStartWorkSources(
       title: "Linear ticket",
       description: "Start from a Linear ticket",
       searchTerms: ["linear", "ticket"],
-      enabled: false,
-      disabledHint:
-        "Jarvis does not expose a Linear ticket source resolver yet. Needs a Jarvis endpoint that turns a ticket reference into a run source.",
+      enabled: catalogSources.has("linear"),
+      ...(catalogSources.has("linear")
+        ? {}
+        : { disabledHint: "Jarvis catalog does not currently expose Linear starts." }),
     },
     {
       id: "continue-run",
@@ -101,7 +153,53 @@ export function buildStartWorkSources(
       searchTerms: ["register", "repository", "repo", "git"],
       enabled: false,
       disabledHint:
-        "Jarvis does not expose a repository registry endpoint yet. Worker repository metadata is read-only in the cockpit.",
+        repositoryOptions.length > 0
+          ? "Jarvis repository metadata is read-only in the cockpit."
+          : "Jarvis has not reported worker repository metadata yet.",
     },
   ];
+}
+
+export interface StartWorkRepositoryOption {
+  readonly repo: string;
+  readonly workerId: string;
+  readonly workerName: string;
+  readonly defaultBranch: string | null;
+  readonly isDefault: boolean;
+  readonly canStartWork: boolean;
+}
+
+export function buildStartWorkRepositoryOptions(
+  workers: ReadonlyArray<StartWorkWorkerInput>,
+): StartWorkRepositoryOption[] {
+  return workers
+    .flatMap((worker) =>
+      (worker.repositories ?? []).map((repository) => ({
+        repo: repository.repo,
+        workerId: worker.worker_id,
+        workerName: firstNonEmpty(worker.display_name, worker.worker_id) ?? worker.worker_id,
+        defaultBranch: firstNonEmpty(repository.default_branch),
+        isDefault: repository.is_default === true,
+        canStartWork: repository.can_start_work === true,
+      })),
+    )
+    .sort((left, right) => {
+      if (left.canStartWork !== right.canStartWork) {
+        return left.canStartWork ? -1 : 1;
+      }
+      if (left.isDefault !== right.isDefault) {
+        return left.isDefault ? -1 : 1;
+      }
+      return left.repo.localeCompare(right.repo);
+    });
+}
+
+function firstNonEmpty(...values: ReadonlyArray<string | null | undefined>): string | null {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+  return null;
 }

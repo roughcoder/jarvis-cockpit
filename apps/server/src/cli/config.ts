@@ -128,16 +128,12 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
-  jarvisCockpitEnabled: Config.boolean("JARVIS_COCKPIT_ENABLED").pipe(Config.withDefault(false)),
+  jarvisCockpitEnabled: Config.boolean("JARVIS_COCKPIT_ENABLED").pipe(Config.withDefault(true)),
   jarvisApiBaseUrl: Config.url("JARVIS_API_BASE_URL").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
   jarvisApiToken: Config.string("JARVIS_API_TOKEN").pipe(
-    Config.option,
-    Config.map(Option.getOrUndefined),
-  ),
-  jarvisDefaultRepo: Config.string("JARVIS_DEFAULT_REPO").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
@@ -383,7 +379,6 @@ export const resolveServerConfig = (
       jarvisCockpitEnabled: env.jarvisCockpitEnabled,
       jarvisApiBaseUrl: env.jarvisApiBaseUrl,
       jarvisApiToken: env.jarvisApiToken,
-      jarvisDefaultRepo: env.jarvisDefaultRepo,
       jarvisFixtureMode: env.jarvisFixtureMode,
     };
 

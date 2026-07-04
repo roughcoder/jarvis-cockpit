@@ -52,8 +52,8 @@ projection foundation plus a working live start-work path:
 - compatibility with the current live Jarvis v1 projection values;
 - verification and dogfood summary in the progress log.
 
-The next slices should replace the temporary `JARVIS_DEFAULT_REPO` bridge with a
-Jarvis-owned repository/default-repo projection, build the full start-work
-wizard, and add richer approval/input/control and artifact/evidence surfaces.
+The next slices should expose the full catalog-driven start-work wizard, proxy
+Jarvis SSE events through the server-side auth boundary, and add richer
+approval/input/control and artifact/evidence surfaces.
 Any missing Jarvis-side contract should be handled as a missing-spec packet, not
 guessed inside the UI.

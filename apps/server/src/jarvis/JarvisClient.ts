@@ -18,6 +18,7 @@ import {
   JarvisSessionRef,
   JarvisSessionRequestsPage,
   JarvisStartWorkInput,
+  JarvisStartWorkValidationResult,
   JarvisTurnInput,
   JarvisUserInputInput,
   JarvisWorkerSession,
@@ -83,6 +84,9 @@ export interface JarvisClient {
   readonly startWork: (
     input: JarvisStartWorkInput,
   ) => Effect.Effect<JarvisControlResult, JarvisClientError | JarvisMissingContractError>;
+  readonly validateWork: (
+    input: JarvisStartWorkInput,
+  ) => Effect.Effect<JarvisStartWorkValidationResult, JarvisClientError>;
   readonly sendTurn: (
     sessionRef: string,
     input: JarvisTurnInput,
@@ -129,6 +133,7 @@ type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 const decodeCatalog = Schema.decodeUnknownEffect(JarvisCockpitCatalog);
 const decodeSnapshot = Schema.decodeUnknownEffect(JarvisRunsSnapshot);
 const decodeControlResult = Schema.decodeUnknownEffect(JarvisControlResult);
+const decodeStartWorkValidationResult = Schema.decodeUnknownEffect(JarvisStartWorkValidationResult);
 const decodeSessionDetail = Schema.decodeUnknownEffect(JarvisSessionDetailResponse);
 const decodeSessionEventsPage = Schema.decodeUnknownEffect(JarvisSessionEventsPage);
 const decodeSessionRequestsPage = Schema.decodeUnknownEffect(JarvisSessionRequestsPage);
@@ -163,19 +168,6 @@ const withSurfaceMetadata = <Input extends object>(
   };
 };
 
-const withDefaultRepo = (
-  input: JarvisStartWorkInput,
-  defaultRepo: string | undefined,
-): JarvisStartWorkInput => {
-  if (input.repo !== undefined || defaultRepo === undefined || defaultRepo.trim().length === 0) {
-    return input;
-  }
-  return {
-    ...input,
-    repo: defaultRepo.trim(),
-  };
-};
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -183,7 +175,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function makeJarvisCockpitClient(input: {
   readonly baseUrl: URL;
   readonly token?: string;
-  readonly defaultRepo?: string;
   readonly fetch?: FetchLike;
 }): JarvisClient {
   const fetchImpl = input.fetch ?? fetch;
@@ -314,9 +305,13 @@ export function makeJarvisCockpitClient(input: {
       postJson(
         "work.start",
         "/v1/work/start",
-        withSurfaceMetadata(withDefaultRepo(workInput, input.defaultRepo)),
+        withSurfaceMetadata(workInput),
       ).pipe(
         Effect.flatMap(decodeFor("work.start", decodeControlResult)),
+      ),
+    validateWork: (workInput) =>
+      postJson("work.validate", "/v1/work/validate", withSurfaceMetadata(workInput)).pipe(
+        Effect.flatMap(decodeFor("work.validate", decodeStartWorkValidationResult)),
       ),
     sendTurn: (sessionRef, turnInput) =>
       postJson(
@@ -388,22 +383,19 @@ export function makeJarvisClient(config: {
   readonly jarvisCockpitEnabled: boolean;
   readonly jarvisApiBaseUrl: URL | undefined;
   readonly jarvisApiToken: string | undefined;
-  readonly jarvisDefaultRepo?: string | undefined;
   readonly jarvisFixtureMode: boolean;
 }): JarvisClient {
-  if (config.jarvisFixtureMode || !config.jarvisCockpitEnabled) {
+  if (
+    config.jarvisFixtureMode ||
+    !config.jarvisCockpitEnabled ||
+    config.jarvisApiBaseUrl === undefined
+  ) {
     return makeJarvisFixtureClient();
   }
-  if (config.jarvisApiBaseUrl !== undefined) {
-    return makeJarvisCockpitClient({
-      baseUrl: config.jarvisApiBaseUrl,
-      ...(config.jarvisApiToken ? { token: config.jarvisApiToken } : {}),
-      ...(config.jarvisDefaultRepo ? { defaultRepo: config.jarvisDefaultRepo } : {}),
-    });
-  }
-  return makeMissingConfigurationClient(
-    "JARVIS_API_BASE_URL is required when JARVIS_COCKPIT_ENABLED=true unless JARVIS_FIXTURE_MODE=true.",
-  );
+  return makeJarvisCockpitClient({
+    baseUrl: config.jarvisApiBaseUrl,
+    ...(config.jarvisApiToken ? { token: config.jarvisApiToken } : {}),
+  });
 }
 
 export const makeJarvisClientFromConfig = Effect.gen(function* () {
@@ -430,6 +422,7 @@ function makeMissingConfigurationClient(message: string): JarvisClient {
     getRequests: () => fail("jarvis.client.configure"),
     getCheckpoints: () => fail("jarvis.client.configure"),
     startWork: () => fail("jarvis.client.configure"),
+    validateWork: () => fail("jarvis.client.configure"),
     sendTurn: () => fail("jarvis.client.configure"),
     respondApproval: () => fail("jarvis.client.configure"),
     respondInput: () => fail("jarvis.client.configure"),
@@ -580,6 +573,8 @@ export function makeJarvisFixtureClient(): JarvisClient {
             repo: "roughcoder/jarvis",
             status: "ready",
             default_branch: "main",
+            is_default: true,
+            can_start_work: true,
           },
         ],
         public_metadata: {},
@@ -631,6 +626,8 @@ export function makeJarvisFixtureClient(): JarvisClient {
         metadata: {},
       },
     ],
+    requests: [],
+    checkpoints: [],
   };
   const request = {
     request_id: JarvisRequestId.make("input_fixture_1"),
@@ -671,7 +668,11 @@ export function makeJarvisFixtureClient(): JarvisClient {
     },
   };
 
-  let fixtureSnapshot: JarvisRunsSnapshot = initialSnapshot;
+  let fixtureSnapshot: JarvisRunsSnapshot = {
+    ...initialSnapshot,
+    requests: [request],
+    checkpoints: [checkpoint],
+  };
   const eventsBySession = new Map<string, ReadonlyArray<JarvisSessionEvent>>([
     [session.session_ref, events],
   ]);
@@ -851,6 +852,8 @@ export function makeJarvisFixtureClient(): JarvisClient {
       runs: [runWithArtifact, ...fixtureSnapshot.runs],
       sessions: [syntheticSession, ...fixtureSnapshot.sessions],
       artifacts: [branchArtifact, ...fixtureSnapshot.artifacts],
+      requests: [],
+      checkpoints: [],
       workers: fixtureSnapshot.workers.map((worker) =>
         worker.worker_id === syntheticSession.worker_id
           ? {
@@ -984,6 +987,25 @@ export function makeJarvisFixtureClient(): JarvisClient {
         branch_strategies: ["auto", "use_existing", "create", "none"],
         landing_policies: ["branch_only", "draft_pr", "ready_pr", "confirm_before_pr"],
         request_kinds: ["approval", "input"],
+        start_options: {
+          sources: ["manual", "github", "linear"],
+          engines: ["codex", "claude"],
+          engine_strategies: ["single", "parallel"],
+          landing_modes: ["branch_only", "draft_pr", "ready_pr", "confirm_before_pr"],
+          required_fields: {
+            manual: ["phrase or work_item.title", "repo (unless a default repo is configured)"],
+            github: ["repo (unless a default repo is configured)"],
+            linear: [],
+          },
+          defaults: {
+            source: "manual",
+            worker_id: "macbook-worker",
+            repo: "roughcoder/jarvis",
+            engine: "codex",
+            engine_strategy: "single",
+            landing_mode: "draft_pr",
+          },
+        },
         generated_at: now,
       }),
     getSnapshot: () => Effect.succeed(fixtureSnapshot),
@@ -1015,6 +1037,34 @@ export function makeJarvisFixtureClient(): JarvisClient {
         cursor: fixtureSnapshot.cursor,
         has_more: false,
       }),
+    validateWork: (workInput) => {
+      const source = firstTrimmed(workInput.source) ?? "manual";
+      const repo = firstTrimmed(workInput.repo) ?? "roughcoder/jarvis";
+      const phrase = firstTrimmed(workInput.phrase, workInput.title, workInput.prompt);
+      const missing =
+        source === "manual" && phrase === null ? ["phrase or work_item.title"] : [];
+      return Effect.succeed({
+        ok: true,
+        api_version: "v1" as const,
+        schema_version: 1,
+        validation: {
+          can_start: missing.length === 0,
+          source,
+          operation: "start_next_work",
+          repo,
+          worker_id: firstTrimmed(workInput.worker_id) ?? "macbook-worker",
+          engine: firstTrimmed(workInput.engine) ?? "codex",
+          engines: [firstTrimmed(workInput.engine) ?? "codex"],
+          engine_strategy: firstTrimmed(workInput.engine_strategy) ?? "single",
+          landing_mode: "draft_pr",
+          work_item: null,
+          missing,
+          missing_authority: [],
+          reasons: missing.length > 0 ? ["manual work needs a phrase or title"] : [],
+          notes: [],
+        },
+      });
+    },
     startWork: (workInput) => {
       const synthetic = synthesizeStartedWork(workInput);
       return Effect.succeed({

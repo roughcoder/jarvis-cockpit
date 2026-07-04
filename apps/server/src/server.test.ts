@@ -386,7 +386,6 @@ const buildAppUnderTest = (options?: {
       jarvisCockpitEnabled: false,
       jarvisApiBaseUrl: undefined,
       jarvisApiToken: undefined,
-      jarvisDefaultRepo: undefined,
       jarvisFixtureMode: false,
       ...options?.config,
     };

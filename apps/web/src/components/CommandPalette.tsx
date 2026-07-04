@@ -1071,7 +1071,7 @@ function OpenCommandPaletteDialog(props: {
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
-  if (projects.length > 0) {
+  if (!isJarvisCockpitMode && projects.length > 0) {
     const activeProjectTitle = currentProjectId
       ? (projectTitleById.get(currentProjectId) ?? null)
       : null;

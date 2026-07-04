@@ -47,10 +47,9 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     otlpServiceName: "t3-server",
   } as const;
   const defaultJarvisConfig = {
-    jarvisCockpitEnabled: false,
+    jarvisCockpitEnabled: true,
     jarvisApiBaseUrl: undefined,
     jarvisApiToken: undefined,
-    jarvisDefaultRepo: undefined,
     jarvisFixtureMode: false,
   } as const;
 
@@ -102,7 +101,6 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
                   JARVIS_COCKPIT_ENABLED: "true",
                   JARVIS_API_BASE_URL: "http://127.0.0.1:9876",
                   JARVIS_API_TOKEN: "jarvis-secret-token",
-                  JARVIS_DEFAULT_REPO: "roughcoder/jarvis-cockpit",
                   JARVIS_FIXTURE_MODE: "true",
                 },
               }),
@@ -118,7 +116,6 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         jarvisCockpitEnabled: true,
         jarvisApiBaseUrl: new URL("http://127.0.0.1:9876"),
         jarvisApiToken: "jarvis-secret-token",
-        jarvisDefaultRepo: "roughcoder/jarvis-cockpit",
         jarvisFixtureMode: true,
         mode: "desktop",
         port: 4001,

@@ -114,6 +114,33 @@ it("maps one Jarvis run with two sessions into one project and two thread shells
   assert.strictEqual(snapshot.threads[0]?.worktreePath, null);
 });
 
+it("normalizes empty Jarvis repo and branch labels before projection", () => {
+  const session = {
+    ...makeSession("sess_empty_labels"),
+    repo: "",
+    branch: "",
+  };
+  const snapshot = mapJarvisRunsSnapshotToShellSnapshot({
+    api_version: "v1",
+    schema_version: 1,
+    cursor: "evt_1",
+    sync: { mode: "fast", status: "fresh", synced_at: now, errors: [] },
+    runs: [],
+    sessions: [session],
+    workers: [],
+    artifacts: [],
+    generated_at: now,
+  });
+  const detail = mapJarvisSessionToThreadDetail({
+    session,
+    events: [],
+  });
+
+  assert.strictEqual(snapshot.projects[0]?.title, "Session sess_empty_labels");
+  assert.strictEqual(snapshot.threads[0]?.branch, null);
+  assert.strictEqual(detail.branch, null);
+});
+
 it("preserves Jarvis provenance in generated thread ids", () => {
   const threadId = "jarvis-session_sessref_macbook-worker_sess_1";
   assert.strictEqual(isJarvisThreadId(threadId), true);

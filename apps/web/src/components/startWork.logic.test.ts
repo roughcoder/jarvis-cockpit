@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildStartWorkRepositoryOptions,
   buildStartWorkSources,
   START_WORK_SEARCH_TERMS,
   START_WORK_TITLE,
@@ -45,13 +46,74 @@ describe("buildStartWorkSources", () => {
     expect(byId.get("continue-run")?.disabledHint).toBeTruthy();
   });
 
-  it("marks unresolved Jarvis source contracts as disabled with the missing capability", () => {
+  it("marks source rows disabled when Jarvis catalog does not expose them", () => {
     const sources = buildStartWorkSources({ hasAnchorProject: true, hasResumableThread: true });
     const byId = new Map(sources.map((source) => [source.id, source]));
     for (const id of ["github-issue", "linear-ticket", "register-repository"] as const) {
       expect(byId.get(id)?.enabled).toBe(false);
       expect(byId.get(id)?.disabledHint).toMatch(/Jarvis/);
     }
+  });
+
+  it("enables source rows from Jarvis catalog start options", () => {
+    const sources = buildStartWorkSources({
+      hasAnchorProject: true,
+      hasResumableThread: true,
+      catalog: {
+        sources: ["manual", "github", "linear"],
+        defaults: {
+          repo: "roughcoder/jarvis",
+          engine: "codex",
+          landing_mode: "draft_pr",
+        },
+      },
+    });
+    const byId = new Map(sources.map((source) => [source.id, source]));
+
+    expect(byId.get("describe-work")?.enabled).toBe(true);
+    expect(byId.get("github-issue")?.enabled).toBe(true);
+    expect(byId.get("linear-ticket")?.enabled).toBe(true);
+    expect(byId.get("describe-work")?.description).toContain("roughcoder/jarvis");
+    expect(byId.get("describe-work")?.description).toContain("codex");
+  });
+
+  it("orders Jarvis repository options by start readiness and default marker", () => {
+    const repositories = buildStartWorkRepositoryOptions([
+      {
+        worker_id: "macbook-worker",
+        display_name: "MacBook",
+        repositories: [
+          {
+            repo: "roughcoder/secondary",
+            status: "ready",
+            default_branch: "main",
+            can_start_work: true,
+          },
+          {
+            repo: "roughcoder/jarvis",
+            status: "ready",
+            default_branch: "main",
+            is_default: true,
+            can_start_work: true,
+          },
+          {
+            repo: "roughcoder/not-ready",
+            status: "missing",
+            default_branch: "main",
+            is_default: true,
+            can_start_work: false,
+          },
+        ],
+      },
+    ]);
+
+    expect(repositories.map((repository) => repository.repo)).toEqual([
+      "roughcoder/jarvis",
+      "roughcoder/secondary",
+      "roughcoder/not-ready",
+    ]);
+    expect(repositories[0]?.workerName).toBe("MacBook");
+    expect(repositories[0]?.defaultBranch).toBe("main");
   });
 
   it("keeps upstream add-project spellings searchable on the root action", () => {

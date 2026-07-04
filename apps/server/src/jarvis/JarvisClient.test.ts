@@ -440,21 +440,48 @@ it.effect("cockpit client posts work, resume, and exact-session turn intents", (
   }),
 );
 
-it.effect("cockpit client applies the configured default repo to start-work intents", () =>
+it.effect("cockpit client validates work and leaves default repo selection to Jarvis", () =>
   Effect.gen(function* () {
     const requests: Array<{ url: string; body: string | null }> = [];
     const client = makeJarvisCockpitClient({
       baseUrl: new URL("http://jarvis.local:8787"),
-      defaultRepo: "roughcoder/jarvis-cockpit",
       fetch: async (url, init) => {
         requests.push({
           url: String(url),
           body: typeof init?.body === "string" ? init.body : null,
         });
+        if (String(url).endsWith("/v1/work/validate")) {
+          return jsonResponse({
+            ok: true,
+            api_version: "v1",
+            schema_version: 1,
+            validation: {
+              can_start: true,
+              source: "manual",
+              operation: "start_next_work",
+              repo: "roughcoder/jarvis",
+              worker_id: "macbook-worker",
+              engine: "codex",
+              engines: ["codex"],
+              engine_strategy: "single",
+              landing_mode: "draft_pr",
+              work_item: null,
+              missing: [],
+              missing_authority: [],
+              reasons: [],
+              notes: [],
+            },
+          });
+        }
         return jsonResponse({ ok: true, cursor: "evt_2", session: { session_ref: sessionRef } });
       },
     });
 
+    const validation = yield* client.validateWork({
+      phrase: "Dogfood cockpit start.",
+      source: "manual",
+      branch_strategy: "auto",
+    });
     yield* client.startWork({
       phrase: "Dogfood cockpit start.",
       source: "manual",
@@ -467,9 +494,12 @@ it.effect("cockpit client applies the configured default repo to start-work inte
       branch_strategy: "auto",
     });
 
-    assert.strictEqual(requests[0]?.url, "http://jarvis.local:8787/v1/work/start");
-    assert.match(requests[0]?.body ?? "", /"repo":"roughcoder\/jarvis-cockpit"/);
-    assert.match(requests[1]?.body ?? "", /"repo":"roughcoder\/jarvis"/);
+    assert.strictEqual(requests[0]?.url, "http://jarvis.local:8787/v1/work/validate");
+    assert.strictEqual(requests[1]?.url, "http://jarvis.local:8787/v1/work/start");
+    assert.strictEqual((requests[1]?.body ?? "").includes("roughcoder/jarvis-cockpit"), false);
+    assert.match(requests[1]?.body ?? "", /jarvis-cockpit/);
+    assert.match(requests[2]?.body ?? "", /"repo":"roughcoder\/jarvis"/);
+    assert.strictEqual(validation.validation?.can_start, true);
   }),
 );
 
