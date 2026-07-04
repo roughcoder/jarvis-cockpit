@@ -73,6 +73,7 @@ it.effect("routes first draft turns to Jarvis work start", () =>
             baseBranch: "main",
             branch: "jarvis/cockpit",
           },
+          jarvisEngine: "codex",
           jarvisRepo: "roughcoder/jarvis-cockpit",
           jarvisWorkerId: "macbook-worker",
         },
@@ -146,6 +147,60 @@ it.effect("derives Jarvis start-work engine from known provider routing keys", (
     });
 
     assert.strictEqual(capturedStartWork?.engine, "codex");
+  }),
+);
+
+it.effect("honors explicit Jarvis start-work engine from composer routing", () =>
+  Effect.gen(function* () {
+    let capturedStartWork: JarvisStartWorkInput | undefined;
+    const client = {
+      ...makeJarvisFixtureClient(),
+      startWork: (input: JarvisStartWorkInput) => {
+        capturedStartWork = input;
+        return makeJarvisFixtureClient().startWork(input);
+      },
+    };
+
+    yield* dispatchJarvisCommand({
+      client,
+      enabled: true,
+      command: {
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd_start_work_custom_claude"),
+        threadId: ThreadId.make("thread_draft"),
+        message: {
+          messageId: MessageId.make("msg_user"),
+          role: "user",
+          text: "Build the cockpit dashboard.",
+          attachments: [],
+        },
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("team_ai"),
+          model: "claude-sonnet-4",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        bootstrap: {
+          createThread: {
+            projectId: ProjectId.make("project_1"),
+            title: "Cockpit dashboard",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("team_ai"),
+              model: "claude-sonnet-4",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: "jarvis/cockpit",
+            worktreePath: null,
+            createdAt: now,
+          },
+          jarvisEngine: "claude",
+        },
+        createdAt: now,
+      },
+    });
+
+    assert.strictEqual(capturedStartWork?.engine, "claude");
   }),
 );
 

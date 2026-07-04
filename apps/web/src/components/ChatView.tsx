@@ -3963,6 +3963,7 @@ function ChatViewContent(props: ChatViewProps) {
       selectedModelSelection: ctxSelectedModelSelection,
       selectedJarvisWorkerOverrideId: ctxSelectedJarvisWorkerOverrideId,
       selectedJarvisRepo: ctxSelectedJarvisRepo,
+      selectedJarvisEngine: ctxSelectedJarvisEngine,
     } = sendCtx;
     const promptForSend = promptRef.current;
     const {
@@ -4226,6 +4227,7 @@ function ChatViewContent(props: ChatViewProps) {
                 ? { jarvisWorkerId: ctxSelectedJarvisWorkerOverrideId }
                 : {}),
               ...(ctxSelectedJarvisRepo ? { jarvisRepo: ctxSelectedJarvisRepo } : {}),
+              ...(ctxSelectedJarvisEngine ? { jarvisEngine: ctxSelectedJarvisEngine } : {}),
             }
           : undefined;
       beginLocalDispatch({ preparingWorktree: false });

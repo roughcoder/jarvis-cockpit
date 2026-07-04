@@ -1,4 +1,5 @@
 import {
+  JarvisEngineId,
   JarvisRequestId,
   JarvisWorkerId,
   OrchestrationDispatchCommandError,
@@ -406,7 +407,11 @@ function startWorkInputForTurnStart(
     start: true,
     prompt: command.message.text,
     ...(title ? { title, objective: title } : {}),
-    ...(modelSelection ? { engine: jarvisEngineForModelSelection(modelSelection) } : {}),
+    ...(command.bootstrap?.jarvisEngine
+      ? { engine: JarvisEngineId.make(command.bootstrap.jarvisEngine) }
+      : modelSelection
+        ? { engine: jarvisEngineForModelSelection(modelSelection) }
+        : {}),
     ...(command.bootstrap?.jarvisRepo ? { repo: command.bootstrap.jarvisRepo } : {}),
     ...(prepareWorktree?.baseBranch ? { base_ref: prepareWorktree.baseBranch } : {}),
     ...((createThread?.branch ?? prepareWorktree?.branch)

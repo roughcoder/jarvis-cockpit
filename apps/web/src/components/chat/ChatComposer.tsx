@@ -230,14 +230,19 @@ function projectRepoKeys(project: EnvironmentProject | null): ReadonlySet<string
 }
 
 function isSyntheticJarvisProject(project: EnvironmentProject): boolean {
-  return project.repositoryIdentity === undefined && project.workspaceRoot.startsWith("jarvis://");
+  return project.repositoryIdentity == null && project.workspaceRoot.startsWith("jarvis://");
 }
 
 function jarvisRepoForProject(project: EnvironmentProject | null): string | null {
   const identity = project?.repositoryIdentity;
   if (!identity) return null;
-  if (identity.owner && identity.name) return `${identity.owner}/${identity.name}`;
-  return identity.canonicalKey ?? identity.displayName ?? identity.name ?? null;
+  return (
+    identity.displayName ??
+    identity.canonicalKey ??
+    (identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null) ??
+    identity.name ??
+    null
+  );
 }
 
 function lastPathSegment(path: string): string | undefined {
@@ -889,6 +894,7 @@ export interface ChatComposerHandle {
     selectedProviderModels: ReadonlyArray<ServerProvider["models"][number]>;
     selectedJarvisWorkerOverrideId: string | null;
     selectedJarvisRepo: string | null;
+    selectedJarvisEngine: string | null;
   };
 }
 
@@ -1020,7 +1026,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadEnvironmentId: _activeThreadEnvironmentId,
     activeThread,
     isServerThread: _isServerThread,
-    isLocalDraftThread: _isLocalDraftThread,
+    isLocalDraftThread,
     phase,
     isConnecting,
     isSendBusy,
@@ -1293,6 +1299,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => createModelSelection(selectedInstanceId, selectedModel, selectedModelOptionsForDispatch),
     [selectedInstanceId, selectedModel, selectedModelOptionsForDispatch],
   );
+  const selectedJarvisEngine = useMemo(
+    () =>
+      jarvisEngineForComposerSelection({
+        selectedProvider,
+        selectedInstanceId,
+        selectedModel,
+      }),
+    [selectedInstanceId, selectedModel, selectedProvider],
+  );
   const selectedModelForPicker = selectedModel;
   // Instance-keyed option list so the picker can show each configured
   // instance (built-in + custom) as a first-class sidebar entry. The
@@ -1317,6 +1332,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Jarvis routing context
   // ------------------------------------------------------------------
+  const canRouteJarvisStart = props.isJarvisCockpitEnvironment && isLocalDraftThread;
   const allProjects = useProjects();
   const environmentProjects = useMemo(
     () =>
@@ -1337,7 +1353,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setSelectedWorkerOverrideId(null);
   }, [composerDraftTargetKey]);
   const selectedJarvisProject = useMemo(() => {
-    if (!props.isJarvisCockpitEnvironment) return null;
+    if (!canRouteJarvisStart) return null;
     const explicit =
       selectedJarvisProjectId === null
         ? null
@@ -1348,21 +1364,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         ? null
         : environmentProjects.find((project) => project.id === activeThread.projectId);
     return activeProject ?? environmentProjects[0] ?? null;
-  }, [
-    activeThread?.projectId,
-    environmentProjects,
-    props.isJarvisCockpitEnvironment,
-    selectedJarvisProjectId,
-  ]);
+  }, [activeThread?.projectId, canRouteJarvisStart, environmentProjects, selectedJarvisProjectId]);
   useEffect(() => {
     if (
-      props.isJarvisCockpitEnvironment &&
+      canRouteJarvisStart &&
       selectedJarvisProjectId !== null &&
       !environmentProjects.some((project) => project.id === selectedJarvisProjectId)
     ) {
       setSelectedJarvisProjectId(null);
     }
-  }, [environmentProjects, props.isJarvisCockpitEnvironment, selectedJarvisProjectId]);
+  }, [canRouteJarvisStart, environmentProjects, selectedJarvisProjectId]);
 
   const handleJarvisProjectSelect = useCallback(
     (projectId: ProjectId) => {
@@ -1375,9 +1386,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
 
   const jarvisSnapshotQuery = useEnvironmentQuery(
-    props.isJarvisCockpitEnvironment
-      ? serverEnvironment.jarvisSnapshot({ environmentId, input: {} })
-      : null,
+    canRouteJarvisStart ? serverEnvironment.jarvisSnapshot({ environmentId, input: {} }) : null,
   );
   const jarvisWorkers = jarvisSnapshotQuery.data?.snapshot?.workers ?? [];
   useEffect(() => {
@@ -1389,15 +1398,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setSelectedWorkerOverrideId(null);
     }
   }, [jarvisSnapshotQuery.isPending, jarvisWorkers, selectedWorkerOverrideId]);
-  const selectedJarvisEngine = useMemo(
-    () =>
-      jarvisEngineForComposerSelection({
-        selectedProvider,
-        selectedInstanceId,
-        selectedModel,
-      }),
-    [selectedInstanceId, selectedModel, selectedProvider],
-  );
   const compatibleJarvisWorkers = useMemo(
     () =>
       jarvisWorkers.filter(
@@ -1435,7 +1435,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [selectedJarvisProject],
   );
   const jarvisCompatibilityWarning = useMemo(() => {
-    if (!props.isJarvisCockpitEnvironment) {
+    if (!canRouteJarvisStart) {
       return null;
     }
     if (jarvisSnapshotQuery.isPending && jarvisWorkers.length === 0) {
@@ -1456,9 +1456,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return null;
   }, [
     compatibleJarvisWorkers.length,
+    canRouteJarvisStart,
     jarvisSnapshotQuery.isPending,
     jarvisWorkers.length,
-    props.isJarvisCockpitEnvironment,
     selectedJarvisEngine,
     selectedJarvisProject,
     selectedOverrideCompatible,
@@ -2628,10 +2628,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         selectedProvider,
         selectedModel,
         selectedProviderModels,
-        selectedJarvisWorkerOverrideId: props.isJarvisCockpitEnvironment
+        selectedJarvisWorkerOverrideId: canRouteJarvisStart
           ? selectedWorkerOverrideIdForDispatch
           : null,
-        selectedJarvisRepo: props.isJarvisCockpitEnvironment ? selectedJarvisRepo : null,
+        selectedJarvisRepo: canRouteJarvisStart ? selectedJarvisRepo : null,
+        selectedJarvisEngine: canRouteJarvisStart ? selectedJarvisEngine : null,
       }),
     }),
     [
@@ -2660,9 +2661,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedPromptEffort,
       selectedProvider,
       selectedProviderModels,
+      selectedJarvisEngine,
       selectedJarvisRepo,
       selectedWorkerOverrideIdForDispatch,
-      props.isJarvisCockpitEnvironment,
+      canRouteJarvisStart,
     ],
   );
 
@@ -3134,7 +3136,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onTogglePlanSidebar={togglePlanSidebar}
                     onRuntimeModeChange={handleRuntimeModeChange}
                     jarvisMenuContent={
-                      props.isJarvisCockpitEnvironment ? (
+                      canRouteJarvisStart ? (
                         <ComposerJarvisRoutingMenuContent
                           selectedProject={selectedJarvisProject}
                           environmentProjects={environmentProjects}
@@ -3151,7 +3153,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   />
                 ) : (
                   <>
-                    {props.isJarvisCockpitEnvironment ? (
+                    {canRouteJarvisStart ? (
                       <ComposerJarvisRoutingControls
                         environmentId={environmentId}
                         selectedProject={selectedJarvisProject}
