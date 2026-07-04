@@ -3959,6 +3959,7 @@ function ChatViewContent(props: ChatViewProps) {
       selectedProviderModels: ctxSelectedProviderModels,
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
+      selectedJarvisWorkerOverrideId: ctxSelectedJarvisWorkerOverrideId,
     } = sendCtx;
     const promptForSend = promptRef.current;
     const {
@@ -4217,6 +4218,9 @@ function ChatViewContent(props: ChatViewProps) {
                     },
                     runSetupScript: true,
                   }
+                : {}),
+              ...(ctxSelectedJarvisWorkerOverrideId
+                ? { jarvisWorkerId: ctxSelectedJarvisWorkerOverrideId }
                 : {}),
             }
           : undefined;

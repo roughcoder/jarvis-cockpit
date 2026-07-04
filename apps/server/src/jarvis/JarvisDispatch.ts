@@ -1,5 +1,6 @@
 import {
   JarvisRequestId,
+  JarvisWorkerId,
   OrchestrationDispatchCommandError,
   type DispatchResult,
   type JarvisArchiveInput,
@@ -303,9 +304,7 @@ function ensureJarvisControlSupported(
   );
 }
 
-function jarvisControlForCommand(
-  command: OrchestrationCommand,
-): JarvisSupportedControl | null {
+function jarvisControlForCommand(command: OrchestrationCommand): JarvisSupportedControl | null {
   switch (command.type) {
     case "thread.turn.start":
       return "turn";
@@ -411,6 +410,9 @@ function startWorkInputForTurnStart(
     ...(prepareWorktree?.baseBranch ? { base_ref: prepareWorktree.baseBranch } : {}),
     ...((createThread?.branch ?? prepareWorktree?.branch)
       ? { branch: createThread?.branch ?? prepareWorktree?.branch }
+      : {}),
+    ...(command.bootstrap?.jarvisWorkerId
+      ? { worker_id: JarvisWorkerId.make(command.bootstrap.jarvisWorkerId) }
       : {}),
     branch_strategy: "auto" as const,
     idempotency_key: String(command.commandId),

@@ -1,8 +1,10 @@
 import type {
   ApprovalRequestId,
   EnvironmentId,
+  JarvisWorkerProfile,
   ModelSelection,
   PreviewAnnotationPayload,
+  ProjectId,
   ProviderApprovalDecision,
   ProviderInteractionMode,
   ResolvedKeybindingsConfig,
@@ -13,11 +15,18 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 import {
+  DEFAULT_MODEL,
   ProviderDriverKind,
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   connectionStatusText,
   type EnvironmentConnectionPresentation,
@@ -86,17 +95,32 @@ import {
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../pierre-icons";
-import { cn, randomUUID } from "~/lib/utils";
+import { cn, newProjectId, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
 import { Button } from "../ui/button";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import {
+  Menu,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator as MenuDivider,
+  MenuTrigger,
+} from "../ui/menu";
+import {
   BotIcon,
   CircleAlertIcon,
+  FolderGit2Icon,
   ListTodoIcon,
   PencilRulerIcon,
+  PlusIcon,
+  RotateCcwIcon,
+  ServerIcon,
+  TriangleAlertIcon,
   type LucideIcon,
   LockIcon,
   LockOpenIcon,
@@ -125,6 +149,12 @@ import { formatProviderSkillDisplayName } from "../../providerSkillPresentation"
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
+import { useProjects } from "../../state/entities";
+import { projectEnvironment } from "../../state/projects";
+import { serverEnvironment } from "../../state/server";
+import { useEnvironmentQuery } from "../../state/query";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { inferProjectTitleFromPath, resolveProjectPathForDispatch } from "../../lib/projectPaths";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -157,6 +187,318 @@ const COMPOSER_FLOATING_LAYER_SELECTOR = [
   '[data-slot="combobox-popup"]',
   '[data-slot="autocomplete-popup"]',
 ].join(",");
+
+const WORKER_AUTO_VALUE = "__auto__";
+
+function jarvisEngineForComposerSelection(input: {
+  selectedProvider: ProviderDriverKind;
+  selectedInstanceId: ProviderInstanceId;
+  selectedModel: string;
+}): string {
+  const model = input.selectedModel.trim().toLowerCase();
+  if (model === "codex" || model === "claude") {
+    return model;
+  }
+  const instanceId = String(input.selectedInstanceId).trim().toLowerCase();
+  if (input.selectedProvider === "claudeAgent" || instanceId === "claudeagent") {
+    return "claude";
+  }
+  if (input.selectedProvider === "claude" || instanceId.startsWith("claude")) {
+    return "claude";
+  }
+  return "codex";
+}
+
+function projectRepoKeys(project: EnvironmentProject | null): ReadonlySet<string> {
+  const keys = new Set<string>();
+  if (!project) return keys;
+  const add = (value: string | null | undefined) => {
+    const trimmed = value?.trim().toLowerCase();
+    if (trimmed) keys.add(trimmed);
+  };
+  add(project.title);
+  add(project.workspaceRoot);
+  add(lastPathSegment(project.workspaceRoot));
+  add(project.repositoryIdentity?.canonicalKey);
+  add(project.repositoryIdentity?.displayName);
+  add(project.repositoryIdentity?.name);
+  if (project.repositoryIdentity?.owner && project.repositoryIdentity?.name) {
+    add(`${project.repositoryIdentity.owner}/${project.repositoryIdentity.name}`);
+  }
+  return keys;
+}
+
+function lastPathSegment(path: string): string | undefined {
+  return path.split(/[\\/]/u).findLast((segment) => segment.length > 0);
+}
+
+function workerSupportsEngine(worker: JarvisWorkerProfile, engine: string): boolean {
+  return worker.engines.some(
+    (candidate) =>
+      candidate.engine.trim().toLowerCase() === engine &&
+      (candidate.status === "available" || candidate.status === "degraded"),
+  );
+}
+
+function workerCanStartProject(
+  worker: JarvisWorkerProfile,
+  project: EnvironmentProject | null,
+): boolean {
+  const repositories = worker.repositories ?? [];
+  if (repositories.length === 0 || project === null) {
+    return true;
+  }
+  const keys = projectRepoKeys(project);
+  if (keys.size === 0) {
+    return repositories.some((repository) => repository.can_start_work);
+  }
+  return repositories.some(
+    (repository) => repository.can_start_work && keys.has(repository.repo.trim().toLowerCase()),
+  );
+}
+
+function workerIsHealthyEnough(worker: JarvisWorkerProfile): boolean {
+  return worker.status !== "offline" && worker.health !== "unhealthy";
+}
+
+function sortWorkers(workers: ReadonlyArray<JarvisWorkerProfile>): JarvisWorkerProfile[] {
+  return [...workers].sort((left, right) => left.display_name.localeCompare(right.display_name));
+}
+
+function workerLabel(worker: JarvisWorkerProfile | null | undefined): string {
+  return worker?.display_name?.trim() || worker?.worker_id || "Unknown worker";
+}
+
+function shortProjectLabel(project: EnvironmentProject | null): string {
+  if (!project) return "Project";
+  return project.title || lastPathSegment(project.workspaceRoot) || "Project";
+}
+
+function ComposerJarvisRoutingControls(props: {
+  environmentId: EnvironmentId;
+  selectedProject: EnvironmentProject | null;
+  environmentProjects: ReadonlyArray<EnvironmentProject>;
+  workers: ReadonlyArray<JarvisWorkerProfile>;
+  workersPending: boolean;
+  selectedEngine: string;
+  selectedWorkerOverrideId: string | null;
+  defaultWorkerId: string | null;
+  compatibilityWarning: string | null;
+  onProjectSelect: (projectId: ProjectId) => void;
+  onWorkerOverrideChange: (workerId: string | null) => void;
+  onProjectCreated: (project: EnvironmentProject) => void;
+}) {
+  const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
+  const compatibleWorkers = useMemo(
+    () =>
+      sortWorkers(
+        props.workers.filter(
+          (worker) =>
+            workerIsHealthyEnough(worker) &&
+            workerSupportsEngine(worker, props.selectedEngine) &&
+            workerCanStartProject(worker, props.selectedProject),
+        ),
+      ),
+    [props.selectedEngine, props.selectedProject, props.workers],
+  );
+  const incompatibleWorkers = useMemo(
+    () =>
+      sortWorkers(
+        props.workers.filter(
+          (worker) =>
+            !compatibleWorkers.some((candidate) => candidate.worker_id === worker.worker_id),
+        ),
+      ),
+    [compatibleWorkers, props.workers],
+  );
+  const selectedOverrideWorker =
+    props.selectedWorkerOverrideId === null
+      ? null
+      : (props.workers.find((worker) => worker.worker_id === props.selectedWorkerOverrideId) ??
+        null);
+  const defaultWorker =
+    props.defaultWorkerId === null
+      ? (compatibleWorkers[0] ?? null)
+      : (props.workers.find((worker) => worker.worker_id === props.defaultWorkerId) ??
+        compatibleWorkers[0] ??
+        null);
+  const workerTriggerLabel =
+    selectedOverrideWorker !== null
+      ? workerLabel(selectedOverrideWorker)
+      : defaultWorker !== null
+        ? `Auto: ${workerLabel(defaultWorker)}`
+        : props.workersPending
+          ? "Workers..."
+          : "No worker";
+
+  const createProjectFromPrompt = async () => {
+    const rawPath = window.prompt("Project path");
+    const cwd = resolveProjectPathForDispatch(
+      rawPath ?? "",
+      props.selectedProject?.workspaceRoot ?? null,
+    );
+    if (cwd.length === 0) return;
+    const projectId = newProjectId();
+    const result = await createProject({
+      environmentId: props.environmentId,
+      input: {
+        projectId,
+        title: inferProjectTitleFromPath(cwd),
+        workspaceRoot: cwd,
+        createWorkspaceRootIfMissing: true,
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: DEFAULT_MODEL,
+        },
+      },
+    });
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add({
+          type: "error",
+          title: "Could not create project",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+      }
+      return;
+    }
+    const createdProject = props.environmentProjects.find((project) => project.id === projectId);
+    if (createdProject) {
+      props.onProjectCreated(createdProject);
+    } else {
+      props.onProjectSelect(projectId);
+    }
+    toastManager.add({
+      type: "success",
+      title: "Project created",
+      description: cwd,
+    });
+  };
+
+  return (
+    <>
+      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+      <Menu>
+        <MenuTrigger
+          render={
+            <Button
+              size="sm"
+              variant="ghost"
+              className="min-w-0 max-w-44 shrink justify-start whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+              aria-label="Select Jarvis project"
+            />
+          }
+        >
+          <FolderGit2Icon className="size-4 shrink-0" />
+          <span className="min-w-0 truncate">{shortProjectLabel(props.selectedProject)}</span>
+        </MenuTrigger>
+        <MenuPopup align="start" side="top" className="min-w-64">
+          <MenuGroup>
+            <MenuGroupLabel>Project</MenuGroupLabel>
+            {props.environmentProjects.map((project) => (
+              <MenuItem key={project.id} onClick={() => props.onProjectSelect(project.id)}>
+                <FolderGit2Icon className="size-4" />
+                <span className="min-w-0 flex-1 truncate">{project.title}</span>
+              </MenuItem>
+            ))}
+          </MenuGroup>
+          <MenuDivider />
+          <MenuItem onClick={() => void createProjectFromPrompt()}>
+            <PlusIcon className="size-4" />
+            Create project...
+          </MenuItem>
+        </MenuPopup>
+      </Menu>
+
+      <Menu>
+        <MenuTrigger
+          render={
+            <Button
+              size="sm"
+              variant="ghost"
+              className={cn(
+                "min-w-0 max-w-48 shrink justify-start whitespace-nowrap px-2 hover:text-foreground/80 sm:px-3",
+                props.compatibilityWarning
+                  ? "text-warning-foreground hover:bg-warning/10"
+                  : "text-muted-foreground/70",
+              )}
+              aria-label="Select Jarvis worker"
+            />
+          }
+        >
+          {props.compatibilityWarning ? (
+            <TriangleAlertIcon className="size-4 shrink-0 text-warning-foreground" />
+          ) : (
+            <ServerIcon className="size-4 shrink-0" />
+          )}
+          <span className="min-w-0 truncate">{workerTriggerLabel}</span>
+        </MenuTrigger>
+        <MenuPopup align="start" side="top" className="min-w-72">
+          <MenuGroup>
+            <MenuGroupLabel>Worker routing</MenuGroupLabel>
+            <MenuRadioGroup
+              value={props.selectedWorkerOverrideId ?? WORKER_AUTO_VALUE}
+              onValueChange={(value) => {
+                props.onWorkerOverrideChange(value === WORKER_AUTO_VALUE ? null : value);
+              }}
+            >
+              <MenuRadioItem value={WORKER_AUTO_VALUE}>
+                Auto{defaultWorker ? `: ${workerLabel(defaultWorker)}` : ""}
+              </MenuRadioItem>
+              {compatibleWorkers.map((worker) => (
+                <MenuRadioItem key={worker.worker_id} value={worker.worker_id}>
+                  <span className="min-w-0 truncate">{workerLabel(worker)}</span>
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+          </MenuGroup>
+          {incompatibleWorkers.length > 0 ? (
+            <>
+              <MenuDivider />
+              <MenuGroup>
+                <MenuGroupLabel>Override unavailable workers</MenuGroupLabel>
+                {incompatibleWorkers.map((worker) => (
+                  <MenuItem
+                    key={worker.worker_id}
+                    onClick={() => props.onWorkerOverrideChange(worker.worker_id)}
+                  >
+                    <TriangleAlertIcon className="size-4 text-warning-foreground" />
+                    <span className="min-w-0 flex-1 truncate">{workerLabel(worker)}</span>
+                  </MenuItem>
+                ))}
+              </MenuGroup>
+            </>
+          ) : null}
+          {props.selectedWorkerOverrideId !== null ? (
+            <>
+              <MenuDivider />
+              <MenuItem onClick={() => props.onWorkerOverrideChange(null)}>
+                <RotateCcwIcon className="size-4" />
+                Use project default
+              </MenuItem>
+            </>
+          ) : null}
+        </MenuPopup>
+      </Menu>
+
+      {props.compatibilityWarning ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-warning-foreground" />
+            }
+          >
+            <TriangleAlertIcon className="size-4" />
+          </TooltipTrigger>
+          <TooltipPopup side="top" className="max-w-72 whitespace-normal">
+            {props.compatibilityWarning}
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
+    </>
+  );
+}
 
 const extendReplacementRangeForTrailingSpace = (
   text: string,
@@ -250,46 +592,50 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
     <>
       <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
 
-      <Tooltip>
-        <Select
-          value={props.runtimeMode}
-          onValueChange={(value) => props.onRuntimeModeChange(value!)}
+      <Menu>
+        <MenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="sm"
+              type="button"
+              className="w-8 shrink-0 px-0 font-medium text-muted-foreground/70 hover:text-foreground/80"
+              aria-label={`Access: ${runtimeModeOption.label}`}
+              title={runtimeModeOption.description}
+            />
+          }
         >
-          <TooltipTrigger
-            render={
-              <SelectTrigger
-                variant="ghost"
-                size="sm"
-                className="font-medium"
-                aria-label="Runtime mode"
-              />
-            }
-          >
-            <RuntimeModeIcon className="size-4" />
-            <SelectValue>{runtimeModeOption.label}</SelectValue>
-          </TooltipTrigger>
-          <SelectPopup alignItemWithTrigger={false}>
-            {runtimeModeOptions.map((mode) => {
-              const option = runtimeModeConfig[mode];
-              const OptionIcon = option.icon;
-              return (
-                <SelectItem key={mode} value={mode} className="min-w-64 py-2">
-                  <div className="grid min-w-0 gap-0.5">
-                    <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-                      <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                      {option.label}
-                    </span>
-                    <span className="text-muted-foreground text-xs leading-4">
-                      {option.description}
-                    </span>
-                  </div>
-                </SelectItem>
-              );
-            })}
-          </SelectPopup>
-        </Select>
-        <TooltipPopup side="top">{runtimeModeOption.description}</TooltipPopup>
-      </Tooltip>
+          <RuntimeModeIcon className="size-4" />
+          <span className="sr-only">Access: {runtimeModeOption.label}</span>
+        </MenuTrigger>
+        <MenuPopup align="start" side="top" className="min-w-64">
+          <MenuGroup>
+            <MenuGroupLabel>Access</MenuGroupLabel>
+            <MenuRadioGroup
+              value={props.runtimeMode}
+              onValueChange={(value) => props.onRuntimeModeChange(value as RuntimeMode)}
+            >
+              {runtimeModeOptions.map((mode) => {
+                const option = runtimeModeConfig[mode];
+                const OptionIcon = option.icon;
+                return (
+                  <MenuRadioItem key={mode} value={mode} className="py-2">
+                    <div className="grid min-w-0 gap-0.5">
+                      <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                        <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                        {option.label}
+                      </span>
+                      <span className="text-muted-foreground text-xs leading-4">
+                        {option.description}
+                      </span>
+                    </div>
+                  </MenuRadioItem>
+                );
+              })}
+            </MenuRadioGroup>
+          </MenuGroup>
+        </MenuPopup>
+      </Menu>
 
       {interactionModeToggle}
 
@@ -421,6 +767,7 @@ export interface ChatComposerHandle {
     selectedProvider: ProviderDriverKind;
     selectedModel: string;
     selectedProviderModels: ReadonlyArray<ServerProvider["models"][number]>;
+    selectedJarvisWorkerOverrideId: string | null;
   };
 }
 
@@ -844,6 +1191,118 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? selectedModelForPicker
       : (normalizeModelSlug(selectedModelForPicker, selectedProvider) ?? selectedModelForPicker);
   }, [modelOptionsByInstance, selectedInstanceId, selectedModelForPicker, selectedProvider]);
+
+  // ------------------------------------------------------------------
+  // Jarvis routing context
+  // ------------------------------------------------------------------
+  const allProjects = useProjects();
+  const environmentProjects = useMemo(
+    () =>
+      allProjects
+        .filter((project) => project.environmentId === environmentId)
+        .toSorted((left, right) => left.title.localeCompare(right.title)),
+    [allProjects, environmentId],
+  );
+  const [selectedJarvisProjectId, setSelectedJarvisProjectId] = useState<string | null>(null);
+  const [selectedWorkerOverrideId, setSelectedWorkerOverrideId] = useState<string | null>(null);
+  const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const selectedJarvisProject = useMemo(() => {
+    const explicit =
+      selectedJarvisProjectId === null
+        ? null
+        : environmentProjects.find((project) => project.id === selectedJarvisProjectId);
+    if (explicit) return explicit;
+    const activeProject =
+      activeThread?.projectId === undefined
+        ? null
+        : environmentProjects.find((project) => project.id === activeThread.projectId);
+    return activeProject ?? environmentProjects[0] ?? null;
+  }, [activeThread?.projectId, environmentProjects, selectedJarvisProjectId]);
+  useEffect(() => {
+    if (
+      selectedJarvisProjectId !== null &&
+      !environmentProjects.some((project) => project.id === selectedJarvisProjectId)
+    ) {
+      setSelectedJarvisProjectId(null);
+    }
+  }, [environmentProjects, selectedJarvisProjectId]);
+
+  const handleJarvisProjectSelect = useCallback(
+    (projectId: ProjectId) => {
+      setSelectedJarvisProjectId(projectId);
+      setDraftThreadContext(composerDraftTarget, {
+        projectRef: scopeProjectRef(environmentId, projectId),
+      });
+    },
+    [composerDraftTarget, environmentId, setDraftThreadContext],
+  );
+
+  const jarvisSnapshotQuery = useEnvironmentQuery(
+    serverEnvironment.jarvisSnapshot({ environmentId, input: {} }),
+  );
+  const jarvisWorkers = jarvisSnapshotQuery.data?.snapshot?.workers ?? [];
+  const selectedJarvisEngine = useMemo(
+    () =>
+      jarvisEngineForComposerSelection({
+        selectedProvider,
+        selectedInstanceId,
+        selectedModel,
+      }),
+    [selectedInstanceId, selectedModel, selectedProvider],
+  );
+  const compatibleJarvisWorkers = useMemo(
+    () =>
+      jarvisWorkers.filter(
+        (worker) =>
+          workerIsHealthyEnough(worker) &&
+          workerSupportsEngine(worker, selectedJarvisEngine) &&
+          workerCanStartProject(worker, selectedJarvisProject),
+      ),
+    [jarvisWorkers, selectedJarvisEngine, selectedJarvisProject],
+  );
+  const jarvisDefaultWorkerId = useMemo(() => {
+    const projectRepoKeysSet = projectRepoKeys(selectedJarvisProject);
+    const repositoryDefault = compatibleJarvisWorkers.find((worker) =>
+      (worker.repositories ?? []).some(
+        (repository) =>
+          repository.is_default && projectRepoKeysSet.has(repository.repo.trim().toLowerCase()),
+      ),
+    );
+    return repositoryDefault?.worker_id ?? compatibleJarvisWorkers[0]?.worker_id ?? null;
+  }, [compatibleJarvisWorkers, selectedJarvisProject]);
+  const selectedOverrideWorker = useMemo(
+    () =>
+      selectedWorkerOverrideId === null
+        ? null
+        : (jarvisWorkers.find((worker) => worker.worker_id === selectedWorkerOverrideId) ?? null),
+    [jarvisWorkers, selectedWorkerOverrideId],
+  );
+  const selectedOverrideCompatible =
+    selectedOverrideWorker === null ||
+    compatibleJarvisWorkers.some((worker) => worker.worker_id === selectedOverrideWorker.worker_id);
+  const jarvisCompatibilityWarning = useMemo(() => {
+    if (jarvisSnapshotQuery.isPending && jarvisWorkers.length === 0) {
+      return null;
+    }
+    if (jarvisWorkers.length === 0) {
+      return "Jarvis has not reported any workers.";
+    }
+    if (compatibleJarvisWorkers.length === 0) {
+      return `No worker can start ${shortProjectLabel(selectedJarvisProject)} with ${selectedJarvisEngine}.`;
+    }
+    if (!selectedOverrideCompatible && selectedOverrideWorker) {
+      return `${workerLabel(selectedOverrideWorker)} is an override and may not support ${selectedJarvisEngine} for this project.`;
+    }
+    return null;
+  }, [
+    compatibleJarvisWorkers.length,
+    jarvisSnapshotQuery.isPending,
+    jarvisWorkers.length,
+    selectedJarvisEngine,
+    selectedJarvisProject,
+    selectedOverrideCompatible,
+    selectedOverrideWorker,
+  ]);
 
   // ------------------------------------------------------------------
   // Context window
@@ -2007,6 +2466,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         selectedProvider,
         selectedModel,
         selectedProviderModels,
+        selectedJarvisWorkerOverrideId: selectedWorkerOverrideId,
       }),
     }),
     [
@@ -2035,6 +2495,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedPromptEffort,
       selectedProvider,
       selectedProviderModels,
+      selectedWorkerOverrideId,
     ],
   );
 
@@ -2508,6 +2969,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   />
                 ) : (
                   <>
+                    <ComposerJarvisRoutingControls
+                      environmentId={environmentId}
+                      selectedProject={selectedJarvisProject}
+                      environmentProjects={environmentProjects}
+                      workers={jarvisWorkers}
+                      workersPending={jarvisSnapshotQuery.isPending}
+                      selectedEngine={selectedJarvisEngine}
+                      selectedWorkerOverrideId={selectedWorkerOverrideId}
+                      defaultWorkerId={jarvisDefaultWorkerId}
+                      compatibilityWarning={jarvisCompatibilityWarning}
+                      onProjectSelect={handleJarvisProjectSelect}
+                      onWorkerOverrideChange={setSelectedWorkerOverrideId}
+                      onProjectCreated={(project) => handleJarvisProjectSelect(project.id)}
+                    />
                     {providerTraitsPicker ? (
                       <>
                         <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />

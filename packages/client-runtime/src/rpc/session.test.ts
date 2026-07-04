@@ -118,6 +118,13 @@ const SERVER_CONFIG: ServerConfigType = {
     sessionMethods: ["browser-session-cookie", "bearer-access-token"],
     sessionCookieName: "t3_session",
   },
+  jarvisBrain: {
+    enabled: false,
+    fixtureMode: false,
+    apiBaseUrl: "",
+    apiBaseUrlSource: "default",
+    apiTokenConfigured: false,
+  },
   cwd: "/tmp/workspace",
   keybindingsConfigPath: "/tmp/workspace/keybindings.json",
   keybindings: [],
