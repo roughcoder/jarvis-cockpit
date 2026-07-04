@@ -212,6 +212,7 @@ function jarvisEngineForComposerSelection(input: {
 function projectRepoKeys(project: EnvironmentProject | null): ReadonlySet<string> {
   const keys = new Set<string>();
   if (!project) return keys;
+  if (isSyntheticJarvisProject(project)) return keys;
   const add = (value: string | null | undefined) => {
     const trimmed = value?.trim().toLowerCase();
     if (trimmed) keys.add(trimmed);
@@ -226,6 +227,17 @@ function projectRepoKeys(project: EnvironmentProject | null): ReadonlySet<string
     add(`${project.repositoryIdentity.owner}/${project.repositoryIdentity.name}`);
   }
   return keys;
+}
+
+function isSyntheticJarvisProject(project: EnvironmentProject): boolean {
+  return project.repositoryIdentity === undefined && project.workspaceRoot.startsWith("jarvis://");
+}
+
+function jarvisRepoForProject(project: EnvironmentProject | null): string | null {
+  const identity = project?.repositoryIdentity;
+  if (!identity) return null;
+  if (identity.owner && identity.name) return `${identity.owner}/${identity.name}`;
+  return identity.canonicalKey ?? identity.displayName ?? identity.name ?? null;
 }
 
 function lastPathSegment(path: string): string | undefined {
@@ -284,6 +296,7 @@ function ComposerJarvisRoutingControls(props: {
   selectedWorkerOverrideId: string | null;
   defaultWorkerId: string | null;
   compatibilityWarning: string | null;
+  showCreateProject: boolean;
   onProjectSelect: (projectId: ProjectId) => void;
   onWorkerOverrideChange: (workerId: string | null) => void;
   onProjectCreated: (project: EnvironmentProject) => void;
@@ -403,11 +416,15 @@ function ComposerJarvisRoutingControls(props: {
               </MenuItem>
             ))}
           </MenuGroup>
-          <MenuDivider />
-          <MenuItem onClick={() => void createProjectFromPrompt()}>
-            <PlusIcon className="size-4" />
-            Create project...
-          </MenuItem>
+          {props.showCreateProject ? (
+            <>
+              <MenuDivider />
+              <MenuItem onClick={() => void createProjectFromPrompt()}>
+                <PlusIcon className="size-4" />
+                Create project...
+              </MenuItem>
+            </>
+          ) : null}
         </MenuPopup>
       </Menu>
 
@@ -495,6 +512,109 @@ function ComposerJarvisRoutingControls(props: {
             {props.compatibilityWarning}
           </TooltipPopup>
         </Tooltip>
+      ) : null}
+    </>
+  );
+}
+
+function ComposerJarvisRoutingMenuContent(props: {
+  selectedProject: EnvironmentProject | null;
+  environmentProjects: ReadonlyArray<EnvironmentProject>;
+  workers: ReadonlyArray<JarvisWorkerProfile>;
+  selectedEngine: string;
+  selectedWorkerOverrideId: string | null;
+  defaultWorkerId: string | null;
+  compatibilityWarning: string | null;
+  onProjectSelect: (projectId: ProjectId) => void;
+  onWorkerOverrideChange: (workerId: string | null) => void;
+}) {
+  const compatibleWorkers = useMemo(
+    () =>
+      sortWorkers(
+        props.workers.filter(
+          (worker) =>
+            workerIsHealthyEnough(worker) &&
+            workerSupportsEngine(worker, props.selectedEngine) &&
+            workerCanStartProject(worker, props.selectedProject),
+        ),
+      ),
+    [props.selectedEngine, props.selectedProject, props.workers],
+  );
+  const incompatibleWorkers = useMemo(
+    () =>
+      sortWorkers(
+        props.workers.filter(
+          (worker) =>
+            !compatibleWorkers.some((candidate) => candidate.worker_id === worker.worker_id),
+        ),
+      ),
+    [compatibleWorkers, props.workers],
+  );
+  const defaultWorker =
+    props.defaultWorkerId === null
+      ? (compatibleWorkers[0] ?? null)
+      : (props.workers.find((worker) => worker.worker_id === props.defaultWorkerId) ??
+        compatibleWorkers[0] ??
+        null);
+
+  return (
+    <>
+      <MenuGroup>
+        <MenuGroupLabel>Jarvis project</MenuGroupLabel>
+        <MenuRadioGroup
+          value={props.selectedProject?.id ?? ""}
+          onValueChange={(value) => {
+            if (!value) return;
+            props.onProjectSelect(value as ProjectId);
+          }}
+        >
+          {props.environmentProjects.map((project) => (
+            <MenuRadioItem key={project.id} value={project.id}>
+              <span className="min-w-0 truncate">{project.title}</span>
+            </MenuRadioItem>
+          ))}
+        </MenuRadioGroup>
+      </MenuGroup>
+      <MenuDivider />
+      <MenuGroup>
+        <MenuGroupLabel>Jarvis worker</MenuGroupLabel>
+        <MenuRadioGroup
+          value={props.selectedWorkerOverrideId ?? WORKER_AUTO_VALUE}
+          onValueChange={(value) => {
+            props.onWorkerOverrideChange(value === WORKER_AUTO_VALUE ? null : value);
+          }}
+        >
+          <MenuRadioItem value={WORKER_AUTO_VALUE}>
+            Auto{defaultWorker ? `: ${workerLabel(defaultWorker)}` : ""}
+          </MenuRadioItem>
+          {compatibleWorkers.map((worker) => (
+            <MenuRadioItem key={worker.worker_id} value={worker.worker_id}>
+              <span className="min-w-0 truncate">{workerLabel(worker)}</span>
+            </MenuRadioItem>
+          ))}
+        </MenuRadioGroup>
+      </MenuGroup>
+      {incompatibleWorkers.length > 0 ? (
+        <>
+          <MenuDivider />
+          <MenuGroup>
+            <MenuGroupLabel>Override unavailable workers</MenuGroupLabel>
+            {incompatibleWorkers.map((worker) => (
+              <MenuItem
+                key={worker.worker_id}
+                onClick={() => props.onWorkerOverrideChange(worker.worker_id)}
+              >
+                <TriangleAlertIcon className="size-4 text-warning-foreground" />
+                <span className="min-w-0 flex-1 truncate">{workerLabel(worker)}</span>
+              </MenuItem>
+            ))}
+          </MenuGroup>
+        </>
+      ) : null}
+      {props.compatibilityWarning ? (
+        <MenuGroupLabel className="max-w-72 text-warning-foreground">
+          {props.compatibilityWarning}
+        </MenuGroupLabel>
       ) : null}
     </>
   );
@@ -768,6 +888,7 @@ export interface ChatComposerHandle {
     selectedModel: string;
     selectedProviderModels: ReadonlyArray<ServerProvider["models"][number]>;
     selectedJarvisWorkerOverrideId: string | null;
+    selectedJarvisRepo: string | null;
   };
 }
 
@@ -788,6 +909,7 @@ export interface ChatComposerProps {
   activeThread: Thread | undefined;
   isServerThread: boolean;
   isLocalDraftThread: boolean;
+  isJarvisCockpitEnvironment: boolean;
 
   // Session phase
   phase: SessionPhase;
@@ -1206,7 +1328,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [selectedJarvisProjectId, setSelectedJarvisProjectId] = useState<string | null>(null);
   const [selectedWorkerOverrideId, setSelectedWorkerOverrideId] = useState<string | null>(null);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const composerDraftTargetKey =
+    typeof composerDraftTarget === "string"
+      ? composerDraftTarget
+      : `${composerDraftTarget.environmentId}:${composerDraftTarget.threadId}`;
+  useEffect(() => {
+    setSelectedJarvisProjectId(null);
+    setSelectedWorkerOverrideId(null);
+  }, [composerDraftTargetKey]);
   const selectedJarvisProject = useMemo(() => {
+    if (!props.isJarvisCockpitEnvironment) return null;
     const explicit =
       selectedJarvisProjectId === null
         ? null
@@ -1217,15 +1348,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         ? null
         : environmentProjects.find((project) => project.id === activeThread.projectId);
     return activeProject ?? environmentProjects[0] ?? null;
-  }, [activeThread?.projectId, environmentProjects, selectedJarvisProjectId]);
+  }, [
+    activeThread?.projectId,
+    environmentProjects,
+    props.isJarvisCockpitEnvironment,
+    selectedJarvisProjectId,
+  ]);
   useEffect(() => {
     if (
+      props.isJarvisCockpitEnvironment &&
       selectedJarvisProjectId !== null &&
       !environmentProjects.some((project) => project.id === selectedJarvisProjectId)
     ) {
       setSelectedJarvisProjectId(null);
     }
-  }, [environmentProjects, selectedJarvisProjectId]);
+  }, [environmentProjects, props.isJarvisCockpitEnvironment, selectedJarvisProjectId]);
 
   const handleJarvisProjectSelect = useCallback(
     (projectId: ProjectId) => {
@@ -1238,9 +1375,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
 
   const jarvisSnapshotQuery = useEnvironmentQuery(
-    serverEnvironment.jarvisSnapshot({ environmentId, input: {} }),
+    props.isJarvisCockpitEnvironment
+      ? serverEnvironment.jarvisSnapshot({ environmentId, input: {} })
+      : null,
   );
   const jarvisWorkers = jarvisSnapshotQuery.data?.snapshot?.workers ?? [];
+  useEffect(() => {
+    if (
+      !jarvisSnapshotQuery.isPending &&
+      selectedWorkerOverrideId !== null &&
+      !jarvisWorkers.some((worker) => worker.worker_id === selectedWorkerOverrideId)
+    ) {
+      setSelectedWorkerOverrideId(null);
+    }
+  }, [jarvisSnapshotQuery.isPending, jarvisWorkers, selectedWorkerOverrideId]);
   const selectedJarvisEngine = useMemo(
     () =>
       jarvisEngineForComposerSelection({
@@ -1277,15 +1425,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         : (jarvisWorkers.find((worker) => worker.worker_id === selectedWorkerOverrideId) ?? null),
     [jarvisWorkers, selectedWorkerOverrideId],
   );
+  const selectedWorkerOverrideIdForDispatch =
+    selectedOverrideWorker === null ? null : selectedWorkerOverrideId;
   const selectedOverrideCompatible =
-    selectedOverrideWorker === null ||
+    selectedOverrideWorker !== null &&
     compatibleJarvisWorkers.some((worker) => worker.worker_id === selectedOverrideWorker.worker_id);
+  const selectedJarvisRepo = useMemo(
+    () => jarvisRepoForProject(selectedJarvisProject),
+    [selectedJarvisProject],
+  );
   const jarvisCompatibilityWarning = useMemo(() => {
+    if (!props.isJarvisCockpitEnvironment) {
+      return null;
+    }
     if (jarvisSnapshotQuery.isPending && jarvisWorkers.length === 0) {
       return null;
     }
     if (jarvisWorkers.length === 0) {
       return "Jarvis has not reported any workers.";
+    }
+    if (selectedWorkerOverrideId !== null && selectedOverrideWorker === null) {
+      return "The selected worker is no longer available. Auto routing will be used.";
     }
     if (compatibleJarvisWorkers.length === 0) {
       return `No worker can start ${shortProjectLabel(selectedJarvisProject)} with ${selectedJarvisEngine}.`;
@@ -1298,10 +1458,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     compatibleJarvisWorkers.length,
     jarvisSnapshotQuery.isPending,
     jarvisWorkers.length,
+    props.isJarvisCockpitEnvironment,
     selectedJarvisEngine,
     selectedJarvisProject,
     selectedOverrideCompatible,
     selectedOverrideWorker,
+    selectedWorkerOverrideId,
   ]);
 
   // ------------------------------------------------------------------
@@ -2466,7 +2628,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         selectedProvider,
         selectedModel,
         selectedProviderModels,
-        selectedJarvisWorkerOverrideId: selectedWorkerOverrideId,
+        selectedJarvisWorkerOverrideId: props.isJarvisCockpitEnvironment
+          ? selectedWorkerOverrideIdForDispatch
+          : null,
+        selectedJarvisRepo: props.isJarvisCockpitEnvironment ? selectedJarvisRepo : null,
       }),
     }),
     [
@@ -2495,7 +2660,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedPromptEffort,
       selectedProvider,
       selectedProviderModels,
-      selectedWorkerOverrideId,
+      selectedJarvisRepo,
+      selectedWorkerOverrideIdForDispatch,
+      props.isJarvisCockpitEnvironment,
     ],
   );
 
@@ -2966,23 +3133,41 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onToggleInteractionMode={toggleInteractionMode}
                     onTogglePlanSidebar={togglePlanSidebar}
                     onRuntimeModeChange={handleRuntimeModeChange}
+                    jarvisMenuContent={
+                      props.isJarvisCockpitEnvironment ? (
+                        <ComposerJarvisRoutingMenuContent
+                          selectedProject={selectedJarvisProject}
+                          environmentProjects={environmentProjects}
+                          workers={jarvisWorkers}
+                          selectedEngine={selectedJarvisEngine}
+                          selectedWorkerOverrideId={selectedWorkerOverrideIdForDispatch}
+                          defaultWorkerId={jarvisDefaultWorkerId}
+                          compatibilityWarning={jarvisCompatibilityWarning}
+                          onProjectSelect={handleJarvisProjectSelect}
+                          onWorkerOverrideChange={setSelectedWorkerOverrideId}
+                        />
+                      ) : undefined
+                    }
                   />
                 ) : (
                   <>
-                    <ComposerJarvisRoutingControls
-                      environmentId={environmentId}
-                      selectedProject={selectedJarvisProject}
-                      environmentProjects={environmentProjects}
-                      workers={jarvisWorkers}
-                      workersPending={jarvisSnapshotQuery.isPending}
-                      selectedEngine={selectedJarvisEngine}
-                      selectedWorkerOverrideId={selectedWorkerOverrideId}
-                      defaultWorkerId={jarvisDefaultWorkerId}
-                      compatibilityWarning={jarvisCompatibilityWarning}
-                      onProjectSelect={handleJarvisProjectSelect}
-                      onWorkerOverrideChange={setSelectedWorkerOverrideId}
-                      onProjectCreated={(project) => handleJarvisProjectSelect(project.id)}
-                    />
+                    {props.isJarvisCockpitEnvironment ? (
+                      <ComposerJarvisRoutingControls
+                        environmentId={environmentId}
+                        selectedProject={selectedJarvisProject}
+                        environmentProjects={environmentProjects}
+                        workers={jarvisWorkers}
+                        workersPending={jarvisSnapshotQuery.isPending}
+                        selectedEngine={selectedJarvisEngine}
+                        selectedWorkerOverrideId={selectedWorkerOverrideIdForDispatch}
+                        defaultWorkerId={jarvisDefaultWorkerId}
+                        compatibilityWarning={jarvisCompatibilityWarning}
+                        showCreateProject={false}
+                        onProjectSelect={handleJarvisProjectSelect}
+                        onWorkerOverrideChange={setSelectedWorkerOverrideId}
+                        onProjectCreated={(project) => handleJarvisProjectSelect(project.id)}
+                      />
+                    ) : null}
                     {providerTraitsPicker ? (
                       <>
                         <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />

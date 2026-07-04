@@ -73,6 +73,7 @@ it.effect("routes first draft turns to Jarvis work start", () =>
             baseBranch: "main",
             branch: "jarvis/cockpit",
           },
+          jarvisRepo: "roughcoder/jarvis-cockpit",
           jarvisWorkerId: "macbook-worker",
         },
         createdAt: now,
@@ -88,6 +89,7 @@ it.effect("routes first draft turns to Jarvis work start", () =>
     assert.strictEqual(capturedStartWork?.prompt, "Build the cockpit dashboard.");
     assert.strictEqual(capturedStartWork?.title, "Cockpit dashboard");
     assert.strictEqual(capturedStartWork?.engine, "codex");
+    assert.strictEqual(capturedStartWork?.repo, "roughcoder/jarvis-cockpit");
     assert.strictEqual(capturedStartWork?.worker_id, "macbook-worker");
     assert.strictEqual(capturedStartWork?.base_ref, "main");
     assert.strictEqual(capturedStartWork?.branch, "jarvis/cockpit");

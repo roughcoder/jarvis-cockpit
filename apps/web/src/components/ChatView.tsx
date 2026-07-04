@@ -152,6 +152,7 @@ import {
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { useEnvironmentSettings } from "../hooks/useSettings";
+import { isJarvisCockpitEnvironment } from "../jarvisCockpit";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
@@ -1644,6 +1645,7 @@ function ChatViewContent(props: ChatViewProps) {
   const serverConfig = activeThread
     ? (activeEnvironment?.serverConfig ?? null)
     : (primaryEnvironment?.serverConfig ?? null);
+  const activeIsJarvisCockpitEnvironment = isJarvisCockpitEnvironment(serverConfig ?? undefined);
   const versionMismatch = resolveServerConfigVersionMismatch(serverConfig);
   const versionMismatchDismissKey =
     versionMismatch && activeThread
@@ -3960,6 +3962,7 @@ function ChatViewContent(props: ChatViewProps) {
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
       selectedJarvisWorkerOverrideId: ctxSelectedJarvisWorkerOverrideId,
+      selectedJarvisRepo: ctxSelectedJarvisRepo,
     } = sendCtx;
     const promptForSend = promptRef.current;
     const {
@@ -4222,6 +4225,7 @@ function ChatViewContent(props: ChatViewProps) {
               ...(ctxSelectedJarvisWorkerOverrideId
                 ? { jarvisWorkerId: ctxSelectedJarvisWorkerOverrideId }
                 : {}),
+              ...(ctxSelectedJarvisRepo ? { jarvisRepo: ctxSelectedJarvisRepo } : {}),
             }
           : undefined;
       beginLocalDispatch({ preparingWorktree: false });
@@ -5221,6 +5225,7 @@ function ChatViewContent(props: ChatViewProps) {
                       activeThread={activeThread}
                       isServerThread={isServerThread}
                       isLocalDraftThread={isLocalDraftThread}
+                      isJarvisCockpitEnvironment={activeIsJarvisCockpitEnvironment}
                       phase={phase}
                       isConnecting={isConnecting}
                       isSendBusy={isSendBusy}
