@@ -47,13 +47,16 @@ Evidence is recorded in the ignored dogfood folder:
 
 ### Jarvis Connector
 
-- `JARVIS_COCKPIT_ENABLED=true` switches reads/writes into Jarvis cockpit mode.
+- Jarvis cockpit mode is the default in this fork; set
+  `JARVIS_COCKPIT_ENABLED=false` only to force legacy upstream T3 behavior.
 - `JARVIS_API_BASE_URL` points the T3 server at the Jarvis cockpit API.
 - `JARVIS_API_TOKEN` is supported for bearer auth when configured.
 - `JARVIS_FIXTURE_MODE=true` provides deterministic fixture data for local UI
   work without a real Jarvis API.
-- `JARVIS_DEFAULT_REPO` is a temporary cockpit-side bridge for manual start-work
-  flows until Jarvis exposes a repo registry/default repo projection.
+- If no real Jarvis API URL is configured, local development uses the Jarvis
+  fixture backend rather than falling back to upstream local project onboarding.
+- Jarvis `/v1/cockpit/catalog.start_options` and worker repository projections
+  are the source of truth for start defaults and repository availability.
 
 ### Read Projection
 
@@ -80,10 +83,12 @@ Current start path:
 3. Cockpit opens a draft thread anchored to the synthetic `Start Jarvis work`
    project.
 4. First send becomes `thread.turn.start` with bootstrap metadata.
-5. `JarvisDispatch` routes that command to `POST /v1/work/start`.
-6. If Jarvis returns a session immediately, the draft can be promoted to the
+5. `JarvisDispatch` validates the input through `POST /v1/work/validate`.
+6. If Jarvis accepts the validation, `JarvisDispatch` routes the command to
+   `POST /v1/work/start`.
+7. If Jarvis returns a session immediately, the draft is promoted to the
    Jarvis session thread.
-7. If Jarvis accepts the start asynchronously, cockpit returns a successful
+8. If Jarvis accepts the start asynchronously, cockpit returns a successful
    dispatch receipt and polling reconciles the new run/session.
 
 The synthetic `Start Jarvis work` anchor remains visible whenever Jarvis reports
@@ -112,36 +117,27 @@ JARVIS_FIXTURE_MODE=true volta run --node 24.13.1 --pnpm 10.24.0 pnpm dev
 Real fleet mode:
 
 ```bash
-JARVIS_COCKPIT_ENABLED=true \
 JARVIS_API_BASE_URL=http://127.0.0.1:8791 \
-JARVIS_DEFAULT_REPO=roughcoder/jarvis-cockpit \
 volta run --node 24.13.1 --pnpm 10.24.0 pnpm dev
 ```
 
-`JARVIS_DEFAULT_REPO` is only for the current manual start-work bridge. Remove it
-when Jarvis provides repo/default-repo data in its cockpit projections.
-
 ## Current Known Gaps
 
-### Jarvis API Gaps
+### Jarvis API Capabilities Now Available
 
-These are not cockpit authority gaps; they are places where Cockpit currently
-has to use temporary bridging or polling.
-
-- Jarvis should expose a repo registry/default repo projection so cockpit does
-  not need `JARVIS_DEFAULT_REPO`.
-- `/v1/work/start` should return `session_ref` when it creates a session
-  synchronously.
-- Jarvis should document live projection values that now exist in practice:
-  `active` run status, empty public strings, empty event correlation ids, and
-  provider-specific event aliases.
-- `/v1/work/start` would benefit from a dry-run/validation mode for wizard
-  preflight.
-- `/v1/cockpit/catalog` should eventually include start-work defaults and
-  required fields for the current operator context.
+- `/v1/cockpit/catalog.start_options` describes start sources, defaults,
+  required fields, engines, strategies, and landing modes.
+- `WorkerProfile.repositories` exposes public-safe repository availability with
+  `is_default` and `can_start_work`.
+- `/v1/work/validate` provides dry-run/preflight validation.
+- `/v1/work/start` and `/v1/work/resume` should return `session.session_ref`
+  when Jarvis creates or resumes a session synchronously.
+- Snapshot responses can include aggregate `requests` and `checkpoints`.
 
 ### Cockpit Product Gaps
 
+- SSE proxying for `/v1/cockpit/events` remains the next live-update slice; this
+  branch keeps the existing server-side polling fallback.
 - Start-work is still a minimal `Describe work` path, not the full wizard.
 - Worker, engine, source, repository, branch policy, and landing policy selectors
   are not complete.
@@ -149,8 +145,6 @@ has to use temporary bridging or polling.
   the existing Jarvis write paths.
 - Artifact surfaces are basic; reports, verification evidence, branches, PRs,
   and status comments need richer run-level presentation.
-- SSE/WebSocket live updates should replace polling once Jarvis event streaming
-  is stable enough for the cockpit.
 
 ## End Goal
 
@@ -171,4 +165,3 @@ The end goal is a Jarvis-owned engineering cockpit:
 - The cockpit never spawns Codex or Claude directly for Jarvis-managed work.
 - The cockpit never invents durable run/session/project truth beyond projection
   compatibility needed to render the existing T3 UI.
-

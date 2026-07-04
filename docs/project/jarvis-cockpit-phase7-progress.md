@@ -27,8 +27,8 @@ spawning Codex or Claude directly for Jarvis-managed work.
 - Added projection mappers from Jarvis runs, sessions, and events into T3
   orchestration read models.
 - Added fixture mode with `JARVIS_FIXTURE_MODE=true` for local UI and test work.
-- Added real API mode with `JARVIS_COCKPIT_ENABLED=true` and
-  `JARVIS_API_BASE_URL`.
+- Added real API mode with `JARVIS_API_BASE_URL`; cockpit mode is now the fork
+  default and can be disabled with `JARVIS_COCKPIT_ENABLED=false`.
 - Wired HTTP `/api/orchestration/snapshot` and WebSocket `subscribeShell` /
   `subscribeThread` read paths to Jarvis when cockpit reads are enabled.
 - Added a web guard so Jarvis-managed thread ids do not trigger T3-local branch
@@ -74,11 +74,11 @@ Follow-ups for the next slice:
 - Worker/engine selectors are not built; manual start uses `Auto`-style defaults
   through `JarvisDispatch` (`branch_strategy: auto`, engine from model
   selection when set).
-- Repository selection is not built; current real-fleet manual starts can use
-  `JARVIS_DEFAULT_REPO` as a temporary bridge until Jarvis exposes repo/default
-  repo catalog data.
-- Source-specific starts for GitHub and Linear remain visible but disabled until
-  Jarvis exposes source resolvers.
+- Repository defaults now come from Jarvis catalog/worker projections rather
+  than a cockpit-side env bridge. Full visible repository selectors are still a
+  follow-up.
+- Source-specific starts for GitHub and Linear are enabled or disabled from
+  Jarvis catalog source metadata.
 
 ## Current schema alignment
 
@@ -105,12 +105,15 @@ testing plus the tracked worker-session reference:
 - `POST /sessions/:id/checkpoints/restore`
 - `POST /sessions/:id/interrupt`
 - `POST /sessions/:id/stop`
+- `POST /v1/work/validate`
 - `POST /v1/work/start`
 - `POST /v1/work/resume`
 
 The contract accepts live public-safe projection values currently emitted by
-Jarvis, including `run.status: "active"`, empty public artifact strings, and
-empty event correlation ids on non-message events.
+Jarvis, including `run.status: "active"`, empty public artifact strings, empty
+event correlation ids on non-message events, catalog `start_options`, worker
+repositories with `is_default`/`can_start_work`, and aggregate snapshot
+`requests`/`checkpoints`.
 
 ## How to run locally
 
@@ -130,14 +133,13 @@ fixture worker session. The detail route should look like:
 Real fleet mode:
 
 ```bash
-JARVIS_COCKPIT_ENABLED=true \
 JARVIS_API_BASE_URL=http://127.0.0.1:8791 \
-JARVIS_DEFAULT_REPO=roughcoder/jarvis-cockpit \
 volta run --node 24.13.1 --pnpm 10.24.0 pnpm dev
 ```
 
-`JARVIS_DEFAULT_REPO` is temporary. It should be removed once Jarvis exposes
-repo/default-repo data through the cockpit API.
+Jarvis cockpit mode is the default in this fork. Use
+`JARVIS_COCKPIT_ENABLED=false` only when intentionally testing legacy upstream
+T3 local orchestration behavior.
 
 ## Verification run
 
@@ -173,16 +175,15 @@ dogfood-output/jarvis-cockpit-fleet-2026-07-04/
 
 ## Remaining Jarvis-side gaps
 
-The current live API is enough for a minimal start-work loop. The remaining
-Jarvis-side improvements that would simplify cockpit UX are:
+The incoming live API is enough for a minimal start-work loop plus validation.
+Remaining implementation work is mostly cockpit-side:
 
-- Repo registry/default repo projection to replace `JARVIS_DEFAULT_REPO`.
-- `/v1/work/start` should return `session_ref` when it creates a session
-  synchronously.
-- Dry-run validation for start-work wizard preflight.
-- Catalog-level start defaults and required fields.
-- Stable SSE for aggregate run/session/artifact updates.
-- Fully documented live projection values and provider event aliases.
+- Render the full start-work wizard from catalog defaults and worker
+  repositories.
+- Proxy `/v1/cockpit/events` through the server-side auth boundary; this branch
+  keeps polling snapshots as the fallback live-update path.
+- Add richer request/checkpoint/artifact controls using aggregate snapshot data.
+- Fully document provider event aliases as they are adopted by the UI.
 
 Until these exist, the fork should continue to treat Jarvis as authoritative and
 avoid inventing durable project, repository, worker, or session truth in the UI.

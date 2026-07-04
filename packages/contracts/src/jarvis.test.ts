@@ -18,6 +18,7 @@ import {
   JarvisSessionRequestsResponse,
   JarvisSessionRequestsPage,
   JarvisStartWorkInput,
+  JarvisStartWorkValidationResult,
   JarvisTurnInput,
   JarvisUserInputInput,
 } from "./jarvis.ts";
@@ -32,6 +33,7 @@ const decodeSessionDetail = Schema.decodeUnknownEffect(JarvisSessionDetailRespon
 const decodeRequestsResponse = Schema.decodeUnknownEffect(JarvisSessionRequestsResponse);
 const decodeCheckpointsResponse = Schema.decodeUnknownEffect(JarvisSessionCheckpointsResponse);
 const decodeStartWork = Schema.decodeUnknownEffect(JarvisStartWorkInput);
+const decodeStartWorkValidation = Schema.decodeUnknownEffect(JarvisStartWorkValidationResult);
 const decodeTurn = Schema.decodeUnknownEffect(JarvisTurnInput);
 const decodeApproval = Schema.decodeUnknownEffect(JarvisApprovalInput);
 const decodeUserInput = Schema.decodeUnknownEffect(JarvisUserInputInput);
@@ -124,6 +126,25 @@ it.effect("decodes a Jarvis cockpit catalog fixture", () =>
       branch_strategies: ["auto", "use_existing", "create", "none"],
       landing_policies: ["branch_only", "draft_pr", "ready_pr", "confirm_before_pr"],
       request_kinds: ["approval", "input"],
+      start_options: {
+        sources: ["manual", "github", "linear"],
+        engines: ["codex", "claude"],
+        engine_strategies: ["single", "parallel"],
+        landing_modes: ["branch_only", "draft_pr", "ready_pr", "confirm_before_pr"],
+        required_fields: {
+          manual: ["phrase or work_item.title", "repo (unless a default repo is configured)"],
+          github: ["repo (unless a default repo is configured)"],
+          linear: [],
+        },
+        defaults: {
+          source: "manual",
+          worker_id: "macbook-worker",
+          repo: "roughcoder/jarvis",
+          engine: "codex",
+          engine_strategy: "single",
+          landing_mode: "draft_pr",
+        },
+      },
     });
 
     assert.strictEqual(parsed.api_version, "v1");
@@ -136,6 +157,8 @@ it.effect("decodes a Jarvis cockpit catalog fixture", () =>
       "voice",
       "whatsapp",
     ]);
+    assert.strictEqual(parsed.start_options?.defaults.repo, "roughcoder/jarvis");
+    assert.deepStrictEqual(parsed.start_options?.engines, ["codex", "claude"]);
   }),
 );
 
@@ -227,6 +250,8 @@ it.effect("decodes a Jarvis cockpit snapshot fixture", () =>
               repo: "roughcoder/jarvis",
               status: "ready",
               default_branch: "main",
+              is_default: true,
+              can_start_work: true,
             },
           ],
           public_metadata: {},
@@ -246,6 +271,30 @@ it.effect("decodes a Jarvis cockpit snapshot fixture", () =>
           updated_at: generatedAt,
         },
       ],
+      requests: [
+        {
+          request_id: "approval_turn_1",
+          session_ref: sessionRef,
+          run_id: runId,
+          kind: "approval",
+          status: "pending",
+          title: "Approve shell command",
+          detail: "Run verification",
+          created_at: generatedAt,
+          payload: {
+            request_kind: "command",
+          },
+        },
+      ],
+      checkpoints: [
+        {
+          session_ref: sessionRef,
+          checkpoint_id: "ckpt_turn_1",
+          label: "before review fixes",
+          provider: "codex",
+          restored: false,
+        },
+      ],
     });
 
     assert.strictEqual(parsed.runs[0]?.pending_approval_count, 1);
@@ -254,7 +303,11 @@ it.effect("decodes a Jarvis cockpit snapshot fixture", () =>
     const worker = parsed.workers[0];
     assert.ok(worker);
     assert.strictEqual(worker.repositories?.at(0)?.repo, "roughcoder/jarvis");
+    assert.strictEqual(worker.repositories?.at(0)?.is_default, true);
+    assert.strictEqual(worker.repositories?.at(0)?.can_start_work, true);
     assert.strictEqual(parsed.artifacts[0]?.kind, "branch");
+    assert.strictEqual(parsed.requests?.[0]?.kind, "approval");
+    assert.strictEqual(parsed.checkpoints?.[0]?.checkpoint_id, "ckpt_turn_1");
   }),
 );
 
@@ -668,6 +721,36 @@ it.effect("decodes command inputs with cockpit metadata defaults", () =>
     assert.strictEqual(input.text, "Use the existing orchestration store patterns.");
     assert.strictEqual(restore.metadata?.surface, "jarvis-cockpit");
     assert.strictEqual(archive.metadata?.surface, "jarvis-cockpit");
+  }),
+);
+
+it.effect("decodes Jarvis start-work validation responses", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeStartWorkValidation({
+      ok: true,
+      api_version: "v1",
+      schema_version: 1,
+      validation: {
+        can_start: false,
+        source: "manual",
+        operation: "start_next_work",
+        repo: "",
+        worker_id: "macbook-worker",
+        engine: "codex",
+        engines: ["codex"],
+        engine_strategy: "single",
+        landing_mode: "draft_pr",
+        work_item: null,
+        missing: ["repo"],
+        missing_authority: [],
+        reasons: ["work item has no repo/default repo; cannot start a coding worker"],
+        notes: [],
+      },
+    });
+
+    assert.strictEqual(parsed.validation?.can_start, false);
+    assert.deepStrictEqual(parsed.validation?.missing, ["repo"]);
+    assert.strictEqual(parsed.validation?.repo, "");
   }),
 );
 

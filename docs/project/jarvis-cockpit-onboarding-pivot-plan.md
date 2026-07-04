@@ -482,7 +482,7 @@ Follow-ups:
   repository selection.
 - Ask Jarvis for source capability metadata in `/v1/cockpit/catalog` if not
   already present.
-- Replace `JARVIS_DEFAULT_REPO` with Jarvis-owned repo/default-repo projection
-  data.
+- Render repository/default-repo choices from Jarvis catalog and worker
+  repository projection data.
 - Prefer returning `session_ref` from `/v1/work/start` whenever Jarvis creates a
   session synchronously.

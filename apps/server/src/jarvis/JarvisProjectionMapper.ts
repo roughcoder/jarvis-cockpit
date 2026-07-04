@@ -172,7 +172,7 @@ export function mapJarvisSessionToThreadDetail(input: {
     modelSelection: modelSelectionForSession(input.session),
     runtimeMode: DEFAULT_RUNTIME_MODE,
     interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-    branch: input.session.branch ?? input.run?.branch ?? null,
+    branch: branchForSession(input.session, input.run),
     worktreePath: null,
     latestTurn,
     createdAt: input.session.created_at,
@@ -252,7 +252,7 @@ function startWorkProjectShell(generatedAt: string): OrchestrationProjectShell {
 function mapSessionToProjectShell(session: JarvisWorkerSession): OrchestrationProjectShell {
   return {
     id: jarvisProjectIdForRun(session.run_id),
-    title: session.repo ?? session.title,
+    title: normalizeJarvisPublicLabel(session.repo) ?? session.title,
     workspaceRoot: jarvisWorkspaceRootForRun(session.run_id),
     repositoryIdentity: null,
     defaultModelSelection: null,
@@ -277,7 +277,7 @@ function mapSessionToThreadShell(
     modelSelection: modelSelectionForSession(session),
     runtimeMode: DEFAULT_RUNTIME_MODE,
     interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-    branch: session.branch ?? run?.branch ?? null,
+    branch: branchForSession(session, run),
     worktreePath: null,
     latestTurn: null,
     createdAt: session.created_at,
@@ -364,7 +364,19 @@ function mapCockpitCheckpoint(checkpoint: CockpitCheckpoint): OrchestrationCheck
 }
 
 function titleForSession(session: JarvisWorkerSession, run: JarvisRun | undefined): string {
-  return session.title ?? run?.title ?? session.session_ref;
+  return normalizeJarvisPublicLabel(session.title) ?? run?.title ?? session.session_ref;
+}
+
+function branchForSession(
+  session: JarvisWorkerSession,
+  run: JarvisRun | undefined,
+): string | null {
+  return normalizeJarvisPublicLabel(session.branch) ?? normalizeJarvisPublicLabel(run?.branch);
+}
+
+function normalizeJarvisPublicLabel(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : null;
 }
 
 function modelSelectionForSession(session: JarvisWorkerSession) {

@@ -5,6 +5,8 @@ import {
   type JarvisArchiveInput,
   type JarvisControlResult,
   type JarvisSessionCheckpoint,
+  type JarvisStartWorkValidation,
+  type JarvisSupportedControl,
   type OrchestrationCommand,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -65,7 +67,8 @@ export function dispatchJarvisCommand(input: {
   if (sessionRef === null) {
     return Effect.succeed(null);
   }
-  return dispatchJarvisWrite(input.client, sessionRef, input.command).pipe(
+  return ensureJarvisControlSupported(input.client, sessionRef, input.command).pipe(
+    Effect.flatMap(() => dispatchJarvisWrite(input.client, sessionRef, input.command)),
     Effect.flatMap((result) => {
       if (result === null) {
         return Effect.fail(
@@ -247,9 +250,93 @@ function dispatchJarvisStartWork(
   if (command.bootstrap?.createThread === undefined) {
     return Effect.succeed(null);
   }
-  return client
-    .startWork(startWorkInputForTurnStart(command))
-    .pipe(Effect.mapError((cause) => jarvisDispatchError(command.type, cause)));
+  const startInput = startWorkInputForTurnStart(command);
+  return client.validateWork(startInput).pipe(
+    Effect.mapError((cause) => jarvisDispatchOperationError(`${command.type}.validate`, cause)),
+    Effect.flatMap((validation) => {
+      if (validation.validation?.can_start !== false) {
+        return Effect.succeed(validation);
+      }
+      return Effect.fail(
+        new OrchestrationDispatchCommandError({
+          message: `Jarvis rejected start work: ${jarvisValidationMessage(validation.validation)}`,
+          cause: validation,
+        }),
+      );
+    }),
+    Effect.flatMap(() =>
+      client
+        .startWork(startInput)
+        .pipe(Effect.mapError((cause) => jarvisDispatchError(command.type, cause))),
+    ),
+  );
+}
+
+function ensureJarvisControlSupported(
+  client: JarvisClient,
+  sessionRef: string,
+  command: OrchestrationCommand,
+): Effect.Effect<void, OrchestrationDispatchCommandError> {
+  const requiredControl = jarvisControlForCommand(command);
+  if (requiredControl === null) {
+    return Effect.void;
+  }
+  return client.getSession(sessionRef).pipe(
+    Effect.mapError((cause) => jarvisDispatchOperationError(`${command.type}.capability`, cause)),
+    Effect.flatMap((session) => {
+      if (session.authority !== "jarvis") {
+        return Effect.fail(
+          new OrchestrationDispatchCommandError({
+            message: `Jarvis cockpit cannot dispatch ${command.type}; session authority is ${session.authority}.`,
+          }),
+        );
+      }
+      if (session.supported_controls.includes(requiredControl)) {
+        return Effect.void;
+      }
+      return Effect.fail(
+        new OrchestrationDispatchCommandError({
+          message: `Jarvis cockpit cannot dispatch ${command.type}; session does not support ${requiredControl}.`,
+        }),
+      );
+    }),
+  );
+}
+
+function jarvisControlForCommand(
+  command: OrchestrationCommand,
+): JarvisSupportedControl | null {
+  switch (command.type) {
+    case "thread.turn.start":
+      return "turn";
+    case "thread.turn.interrupt":
+      return "interrupt";
+    case "thread.approval.respond":
+      return "approval";
+    case "thread.user-input.respond":
+      return "input";
+    case "thread.checkpoint.revert":
+      return "checkpoint_restore";
+    case "thread.session.stop":
+      return "stop";
+    case "thread.archive":
+      return "archive";
+    case "thread.meta.update":
+      return null;
+    default:
+      return null;
+  }
+}
+
+function jarvisValidationMessage(validation: JarvisStartWorkValidation): string {
+  const parts = [
+    ...(validation.missing.length > 0 ? [`missing ${validation.missing.join(", ")}`] : []),
+    ...(validation.missing_authority.length > 0
+      ? [`missing authority ${validation.missing_authority.join(", ")}`]
+      : []),
+    ...validation.reasons,
+  ];
+  return parts.length > 0 ? parts.join("; ") : "start-work validation failed";
 }
 
 function archiveInputForCommand(commandId: OrchestrationCommand["commandId"]): JarvisArchiveInput {
@@ -270,7 +357,13 @@ function dispatchReceiptForJarvisResult(
   }
   if (result.ok) {
     if (options?.requiresPromotedThread === true && result.session?.session_ref === undefined) {
-      return Effect.succeed({ sequence: 0 });
+      return Effect.fail(
+        new OrchestrationDispatchCommandError({
+          message:
+            "Jarvis accepted start work but did not return a session_ref. Cockpit cannot finalize the draft without a canonical Jarvis session.",
+          cause: result,
+        }),
+      );
     }
     return Effect.succeed({
       sequence: 0,
@@ -288,6 +381,13 @@ function dispatchReceiptForJarvisResult(
 }
 
 function jarvisDispatchError(commandType: OrchestrationCommand["type"], cause: unknown) {
+  return new OrchestrationDispatchCommandError({
+    message: `Failed to dispatch Jarvis cockpit command ${commandType}.`,
+    cause,
+  });
+}
+
+function jarvisDispatchOperationError(commandType: string, cause: unknown) {
   return new OrchestrationDispatchCommandError({
     message: `Failed to dispatch Jarvis cockpit command ${commandType}.`,
     cause,

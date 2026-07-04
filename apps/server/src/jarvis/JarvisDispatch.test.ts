@@ -251,48 +251,53 @@ it.effect("defaults unknown T3 model selections to the Jarvis Codex engine", () 
   }),
 );
 
-it.effect("accepts async draft starts when Jarvis does not return a promoted session yet", () =>
+it.effect("rejects async draft starts when Jarvis does not return a promoted session yet", () =>
   Effect.gen(function* () {
     const client = {
       ...makeJarvisFixtureClient(),
       startWork: () => Effect.succeed({ ok: true, cursor: "evt_start" }),
     };
 
-    const result = yield* dispatchJarvisCommand({
-      client,
-      enabled: true,
-      command: {
-        type: "thread.turn.start",
-        commandId: CommandId.make("cmd_start_work_without_session"),
-        threadId: ThreadId.make("thread_draft"),
-        message: {
-          messageId: MessageId.make("msg_user"),
-          role: "user",
-          text: "Build the cockpit dashboard.",
-          attachments: [],
-        },
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        bootstrap: {
-          createThread: {
-            projectId: ProjectId.make("project_1"),
-            title: "Cockpit dashboard",
-            modelSelection: {
-              instanceId: ProviderInstanceId.make("codex"),
-              model: "codex",
-            },
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: "jarvis/cockpit",
-            worktreePath: null,
-            createdAt: now,
+    const exit = yield* Effect.exit(
+      dispatchJarvisCommand({
+        client,
+        enabled: true,
+        command: {
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd_start_work_without_session"),
+          threadId: ThreadId.make("thread_draft"),
+          message: {
+            messageId: MessageId.make("msg_user"),
+            role: "user",
+            text: "Build the cockpit dashboard.",
+            attachments: [],
           },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          bootstrap: {
+            createThread: {
+              projectId: ProjectId.make("project_1"),
+              title: "Cockpit dashboard",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "codex",
+              },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: "jarvis/cockpit",
+              worktreePath: null,
+              createdAt: now,
+            },
+          },
+          createdAt: now,
         },
-        createdAt: now,
-      },
-    });
+      }),
+    );
 
-    assert.deepStrictEqual(result, { sequence: 0 });
+    assert.strictEqual(Exit.isFailure(exit), true);
+    if (Exit.isFailure(exit)) {
+      assert.ok(exit.cause.toString().includes("did not return a session_ref"));
+    }
   }),
 );
 
@@ -704,6 +709,45 @@ it.effect("routes stop for Jarvis-managed threads through Jarvis", () =>
 
     assert.deepStrictEqual(result, { sequence: 0 });
     assert.strictEqual(stoppedSessionRef, "sessref_macbook-worker_sess_fixture_codex");
+  }),
+);
+
+it.effect("rejects session controls that Jarvis does not advertise", () =>
+  Effect.gen(function* () {
+    let stopCalls = 0;
+    const client = {
+      ...makeJarvisFixtureClient(),
+      getSession: (sessionRef: string) =>
+        makeJarvisFixtureClient().getSession(sessionRef).pipe(
+          Effect.map((session) => ({
+            ...session,
+            supported_controls: ["turn" as const],
+          })),
+        ),
+      stopSession: () => {
+        stopCalls += 1;
+        return Effect.succeed({ ok: true, cursor: "evt_stop" });
+      },
+    };
+
+    const exit = yield* Effect.exit(
+      dispatchJarvisCommand({
+        client,
+        enabled: true,
+        command: {
+          type: "thread.session.stop",
+          commandId: CommandId.make("cmd_stop_unsupported"),
+          threadId: jarvisThreadId,
+          createdAt: now,
+        },
+      }),
+    );
+
+    assert.strictEqual(Exit.isFailure(exit), true);
+    assert.strictEqual(stopCalls, 0);
+    if (Exit.isFailure(exit)) {
+      assert.ok(exit.cause.toString().includes("does not support stop"));
+    }
   }),
 );
 

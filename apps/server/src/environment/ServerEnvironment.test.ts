@@ -38,10 +38,9 @@ const makeServerConfig = Effect.fn(function* (baseDir: string) {
     logWebSocketEvents: false,
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
-    jarvisCockpitEnabled: false,
+    jarvisCockpitEnabled: true,
     jarvisApiBaseUrl: undefined,
     jarvisApiToken: undefined,
-    jarvisDefaultRepo: undefined,
     jarvisFixtureMode: false,
     port: 0,
     host: undefined,
@@ -92,16 +91,16 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       const defaultDescriptor = yield* getDescriptor.pipe(
         Effect.provide(ServerEnvironment.layer.pipe(Layer.provide(ServerConfig.layer(config)))),
       );
-      expect(defaultDescriptor.capabilities.jarvisCockpit).toBe(false);
+      expect(defaultDescriptor.capabilities.jarvisCockpit).toBe(true);
 
       const cockpitDescriptor = yield* getDescriptor.pipe(
         Effect.provide(
           ServerEnvironment.layer.pipe(
-            Layer.provide(ServerConfig.layer({ ...config, jarvisCockpitEnabled: true })),
+            Layer.provide(ServerConfig.layer({ ...config, jarvisCockpitEnabled: false })),
           ),
         ),
       );
-      expect(cockpitDescriptor.capabilities.jarvisCockpit).toBe(true);
+      expect(cockpitDescriptor.capabilities.jarvisCockpit).toBe(false);
 
       const fixtureDescriptor = yield* getDescriptor.pipe(
         Effect.provide(
