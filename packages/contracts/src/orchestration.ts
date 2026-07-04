@@ -572,6 +572,7 @@ const ThreadTurnStartBootstrap = Schema.Struct({
   createThread: Schema.optional(ThreadTurnStartBootstrapCreateThread),
   prepareWorktree: Schema.optional(ThreadTurnStartBootstrapPrepareWorktree),
   runSetupScript: Schema.optional(Schema.Boolean),
+  jarvisRepo: Schema.optional(TrimmedNonEmptyString),
   jarvisWorkerId: Schema.optional(TrimmedNonEmptyString),
 });
 
