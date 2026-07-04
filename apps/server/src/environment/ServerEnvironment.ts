@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
+import { shouldUseJarvisCockpitReads } from "../jarvis/JarvisOrchestrationReadModel.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
 
@@ -135,6 +136,7 @@ export const make = Effect.gen(function* () {
     serverVersion: packageJson.version,
     capabilities: {
       repositoryIdentity: true,
+      jarvisCockpit: shouldUseJarvisCockpitReads(serverConfig),
     },
   };
 

@@ -2,6 +2,7 @@ import { CheckpointRef, ProjectId, ThreadId } from "@t3tools/contracts";
 
 export const JARVIS_PROJECT_ID_PREFIX = "jarvis-run_";
 export const JARVIS_THREAD_ID_PREFIX = "jarvis-session_";
+export const JARVIS_START_PROJECT_ID = ProjectId.make("jarvis-start");
 const JARVIS_CHECKPOINT_REF_PREFIX = "jarvis:";
 const JARVIS_CHECKPOINT_REF_SEPARATOR = ":";
 

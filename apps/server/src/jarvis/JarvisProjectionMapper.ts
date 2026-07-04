@@ -32,6 +32,7 @@ export {
   jarvisThreadIdForSession,
 } from "./JarvisIds.ts";
 import { jarvisProjectIdForRun, jarvisThreadIdForSession } from "./JarvisIds.ts";
+import { JARVIS_START_PROJECT_ID } from "./JarvisIds.ts";
 import {
   type CockpitCheckpoint,
   type CockpitLatestTurn,
@@ -47,6 +48,7 @@ export function mapJarvisRunsSnapshotToShellSnapshot(
     snapshot,
     activeJarvisRuns(snapshot.runs),
     activeJarvisSessionsForSnapshot(snapshot),
+    { includeStartWorkProject: true },
   );
 }
 
@@ -57,6 +59,7 @@ export function mapJarvisArchivedRunsSnapshotToShellSnapshot(
     snapshot,
     archivedJarvisRuns(snapshot.runs),
     archivedJarvisSessionsForSnapshot(snapshot),
+    { includeStartWorkProject: false },
   );
 }
 
@@ -64,11 +67,15 @@ function mapJarvisRunsSnapshotToShellSnapshotWithSessions(
   snapshot: JarvisRunsSnapshot,
   runs: ReadonlyArray<JarvisRun>,
   sessions: ReadonlyArray<JarvisWorkerSession>,
+  options: {
+    readonly includeStartWorkProject: boolean;
+  },
 ): OrchestrationShellSnapshot {
   const runsById = new Map(snapshot.runs.map((run) => [run.run_id, run]));
+  const projects = mapRunsAndSessionsToProjectShells(runs, sessions);
   return {
     snapshotSequence: 0,
-    projects: mapRunsAndSessionsToProjectShells(runs, sessions),
+    projects: startWorkProjectShellsForSnapshot(snapshot, projects, options),
     threads: sessions.map((session) =>
       mapSessionToThreadShell(
         session,
@@ -87,9 +94,12 @@ export function mapJarvisRunsSnapshotToReadModel(input: {
   const runsById = new Map(input.snapshot.runs.map((run) => [run.run_id, run]));
   const activeRuns = activeJarvisRuns(input.snapshot.runs);
   const activeSessions = activeJarvisSessionsForSnapshot(input.snapshot);
+  const projects = mapRunsAndSessionsToProjectShells(activeRuns, activeSessions);
   return {
     snapshotSequence: 0,
-    projects: mapRunsAndSessionsToProjectShells(activeRuns, activeSessions).map((project) => ({
+    projects: startWorkProjectShellsForSnapshot(input.snapshot, projects, {
+      includeStartWorkProject: true,
+    }).map((project) => ({
       ...project,
       deletedAt: null,
     })),
@@ -208,6 +218,35 @@ function mapRunsAndSessionsToProjectShells(
     projects.push(mapSessionToProjectShell(session));
   }
   return projects;
+}
+
+function startWorkProjectShellsForSnapshot(
+  snapshot: JarvisRunsSnapshot,
+  projects: ReadonlyArray<OrchestrationProjectShell>,
+  options: {
+    readonly includeStartWorkProject: boolean;
+  },
+): ReadonlyArray<OrchestrationProjectShell> {
+  if (!options.includeStartWorkProject || snapshot.workers.length === 0) {
+    return projects;
+  }
+  if (projects.some((project) => project.id === JARVIS_START_PROJECT_ID)) {
+    return projects;
+  }
+  return [startWorkProjectShell(snapshot.generated_at), ...projects];
+}
+
+function startWorkProjectShell(generatedAt: string): OrchestrationProjectShell {
+  return {
+    id: JARVIS_START_PROJECT_ID,
+    title: "Start Jarvis work",
+    workspaceRoot: "jarvis://start",
+    repositoryIdentity: null,
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: generatedAt,
+    updatedAt: generatedAt,
+  };
 }
 
 function mapSessionToProjectShell(session: JarvisWorkerSession): OrchestrationProjectShell {

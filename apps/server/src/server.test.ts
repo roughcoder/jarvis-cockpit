@@ -132,6 +132,7 @@ const testEnvironmentDescriptor = {
   serverVersion: "0.0.0-test",
   capabilities: {
     repositoryIdentity: true,
+    jarvisCockpit: false,
   },
 };
 const makeDefaultOrchestrationReadModel = () => {
@@ -385,6 +386,7 @@ const buildAppUnderTest = (options?: {
       jarvisCockpitEnabled: false,
       jarvisApiBaseUrl: undefined,
       jarvisApiToken: undefined,
+      jarvisDefaultRepo: undefined,
       jarvisFixtureMode: false,
       ...options?.config,
     };

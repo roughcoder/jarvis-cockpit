@@ -137,6 +137,39 @@ it.effect("fixture client exposes a v1 run snapshot and paginated details", () =
   }),
 );
 
+it.effect("fixture client synthesizes distinct runs and sessions for start work", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisFixtureClient();
+
+    const result = yield* client.startWork({
+      title: "Demo onboarding pivot",
+      objective: "Replace local project onboarding with Start work",
+      prompt: "Make fixture demos show a real-looking run.",
+      repo: "roughcoder/jarvis-cockpit",
+      branch_strategy: "auto",
+    });
+    const fixtureSnapshot = yield* client.getSnapshot();
+    const generatedSessionRef = result.session?.session_ref ?? "";
+    const generatedRun = fixtureSnapshot.runs[0];
+    const generatedSession = fixtureSnapshot.sessions[0];
+
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(generatedRun?.title, "Demo onboarding pivot");
+    assert.strictEqual(generatedRun?.objective, "Replace local project onboarding with Start work");
+    assert.strictEqual(generatedRun?.repo, "roughcoder/jarvis-cockpit");
+    assert.strictEqual(generatedSession?.title, "Demo onboarding pivot");
+    assert.strictEqual(generatedSession?.run_id, generatedRun?.run_id);
+    assert.strictEqual(generatedSession?.session_ref, generatedSessionRef);
+
+    const sessionDetail = yield* client.getSession(generatedSessionRef);
+    const events = yield* client.getSessionEvents(generatedSessionRef);
+    assert.strictEqual(sessionDetail.session_ref, generatedSessionRef);
+    assert.strictEqual(events.items[1]?.type, "turn.started");
+    assert.match(String(events.items[1]?.data.prompt ?? ""), /fixture demos/);
+    assert.strictEqual(events.items.at(-1)?.type, "turn.completed");
+  }),
+);
+
 it.effect("cockpit client attaches bearer token and reads the v1 snapshot endpoint", () =>
   Effect.gen(function* () {
     const requests: Array<{ url: string; authorization: string | null }> = [];
@@ -404,6 +437,39 @@ it.effect("cockpit client posts work, resume, and exact-session turn intents", (
     assert.strictEqual((requests[2]?.body ?? "").includes("wrong_run"), false);
     assert.strictEqual(turnResult.ok, true);
     assert.strictEqual(turnResult.session?.session_ref, sessionRef);
+  }),
+);
+
+it.effect("cockpit client applies the configured default repo to start-work intents", () =>
+  Effect.gen(function* () {
+    const requests: Array<{ url: string; body: string | null }> = [];
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      defaultRepo: "roughcoder/jarvis-cockpit",
+      fetch: async (url, init) => {
+        requests.push({
+          url: String(url),
+          body: typeof init?.body === "string" ? init.body : null,
+        });
+        return jsonResponse({ ok: true, cursor: "evt_2", session: { session_ref: sessionRef } });
+      },
+    });
+
+    yield* client.startWork({
+      phrase: "Dogfood cockpit start.",
+      source: "manual",
+      branch_strategy: "auto",
+    });
+    yield* client.startWork({
+      phrase: "Explicit repo wins.",
+      source: "manual",
+      repo: "roughcoder/jarvis",
+      branch_strategy: "auto",
+    });
+
+    assert.strictEqual(requests[0]?.url, "http://jarvis.local:8787/v1/work/start");
+    assert.match(requests[0]?.body ?? "", /"repo":"roughcoder\/jarvis-cockpit"/);
+    assert.match(requests[1]?.body ?? "", /"repo":"roughcoder\/jarvis"/);
   }),
 );
 

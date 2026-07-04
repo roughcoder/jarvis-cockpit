@@ -1,10 +1,21 @@
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { SidebarInset } from "./ui/sidebar";
 import { isElectron } from "../env";
+import { isJarvisCockpitEnvironment } from "../jarvisCockpit";
+import { useEnvironments } from "../state/environments";
 import { cn } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 
 export function NoActiveThreadState() {
+  const { environments } = useEnvironments();
+  const isJarvisCockpitMode = environments.some((environment) =>
+    isJarvisCockpitEnvironment(environment.serverConfig ?? undefined),
+  );
+  const headerLabel = isJarvisCockpitMode ? "No active session" : "No active thread";
+  const title = isJarvisCockpitMode ? "Pick a session to continue" : "Pick a thread to continue";
+  const description = isJarvisCockpitMode
+    ? "Select a Jarvis session or use Start work to dispatch new work."
+    : "Select an existing thread or create a new one to get started.";
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
@@ -17,12 +28,12 @@ export function NoActiveThreadState() {
         >
           {isElectron ? (
             <span className="text-xs text-muted-foreground/50 wco:pr-[var(--workspace-native-controls-inset)]">
-              No active thread
+              {headerLabel}
             </span>
           ) : (
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium text-foreground md:text-muted-foreground/60">
-                No active thread
+                {headerLabel}
               </span>
             </div>
           )}
@@ -31,9 +42,9 @@ export function NoActiveThreadState() {
         <Empty className="flex-1">
           <div className="w-full max-w-lg px-8 py-12">
             <EmptyHeader className="max-w-none">
-              <EmptyTitle className="text-foreground text-xl">Pick a thread to continue</EmptyTitle>
+              <EmptyTitle className="text-foreground text-xl">{title}</EmptyTitle>
               <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">
-                Select an existing thread or create a new one to get started.
+                {description}
               </EmptyDescription>
             </EmptyHeader>
           </div>

@@ -270,12 +270,7 @@ function dispatchReceiptForJarvisResult(
   }
   if (result.ok) {
     if (options?.requiresPromotedThread === true && result.session?.session_ref === undefined) {
-      return Effect.fail(
-        new OrchestrationDispatchCommandError({
-          message:
-            "Jarvis accepted the start request but did not return a session_ref to promote the draft thread.",
-        }),
-      );
+      return Effect.succeed({ sequence: 0 });
     }
     return Effect.succeed({
       sequence: 0,
@@ -337,7 +332,7 @@ function jarvisEngineForModelSelection(modelSelection: {
   if (instanceId === "claude" || instanceId === "claudeagent" || instanceId.startsWith("claude_")) {
     return "claude";
   }
-  return modelSelection.model;
+  return "codex";
 }
 
 function jarvisApprovalDecisionForProviderDecision(

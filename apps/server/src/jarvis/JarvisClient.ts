@@ -1,6 +1,7 @@
 import {
   JarvisApprovalInput,
   JarvisArchiveInput,
+  JarvisArtifact,
   JarvisCockpitCatalog,
   JarvisControlResult,
   JarvisRequestId,
@@ -162,6 +163,19 @@ const withSurfaceMetadata = <Input extends object>(
   };
 };
 
+const withDefaultRepo = (
+  input: JarvisStartWorkInput,
+  defaultRepo: string | undefined,
+): JarvisStartWorkInput => {
+  if (input.repo !== undefined || defaultRepo === undefined || defaultRepo.trim().length === 0) {
+    return input;
+  }
+  return {
+    ...input,
+    repo: defaultRepo.trim(),
+  };
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -169,6 +183,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function makeJarvisCockpitClient(input: {
   readonly baseUrl: URL;
   readonly token?: string;
+  readonly defaultRepo?: string;
   readonly fetch?: FetchLike;
 }): JarvisClient {
   const fetchImpl = input.fetch ?? fetch;
@@ -296,7 +311,11 @@ export function makeJarvisCockpitClient(input: {
         ),
       ),
     startWork: (workInput) =>
-      postJson("work.start", "/v1/work/start", withSurfaceMetadata(workInput)).pipe(
+      postJson(
+        "work.start",
+        "/v1/work/start",
+        withSurfaceMetadata(withDefaultRepo(workInput, input.defaultRepo)),
+      ).pipe(
         Effect.flatMap(decodeFor("work.start", decodeControlResult)),
       ),
     sendTurn: (sessionRef, turnInput) =>
@@ -369,6 +388,7 @@ export function makeJarvisClient(config: {
   readonly jarvisCockpitEnabled: boolean;
   readonly jarvisApiBaseUrl: URL | undefined;
   readonly jarvisApiToken: string | undefined;
+  readonly jarvisDefaultRepo?: string | undefined;
   readonly jarvisFixtureMode: boolean;
 }): JarvisClient {
   if (config.jarvisFixtureMode || !config.jarvisCockpitEnabled) {
@@ -378,6 +398,7 @@ export function makeJarvisClient(config: {
     return makeJarvisCockpitClient({
       baseUrl: config.jarvisApiBaseUrl,
       ...(config.jarvisApiToken ? { token: config.jarvisApiToken } : {}),
+      ...(config.jarvisDefaultRepo ? { defaultRepo: config.jarvisDefaultRepo } : {}),
     });
   }
   return makeMissingConfigurationClient(
@@ -512,7 +533,7 @@ export function makeJarvisFixtureClient(): JarvisClient {
       },
     },
   ];
-  const snapshot: JarvisRunsSnapshot = {
+  const initialSnapshot: JarvisRunsSnapshot = {
     api_version: "v1",
     schema_version: 1,
     cursor: "evt_fixture_2",
@@ -650,6 +671,282 @@ export function makeJarvisFixtureClient(): JarvisClient {
     },
   };
 
+  let fixtureSnapshot: JarvisRunsSnapshot = initialSnapshot;
+  const eventsBySession = new Map<string, ReadonlyArray<JarvisSessionEvent>>([
+    [session.session_ref, events],
+  ]);
+  const requestsBySession = new Map<string, ReadonlyArray<typeof request>>([
+    [session.session_ref, [request]],
+  ]);
+  const checkpointsBySession = new Map<string, ReadonlyArray<typeof checkpoint>>([
+    [session.session_ref, [checkpoint]],
+  ]);
+  let generatedWorkCount = 0;
+
+  const findSession = (candidateSessionRef: string): JarvisWorkerSession | undefined =>
+    fixtureSnapshot.sessions.find((candidate) => candidate.session_ref === candidateSessionRef);
+  const findRun = (candidateRunId: string): JarvisRun | undefined =>
+    fixtureSnapshot.runs.find((candidate) => candidate.run_id === candidateRunId);
+
+  const fixtureEvent = (input: {
+    readonly eventId: string;
+    readonly sequence: number;
+    readonly sessionRef: JarvisSessionRef;
+    readonly runId: JarvisRunId;
+    readonly type: string;
+    readonly turnId?: string | null;
+    readonly messageId?: string | null;
+    readonly data?: Record<string, Schema.Json>;
+  }): JarvisSessionEvent => ({
+    event_id: JarvisSessionEvent.fields.event_id.make(input.eventId),
+    sequence: input.sequence,
+    session_ref: input.sessionRef,
+    run_id: input.runId,
+    type: input.type,
+    occurred_at: now,
+    turn_id: input.turnId ?? null,
+    message_id: input.messageId ?? null,
+    data: input.data ?? {},
+  });
+
+  const synthesizeStartedWork = (workInput: JarvisStartWorkInput) => {
+    generatedWorkCount += 1;
+    const title =
+      firstTrimmed(workInput.title, workInput.objective, workInput.phrase, workInput.prompt) ??
+      `Fixture work ${generatedWorkCount}`;
+    const objective =
+      firstTrimmed(workInput.objective, workInput.prompt, workInput.phrase, workInput.title) ??
+      title;
+    const prompt = firstTrimmed(workInput.prompt, workInput.phrase, objective) ?? objective;
+    const repo = firstTrimmed(workInput.repo) ?? "roughcoder/jarvis";
+    const engine = firstTrimmed(workInput.engine) ?? "codex";
+    const provider = engine.toLowerCase().startsWith("claude") ? "claude" : "codex";
+    const workerId = firstTrimmed(workInput.worker_id) ?? "macbook-worker";
+    const runSlug = fixtureIdSlug(title);
+    const syntheticRunId = JarvisRunId.make(`run_fixture_${runSlug}_${generatedWorkCount}`);
+    const syntheticSessionId = JarvisWorkerSessionId.make(
+      `sess_fixture_${runSlug}_${generatedWorkCount}`,
+    );
+    const syntheticSessionRef = JarvisSessionRef.make(`sessref_${workerId}_${syntheticSessionId}`);
+    const syntheticBranch = firstTrimmed(workInput.branch) ?? `jarvis/fixture-${runSlug}`;
+    const cursor = `evt_fixture_${runSlug}_${generatedWorkCount}_4`;
+    const syntheticRun: JarvisRun = {
+      ...run,
+      run_id: syntheticRunId,
+      title,
+      objective,
+      status: "running",
+      phase: "implementing",
+      repo,
+      branch: syntheticBranch,
+      session_count: 1,
+      active_session_count: 1,
+      pending_input_count: 0,
+      pending_approval_count: 0,
+      artifact_count: 1,
+      primary_artifact_ids: [],
+      latest_activity_at: now,
+      latest_cursor: cursor,
+      created_at: now,
+      updated_at: now,
+      archived_at: null,
+      terminal_reason: null,
+      metadata: {
+        surface: "jarvis-cockpit",
+        fixture_generated: true,
+      },
+    };
+    const syntheticSession: JarvisWorkerSession = {
+      ...session,
+      session_ref: syntheticSessionRef,
+      worker_id: workerId as JarvisWorkerSession["worker_id"],
+      session_id: syntheticSessionId,
+      run_id: syntheticRunId,
+      title,
+      provider,
+      engine,
+      status: "running",
+      repo,
+      branch: syntheticBranch,
+      latest_event_cursor: cursor,
+      pending_input_count: 0,
+      pending_approval_count: 0,
+      checkpoint_count: 0,
+      created_at: now,
+      updated_at: now,
+      archived_at: null,
+      metadata: {
+        surface: "jarvis-cockpit",
+        fixture_generated: true,
+      },
+    };
+    const syntheticEvents: ReadonlyArray<JarvisSessionEvent> = [
+      fixtureEvent({
+        eventId: `${syntheticRunId}_evt_session_created`,
+        sequence: 1,
+        sessionRef: syntheticSessionRef,
+        runId: syntheticRunId,
+        type: "session.created",
+        data: {
+          provider,
+          engine,
+          fixture_generated: true,
+        },
+      }),
+      fixtureEvent({
+        eventId: `${syntheticRunId}_evt_turn_started`,
+        sequence: 2,
+        sessionRef: syntheticSessionRef,
+        runId: syntheticRunId,
+        type: "turn.started",
+        turnId: `${syntheticRunId}_turn_1`,
+        data: {
+          prompt,
+        },
+      }),
+      fixtureEvent({
+        eventId: `${syntheticRunId}_evt_assistant_message`,
+        sequence: 3,
+        sessionRef: syntheticSessionRef,
+        runId: syntheticRunId,
+        type: "assistant.message",
+        turnId: `${syntheticRunId}_turn_1`,
+        messageId: `${syntheticRunId}_message_1`,
+        data: {
+          text: `Fixture mode started "${title}". Connect a real Jarvis API to execute this work with live workers.`,
+        },
+      }),
+      fixtureEvent({
+        eventId: cursor,
+        sequence: 4,
+        sessionRef: syntheticSessionRef,
+        runId: syntheticRunId,
+        type: "turn.completed",
+        turnId: `${syntheticRunId}_turn_1`,
+      }),
+    ];
+    const branchArtifact: JarvisArtifact = {
+      ...fixtureSnapshot.artifacts[0]!,
+      artifact_id: `artifact_fixture_${runSlug}_${generatedWorkCount}_branch` as JarvisArtifact["artifact_id"],
+      run_id: syntheticRunId,
+      session_ref: syntheticSessionRef,
+      title: syntheticBranch,
+      summary: `Fixture branch for ${title}`,
+      branch: syntheticBranch,
+      created_at: now,
+      updated_at: now,
+      metadata: {
+        fixture_generated: true,
+      },
+    };
+    const runWithArtifact: JarvisRun = {
+      ...syntheticRun,
+      artifact_count: 1,
+      primary_artifact_ids: [branchArtifact.artifact_id],
+    };
+    fixtureSnapshot = {
+      ...fixtureSnapshot,
+      cursor,
+      generated_at: now,
+      runs: [runWithArtifact, ...fixtureSnapshot.runs],
+      sessions: [syntheticSession, ...fixtureSnapshot.sessions],
+      artifacts: [branchArtifact, ...fixtureSnapshot.artifacts],
+      workers: fixtureSnapshot.workers.map((worker) =>
+        worker.worker_id === syntheticSession.worker_id
+          ? {
+              ...worker,
+              capacity: {
+                ...worker.capacity,
+                active_sessions: worker.capacity.active_sessions + 1,
+              },
+            }
+          : worker,
+      ),
+    };
+    eventsBySession.set(syntheticSessionRef, syntheticEvents);
+    requestsBySession.set(syntheticSessionRef, []);
+    checkpointsBySession.set(syntheticSessionRef, []);
+    return {
+      cursor,
+      run: runWithArtifact,
+      session: syntheticSession,
+      events: syntheticEvents,
+      artifacts: [branchArtifact],
+    };
+  };
+
+  const appendSyntheticTurn = (candidateSessionRef: string, turnInput: JarvisTurnInput) => {
+    const targetSession = findSession(candidateSessionRef) ?? session;
+    const targetRun = findRun(targetSession.run_id) ?? run;
+    const existingEvents = eventsBySession.get(targetSession.session_ref) ?? [];
+    const nextSequence = existingEvents.length + 1;
+    const turnId = `turn_fixture_${fixtureIdSlug(targetSession.session_id)}_${nextSequence}`;
+    const cursor = `${targetRun.run_id}_evt_turn_${nextSequence + 2}_completed`;
+    const prompt = firstTrimmed(turnInput.prompt) ?? "Continue.";
+    const newEvents: ReadonlyArray<JarvisSessionEvent> = [
+      fixtureEvent({
+        eventId: `${targetRun.run_id}_evt_turn_${nextSequence}_started`,
+        sequence: nextSequence,
+        sessionRef: targetSession.session_ref,
+        runId: targetRun.run_id,
+        type: "turn.started",
+        turnId,
+        data: {
+          prompt,
+        },
+      }),
+      fixtureEvent({
+        eventId: `${targetRun.run_id}_evt_turn_${nextSequence + 1}_assistant`,
+        sequence: nextSequence + 1,
+        sessionRef: targetSession.session_ref,
+        runId: targetRun.run_id,
+        type: "assistant.message",
+        turnId,
+        messageId: `${turnId}_message`,
+        data: {
+          text: `Fixture mode recorded the turn: ${prompt}`,
+        },
+      }),
+      fixtureEvent({
+        eventId: cursor,
+        sequence: nextSequence + 2,
+        sessionRef: targetSession.session_ref,
+        runId: targetRun.run_id,
+        type: "turn.completed",
+        turnId,
+      }),
+    ];
+    const updatedSession: JarvisWorkerSession = {
+      ...targetSession,
+      latest_event_cursor: cursor,
+      updated_at: now,
+    };
+    const updatedRun: JarvisRun = {
+      ...targetRun,
+      latest_activity_at: now,
+      latest_cursor: cursor,
+      updated_at: now,
+    };
+    fixtureSnapshot = {
+      ...fixtureSnapshot,
+      cursor,
+      generated_at: now,
+      runs: fixtureSnapshot.runs.map((candidate) =>
+        candidate.run_id === updatedRun.run_id ? updatedRun : candidate,
+      ),
+      sessions: fixtureSnapshot.sessions.map((candidate) =>
+        candidate.session_ref === updatedSession.session_ref ? updatedSession : candidate,
+      ),
+    };
+    eventsBySession.set(targetSession.session_ref, [...existingEvents, ...newEvents]);
+    return {
+      cursor,
+      run: updatedRun,
+      session: updatedSession,
+      events: newEvents,
+    };
+  };
+
   return {
     getCatalog: () =>
       Effect.succeed({
@@ -689,10 +986,10 @@ export function makeJarvisFixtureClient(): JarvisClient {
         request_kinds: ["approval", "input"],
         generated_at: now,
       }),
-    getSnapshot: () => Effect.succeed(snapshot),
+    getSnapshot: () => Effect.succeed(fixtureSnapshot),
     getSession: (candidateSessionRef) =>
-      candidateSessionRef === session.session_ref
-        ? Effect.succeed(session)
+      findSession(candidateSessionRef)
+        ? Effect.succeed(findSession(candidateSessionRef)!)
         : Effect.fail(
             new JarvisClientError({
               operation: "fixture.session.get",
@@ -702,42 +999,48 @@ export function makeJarvisFixtureClient(): JarvisClient {
           ),
     getSessionEvents: (candidateSessionRef) =>
       Effect.succeed({
-        items: candidateSessionRef === session.session_ref ? events : [],
-        cursor: "evt_fixture_2",
+        items: eventsBySession.get(candidateSessionRef) ?? [],
+        cursor: fixtureSnapshot.cursor,
         has_more: false,
       }),
     getRequests: (candidateSessionRef) =>
       Effect.succeed({
-        items: candidateSessionRef === session.session_ref ? [request] : [],
-        cursor: "evt_fixture_2",
+        items: requestsBySession.get(candidateSessionRef) ?? [],
+        cursor: fixtureSnapshot.cursor,
         has_more: false,
       }),
     getCheckpoints: (candidateSessionRef) =>
       Effect.succeed({
-        items: candidateSessionRef === session.session_ref ? [checkpoint] : [],
-        cursor: "evt_fixture_2",
+        items: checkpointsBySession.get(candidateSessionRef) ?? [],
+        cursor: fixtureSnapshot.cursor,
         has_more: false,
       }),
-    startWork: () =>
-      Effect.succeed({
+    startWork: (workInput) => {
+      const synthetic = synthesizeStartedWork(workInput);
+      return Effect.succeed({
         ok: true,
-        cursor: "evt_fixture_2",
-        run,
-        session,
-        events: [...events],
-        requests: [request],
-        artifacts: [...snapshot.artifacts],
-      }),
-    sendTurn: () =>
-      Effect.succeed({
+        cursor: synthetic.cursor,
+        run: synthetic.run,
+        session: synthetic.session,
+        events: [...synthetic.events],
+        requests: [],
+        artifacts: [...synthetic.artifacts],
+      });
+    },
+    sendTurn: (candidateSessionRef, turnInput) => {
+      const synthetic = appendSyntheticTurn(candidateSessionRef, turnInput);
+      return Effect.succeed({
         ok: true,
-        cursor: "evt_fixture_2",
-        run,
-        session,
-        events: [...events],
-        requests: [request],
-        artifacts: [...snapshot.artifacts],
-      }),
+        cursor: synthetic.cursor,
+        run: synthetic.run,
+        session: synthetic.session,
+        events: [...synthetic.events],
+        requests: requestsBySession.get(synthetic.session.session_ref) ?? [],
+        artifacts: fixtureSnapshot.artifacts.filter(
+          (artifact) => artifact.run_id === synthetic.run.run_id,
+        ),
+      });
+    },
     respondApproval: () => Effect.succeed({ ok: true, cursor: "evt_fixture_2", run, session }),
     respondInput: () => Effect.succeed({ ok: true, cursor: "evt_fixture_2", run, session }),
     interruptSession: () =>
@@ -833,6 +1136,29 @@ function appendQuery(path: string, params: Record<string, string | number | unde
   }
   const serialized = query.toString();
   return serialized.length > 0 ? `${path}?${serialized}` : path;
+}
+
+function firstTrimmed(...values: ReadonlyArray<unknown>): string | null {
+  for (const value of values) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    const trimmed = value.trim();
+    if (trimmed.length > 0) {
+      return trimmed;
+    }
+  }
+  return null;
+}
+
+function fixtureIdSlug(value: string): string {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40);
+  return slug.length > 0 ? slug : "work";
 }
 
 function truncateResponseBody(text: string): string {

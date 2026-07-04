@@ -7,6 +7,7 @@ import {
   FolderPlusIcon,
   Globe2Icon,
   LoaderIcon,
+  RocketIcon,
   SearchIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -119,6 +120,7 @@ import { useEnvironmentQuery } from "../state/query";
 import { threadEnvironment, useEnvironmentThread } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
+import { isJarvisCockpitEnvironment } from "../jarvisCockpit";
 import {
   buildThreadRouteParams,
   resolveThreadRouteRef,
@@ -2873,6 +2875,11 @@ interface SidebarProjectsContentProps {
 const SidebarProjectsContent = memo(function SidebarProjectsContent(
   props: SidebarProjectsContentProps,
 ) {
+  const { environments: sidebarEnvironments } = useEnvironments();
+  const isJarvisCockpitMode = sidebarEnvironments.some((environment) =>
+    isJarvisCockpitEnvironment(environment.serverConfig ?? undefined),
+  );
+  const addWorkLabel = isJarvisCockpitMode ? "Start work" : "Add project";
   const {
     showArm64IntelBuildWarning,
     arm64IntelBuildWarningDescription,
@@ -3006,16 +3013,20 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 render={
                   <button
                     type="button"
-                    aria-label="Add project"
+                    aria-label={addWorkLabel}
                     data-testid="sidebar-add-project-trigger"
                     className="inline-flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-md px-[calc(--spacing(1)-1px)] text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
                     onClick={openAddProject}
                   />
                 }
               >
-                <FolderPlusIcon className="size-3.5" />
+                {isJarvisCockpitMode ? (
+                  <RocketIcon className="size-3.5" />
+                ) : (
+                  <FolderPlusIcon className="size-3.5" />
+                )}
               </TooltipTrigger>
-              <TooltipPopup side="right">Add project</TooltipPopup>
+              <TooltipPopup side="right">{addWorkLabel}</TooltipPopup>
             </Tooltip>
           </div>
         </div>
@@ -3095,7 +3106,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
 
         {projectsLength === 0 && (
           <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
-            No projects yet
+            {isJarvisCockpitMode ? "No runs yet" : "No projects yet"}
           </div>
         )}
       </SidebarGroup>

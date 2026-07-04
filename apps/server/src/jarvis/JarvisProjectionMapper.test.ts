@@ -217,6 +217,76 @@ it("keeps queued Jarvis runs visible before they have sessions", () => {
   assert.strictEqual(shell.threads.length, 0);
 });
 
+it("adds a start-work anchor project when Jarvis has workers but no runs yet", () => {
+  const shell = mapJarvisRunsSnapshotToShellSnapshot({
+    api_version: "v1",
+    schema_version: 1,
+    cursor: "evt_empty",
+    sync: { mode: "fast", status: "fresh", synced_at: now, errors: [] },
+    runs: [],
+    sessions: [],
+    workers: [
+      {
+        worker_id: "macbook-worker" as JarvisWorkerSession["worker_id"],
+        display_name: "MacBook worker",
+        status: "online",
+        health: "healthy",
+        last_seen_at: now,
+        capabilities: ["code.edit"],
+        engines: [],
+        capacity: {
+          max_sessions: 1,
+          active_sessions: 0,
+          queued_sessions: 0,
+        },
+        repositories: [],
+        public_metadata: {},
+      },
+    ],
+    artifacts: [],
+    generated_at: now,
+  });
+
+  assert.strictEqual(shell.projects.length, 1);
+  assert.strictEqual(shell.projects[0]?.id, "jarvis-start");
+  assert.strictEqual(shell.projects[0]?.workspaceRoot, "jarvis://start");
+  assert.strictEqual(shell.threads.length, 0);
+});
+
+it("keeps the start-work anchor when terminal runs exist", () => {
+  const shell = mapJarvisRunsSnapshotToShellSnapshot({
+    api_version: "v1",
+    schema_version: 1,
+    cursor: "evt_terminal",
+    sync: { mode: "fast", status: "fresh", synced_at: now, errors: [] },
+    runs: [{ ...run, status: "terminal", repo: "", branch: "", terminal_reason: "Needs repo" }],
+    sessions: [],
+    workers: [
+      {
+        worker_id: "macbook-worker" as JarvisWorkerSession["worker_id"],
+        display_name: "MacBook worker",
+        status: "online",
+        health: "healthy",
+        last_seen_at: now,
+        capabilities: ["code.edit"],
+        engines: [],
+        capacity: {
+          max_sessions: 1,
+          active_sessions: 0,
+          queued_sessions: 0,
+        },
+        repositories: [],
+        public_metadata: {},
+      },
+    ],
+    artifacts: [],
+    generated_at: now,
+  });
+
+  assert.strictEqual(shell.projects[0]?.id, "jarvis-start");
+  assert.strictEqual(shell.projects[1]?.id, "jarvis-run_run_1");
+});
+
 it("moves run-level archived sessions out of live snapshots", () => {
   const archivedRun = { ...run, archived_at: "2026-07-01T13:00:00+00:00" };
   const session = makeSession("sess_run_archived");

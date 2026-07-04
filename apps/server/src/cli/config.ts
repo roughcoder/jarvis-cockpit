@@ -137,6 +137,10 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  jarvisDefaultRepo: Config.string("JARVIS_DEFAULT_REPO").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   jarvisFixtureMode: Config.boolean("JARVIS_FIXTURE_MODE").pipe(Config.withDefault(false)),
 });
 
@@ -379,6 +383,7 @@ export const resolveServerConfig = (
       jarvisCockpitEnabled: env.jarvisCockpitEnabled,
       jarvisApiBaseUrl: env.jarvisApiBaseUrl,
       jarvisApiToken: env.jarvisApiToken,
+      jarvisDefaultRepo: env.jarvisDefaultRepo,
       jarvisFixtureMode: env.jarvisFixtureMode,
     };
 

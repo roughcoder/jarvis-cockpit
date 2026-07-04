@@ -78,6 +78,7 @@ export class ServerConfig extends Context.Service<
     readonly jarvisCockpitEnabled: boolean;
     readonly jarvisApiBaseUrl: URL | undefined;
     readonly jarvisApiToken: string | undefined;
+    readonly jarvisDefaultRepo: string | undefined;
     readonly jarvisFixtureMode: boolean;
   }
 >()("t3/config/ServerConfig") {
@@ -181,6 +182,7 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     jarvisCockpitEnabled: false,
     jarvisApiBaseUrl: undefined,
     jarvisApiToken: undefined,
+    jarvisDefaultRepo: undefined,
     jarvisFixtureMode: false,
     port: 0,
     host: undefined,
