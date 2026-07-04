@@ -94,33 +94,36 @@ Known-good local run loop for the `jarvis-cockpit` fork:
    volta run --node 24.13.1 --pnpm 10.24.0 pnpm dev
    ```
 
-2. Expect the dev runner to use web port `5733`, server port `13773`, and base dir `/Users/neilbarton/.t3` unless a port offset is configured.
+2. Expect Portless to expose the app at `https://cockpit.localhost`. The
+   underlying direct dev-runner defaults are web port `5733`, server port
+   `13773`, and base dir `/Users/neilbarton/.t3` unless a port offset is
+   configured.
 3. For browser automation, issue pairing tokens against the dev auth store, not the default userdata store:
 
    ```bash
    volta run --node 24.13.1 --pnpm 10.24.0 node apps/server/dist/bin.mjs auth pairing create \
      --base-dir /Users/neilbarton/.t3 \
-     --dev-url http://localhost:5733 \
-     --base-url http://localhost:5733 \
+     --dev-url https://cockpit.localhost \
+     --base-url https://cockpit.localhost \
      --json
    ```
 
 4. Open the returned `pairUrl` in a fresh named `agent-browser` session and wait long enough for pairing to complete:
 
    ```bash
-   agent-browser --session jarvis-cockpit-smoke open 'http://localhost:5733/pair#token=TOKEN'
+   agent-browser --session jarvis-cockpit-smoke open 'https://cockpit.localhost/pair#token=TOKEN'
    agent-browser --session jarvis-cockpit-smoke wait --load networkidle
    agent-browser --session jarvis-cockpit-smoke wait 10000
    agent-browser --session jarvis-cockpit-smoke get url
    agent-browser --session jarvis-cockpit-smoke snapshot -i
    ```
 
-5. Successful pairing lands on `http://localhost:5733/` and the shell should show `Projects`, `No projects yet`, `Add project`, `Settings`, and the main T3 controls.
+5. Successful pairing lands on `https://cockpit.localhost/` and the shell should show `Projects`, `No projects yet`, `Add project`, `Settings`, and the main T3 controls.
 
 Trial-and-error notes to preserve:
 
 - Pairing tokens are one-time and short-lived. Do not test a token with `curl` and then reuse it in the browser; the direct API exchange consumes it.
-- Omitting `--dev-url` when creating a token writes to the non-dev auth store. Passing `--base-dir /Users/neilbarton/.t3/dev` also misses the running server's derived path. Use `--base-dir /Users/neilbarton/.t3 --dev-url http://localhost:5733`.
+- Omitting `--dev-url` when creating a token writes to the non-dev auth store. Passing `--base-dir /Users/neilbarton/.t3/dev` also misses the running server's derived path. Use `--base-dir /Users/neilbarton/.t3 --dev-url https://cockpit.localhost`.
 - A stale `agent-browser` session that has already submitted invalid tokens can keep showing `Invalid pairing token`. Retry with a fresh session name before diagnosing the app.
 - Pairing can take several seconds. Wait around 10 seconds before declaring failure.
 - Pre-auth `401` responses and unauthenticated WebSocket errors in the console are expected while the app is still on `/pair`; treat them as failures only if they persist after the browser lands on `/`.

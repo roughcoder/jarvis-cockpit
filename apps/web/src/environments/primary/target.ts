@@ -138,7 +138,8 @@ function normalizeHostname(hostname: string): string {
 }
 
 export function isLoopbackHostname(hostname: string): boolean {
-  return LOOPBACK_HOSTNAMES.has(normalizeHostname(hostname));
+  const normalized = normalizeHostname(hostname);
+  return LOOPBACK_HOSTNAMES.has(normalized) || normalized.endsWith(".localhost");
 }
 
 function resolveHttpRequestBaseUrl(primaryTarget: PrimaryEnvironmentTarget): string {
@@ -181,6 +182,63 @@ function resolveHttpRequestBaseUrl(primaryTarget: PrimaryEnvironmentTarget): str
   return currentUrl.origin;
 }
 
+function resolveDevServerPrimaryTarget(
+  primaryTarget: PrimaryEnvironmentTarget,
+): PrimaryEnvironmentTarget {
+  const configuredDevServerUrl = import.meta.env.VITE_DEV_SERVER_URL?.trim();
+  if (!configuredDevServerUrl) {
+    return primaryTarget;
+  }
+
+  const currentUrl = parseTargetUrl({
+    rawValue: window.location.href,
+    source: "window-origin",
+    urlKind: "window-location-url",
+  });
+  const httpTargetUrl = parseTargetUrl({
+    rawValue: primaryTarget.target.httpBaseUrl,
+    source: primaryTarget.source,
+    urlKind: "http-base-url",
+  });
+  const wsTargetUrl = parseTargetUrl({
+    rawValue: primaryTarget.target.wsBaseUrl,
+    source: primaryTarget.source,
+    urlKind: "websocket-base-url",
+  });
+  const devServerUrl = parseTargetUrl({
+    rawValue: configuredDevServerUrl,
+    baseUrl: currentUrl.origin,
+    source: "configured",
+    urlKind: "development-server-url",
+  });
+
+  const isCurrentOriginDevServer =
+    (currentUrl.protocol === "http:" || currentUrl.protocol === "https:") &&
+    currentUrl.origin === devServerUrl.origin;
+
+  if (
+    !isCurrentOriginDevServer ||
+    currentUrl.origin === httpTargetUrl.origin ||
+    !isLoopbackHostname(currentUrl.hostname) ||
+    !isLoopbackHostname(httpTargetUrl.hostname) ||
+    !isLoopbackHostname(wsTargetUrl.hostname)
+  ) {
+    return primaryTarget;
+  }
+
+  const httpBaseUrl = new URL(currentUrl.origin);
+  const wsBaseUrl = new URL(currentUrl.origin);
+  wsBaseUrl.protocol = currentUrl.protocol === "https:" ? "wss:" : "ws:";
+
+  return {
+    source: primaryTarget.source,
+    target: {
+      httpBaseUrl: httpBaseUrl.toString(),
+      wsBaseUrl: wsBaseUrl.toString(),
+    },
+  };
+}
+
 function resolveConfiguredPrimaryTarget(): PrimaryEnvironmentTarget | null {
   const configuredHttpBaseUrl = import.meta.env.VITE_HTTP_URL?.trim() || undefined;
   const configuredWsBaseUrl = import.meta.env.VITE_WS_URL?.trim() || undefined;
@@ -200,13 +258,13 @@ function resolveConfiguredPrimaryTarget(): PrimaryEnvironmentTarget | null {
       ? swapBaseUrlProtocol(configuredHttpBaseUrl, "wss:", "http-base-url")
       : swapBaseUrlProtocol(configuredHttpBaseUrl!, "ws:", "http-base-url"));
 
-  return {
+  return resolveDevServerPrimaryTarget({
     source: "configured",
     target: {
       httpBaseUrl: normalizeBaseUrl(resolvedHttpBaseUrl, "configured", "http-base-url"),
       wsBaseUrl: normalizeBaseUrl(resolvedWsBaseUrl, "configured", "websocket-base-url"),
     },
-  };
+  });
 }
 
 function resolveWindowOriginPrimaryTarget(): PrimaryEnvironmentTarget {

@@ -167,6 +167,23 @@ describe("environmentBootstrap", () => {
     );
   });
 
+  it("uses the vite proxy for Portless localhost subdomains during local dev", async () => {
+    vi.stubEnv("VITE_DEV_SERVER_URL", "https://cockpit.localhost/");
+    vi.stubEnv("VITE_HTTP_URL", "http://localhost:13773");
+    vi.stubEnv("VITE_WS_URL", "ws://localhost:13773");
+    installTestBrowser("https://cockpit.localhost/");
+    await installDescriptorApi();
+
+    await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
+    expect(resolvePrimaryEnvironmentHttpUrl("/.well-known/t3/environment")).toBe(
+      "https://cockpit.localhost/.well-known/t3/environment",
+    );
+    expect(getPrimaryKnownEnvironment()?.target).toEqual({
+      httpBaseUrl: "https://cockpit.localhost/",
+      wsBaseUrl: "wss://cockpit.localhost/",
+    });
+  });
+
   it("uses the vite proxy for desktop-managed loopback descriptor requests during local dev", async () => {
     vi.stubEnv("VITE_DEV_SERVER_URL", "http://127.0.0.1:5733");
     vi.stubGlobal("window", {

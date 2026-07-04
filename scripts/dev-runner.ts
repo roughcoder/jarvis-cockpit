@@ -215,6 +215,40 @@ function resolveBaseDir(baseDir: string | undefined): Effect.Effect<string, neve
   });
 }
 
+function parsePort(value: string | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > MAX_PORT) {
+    return undefined;
+  }
+
+  return port;
+}
+
+export function resolvePortlessWebPort(baseEnv: NodeJS.ProcessEnv): number | undefined {
+  if (!baseEnv.PORTLESS_URL) {
+    return undefined;
+  }
+
+  return parsePort(baseEnv.PORT);
+}
+
+function resolvePortlessUrl(baseEnv: NodeJS.ProcessEnv): string | undefined {
+  const rawUrl = baseEnv.PORTLESS_URL?.trim();
+  if (!rawUrl) {
+    return undefined;
+  }
+
+  try {
+    return new URL(rawUrl).toString();
+  } catch {
+    return undefined;
+  }
+}
+
 interface CreateDevRunnerEnvInput {
   readonly mode: DevMode;
   readonly baseEnv: NodeJS.ProcessEnv;
@@ -244,15 +278,17 @@ export function createDevRunnerEnv({
 }: CreateDevRunnerEnvInput): Effect.Effect<NodeJS.ProcessEnv, never, Path.Path> {
   return Effect.gen(function* () {
     const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
-    const webPort = BASE_WEB_PORT + webOffset;
+    const webPort = resolvePortlessWebPort(baseEnv) ?? BASE_WEB_PORT + webOffset;
     const resolvedBaseDir = yield* resolveBaseDir(t3Home);
     const isDesktopMode = mode === "dev:desktop";
+    const portlessUrl = resolvePortlessUrl(baseEnv);
 
     const output: NodeJS.ProcessEnv = {
       ...baseEnv,
       PORT: String(webPort),
       VITE_DEV_SERVER_URL:
         devUrl?.toString() ??
+        portlessUrl ??
         `http://${isDesktopMode ? DESKTOP_DEV_LOOPBACK_HOST : "localhost"}:${webPort}`,
       T3CODE_HOME: resolvedBaseDir,
     };
@@ -492,15 +528,16 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
     );
 
     const { offset, source } = yield* resolveOffset({ portOffset, devInstance });
+    const hostEnvironment = yield* HostProcessEnvironment;
+    const hasPortlessWebPort = resolvePortlessWebPort(hostEnvironment) !== undefined;
 
     const { serverOffset, webOffset } = yield* resolveModePortOffsets({
       mode: input.mode,
       startOffset: offset,
       hasExplicitServerPort: input.port !== undefined,
-      hasExplicitDevUrl: input.devUrl !== undefined,
+      hasExplicitDevUrl: input.devUrl !== undefined || hasPortlessWebPort,
     });
 
-    const hostEnvironment = yield* HostProcessEnvironment;
     const env = yield* createDevRunnerEnv({
       mode: input.mode,
       baseEnv: hostEnvironment,

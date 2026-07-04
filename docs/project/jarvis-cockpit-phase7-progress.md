@@ -124,7 +124,7 @@ Use Volta-pinned commands:
 JARVIS_FIXTURE_MODE=true volta run --node 24.13.1 --pnpm 10.24.0 pnpm dev
 ```
 
-Open `http://localhost:5733/`, pair with the local environment, and select the
+Open `https://cockpit.localhost/`, pair with the local environment, and select the
 fixture worker session. The detail route should look like:
 
 ```text

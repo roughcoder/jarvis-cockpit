@@ -2,6 +2,10 @@
 
 This guide is for people who want to use more than one Claude setup in T3 Code.
 
+For local development of this repo, start the app with `pnpm dev` and open
+`https://cockpit.localhost`. Use `pnpm dev:app` only when you intentionally want
+the direct localhost port flow without Portless.
+
 Common reasons:
 
 - use separate work and personal Claude accounts
