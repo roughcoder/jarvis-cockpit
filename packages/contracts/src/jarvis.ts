@@ -228,7 +228,7 @@ export type JarvisWorkerEngine = typeof JarvisWorkerEngine.Type;
 export const JarvisWorkerRepository = Schema.Struct({
   repo: TrimmedNonEmptyString,
   status: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
-  default_branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  default_branch: OptionalPossiblyEmptyPublicString,
   is_default: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   can_start_work: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
@@ -250,6 +250,7 @@ export const JarvisWorkerProfile = Schema.Struct({
   repositories: Schema.optionalKey(Schema.Array(JarvisWorkerRepository)).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  system: Schema.optionalKey(JsonObject).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   public_metadata: Schema.optionalKey(JsonObject).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -277,7 +278,7 @@ export const JarvisRun = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   latest_activity_at: Schema.optional(Schema.NullOr(IsoDateTime)),
-  latest_cursor: OptionalPublicString,
+  latest_cursor: OptionalPossiblyEmptyPublicString,
   created_at: IsoDateTime,
   updated_at: IsoDateTime,
   archived_at: Schema.optional(Schema.NullOr(IsoDateTime)),
@@ -306,7 +307,7 @@ export const JarvisWorkerSession = Schema.Struct({
   repo: OptionalPossiblyEmptyPublicString,
   branch: OptionalPossiblyEmptyPublicString,
   cwd_label: OptionalPublicString,
-  latest_event_cursor: OptionalPublicString,
+  latest_event_cursor: OptionalPossiblyEmptyPublicString,
   pending_input_count: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   pending_approval_count: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   waiting_on: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)).pipe(
@@ -437,6 +438,17 @@ export type JarvisCockpitSnapshot = typeof JarvisCockpitSnapshot.Type;
 
 export const JarvisRunsSnapshot = JarvisCockpitSnapshot;
 export type JarvisRunsSnapshot = JarvisCockpitSnapshot;
+
+export const JarvisCockpitSnapshotResult = Schema.Struct({
+  ok: Schema.Boolean,
+  snapshot: Schema.optionalKey(JarvisRunsSnapshot),
+  error: Schema.optionalKey(
+    Schema.Struct({
+      message: TrimmedNonEmptyString,
+    }),
+  ),
+});
+export type JarvisCockpitSnapshotResult = typeof JarvisCockpitSnapshotResult.Type;
 
 export const JarvisSessionDetailResponse = Schema.Struct({
   session: JarvisWorkerSession,

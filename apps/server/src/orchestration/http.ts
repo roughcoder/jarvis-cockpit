@@ -20,6 +20,7 @@ import {
   shouldUseJarvisCockpitReads,
 } from "../jarvis/JarvisOrchestrationReadModel.ts";
 import { ServerConfig } from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
 
@@ -30,7 +31,11 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
     const orchestrationEngine = yield* OrchestrationEngineService;
     const config = yield* ServerConfig;
-    const jarvisClient = makeJarvisClient(config);
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
+    const jarvisClient = makeJarvisClient({
+      ...config,
+      getSettings: serverSettings.getSettings,
+    });
 
     return handlers
       .handle(

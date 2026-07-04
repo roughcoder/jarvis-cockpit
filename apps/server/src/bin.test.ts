@@ -32,6 +32,7 @@ import {
 } from "./serverRuntimeState.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import * as ServerSettings from "./serverSettings.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { environmentAuthenticatedAuthLayer } from "./auth/http.ts";
 
@@ -127,6 +128,7 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
         ),
       ),
       Layer.provideMerge(makeProjectPersistenceLayer(config)),
+      Layer.provideMerge(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
       Layer.provideMerge(
         NodeHttpServer.layer(NodeHttp.createServer, {
           host: "127.0.0.1",

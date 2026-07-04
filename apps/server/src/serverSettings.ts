@@ -79,6 +79,8 @@ function providerEnvironmentSecretName(input: {
   return `provider-env-${Buffer.from(input.instanceId, "utf8").toString("base64url")}-${Buffer.from(input.name, "utf8").toString("base64url")}`;
 }
 
+const JARVIS_API_TOKEN_SECRET_NAME = "jarvis-cockpit-api-token";
+
 function redactProviderEnvironmentVariable(
   variable: ProviderInstanceEnvironmentVariable,
 ): ProviderInstanceEnvironmentVariable {
@@ -105,7 +107,17 @@ export function redactServerSettingsForClient(settings: ServerSettings): ServerS
         : instance,
     ]),
   );
-  return { ...settings, providerInstances };
+  return {
+    ...settings,
+    providerInstances,
+    jarvis: {
+      ...settings.jarvis,
+      apiToken: "",
+      ...(settings.jarvis.apiToken.length > 0 || settings.jarvis.apiTokenRedacted
+        ? { apiTokenRedacted: true }
+        : {}),
+    },
+  };
 }
 
 export class ServerSettingsService extends Context.Service<
@@ -363,6 +375,32 @@ const make = Effect.gen(function* () {
       };
     });
 
+  const materializeJarvisSecrets = (
+    settings: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      if (!settings.jarvis.apiTokenRedacted) {
+        return settings;
+      }
+      const secret = yield* secretStore.get(JARVIS_API_TOKEN_SECRET_NAME).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServerSettingsError({
+              settingsPath,
+              operation: "read-secret",
+              cause,
+            }),
+        ),
+      );
+      return {
+        ...settings,
+        jarvis: {
+          ...settings.jarvis,
+          apiToken: Option.isSome(secret) ? textDecoder.decode(secret.value) : "",
+        },
+      };
+    });
+
   const persistProviderEnvironmentSecrets = (
     current: ServerSettings,
     next: ServerSettings,
@@ -464,6 +502,52 @@ const make = Effect.gen(function* () {
       };
     });
 
+  const persistJarvisSecrets = (
+    next: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      if (next.jarvis.apiTokenRedacted) {
+        return next;
+      }
+
+      if (next.jarvis.apiToken.length > 0) {
+        yield* secretStore.set(JARVIS_API_TOKEN_SECRET_NAME, textEncoder.encode(next.jarvis.apiToken)).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServerSettingsError({
+                settingsPath,
+                operation: "write-secret",
+                cause,
+              }),
+          ),
+        );
+        return {
+          ...next,
+          jarvis: {
+            ...next.jarvis,
+            apiToken: "",
+            apiTokenRedacted: true,
+          },
+        };
+      }
+
+      yield* secretStore.remove(JARVIS_API_TOKEN_SECRET_NAME).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ServerSettingsError({
+              settingsPath,
+              operation: "remove-secret",
+              cause,
+            }),
+        ),
+      );
+      const { apiTokenRedacted: _omit, ...jarvis } = next.jarvis;
+      return {
+        ...next,
+        jarvis,
+      };
+    });
+
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
       const sparseSettingsJson = yield* encodeServerSettingsJson(
@@ -561,28 +645,32 @@ const make = Effect.gen(function* () {
     ready: Deferred.await(startedDeferred),
     getSettings: getSettingsFromCache.pipe(
       Effect.flatMap(materializeProviderEnvironmentSecrets),
+      Effect.flatMap(materializeJarvisSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
     updateSettings: (patch) =>
       writeSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const current = yield* getSettingsFromCache;
-          const nextPersisted = yield* persistProviderEnvironmentSecrets(
+          const nextWithProviderSecrets = yield* persistProviderEnvironmentSecrets(
             current,
             applyServerSettingsPatch(current, patch),
           );
+          const nextPersisted = yield* persistJarvisSecrets(nextWithProviderSecrets);
           const next = yield* normalizeServerSettings(nextPersisted);
           yield* writeSettingsAtomically(next);
           yield* Cache.set(settingsCache, cacheKey, next);
           yield* emitChange(next);
           const materialized = yield* materializeProviderEnvironmentSecrets(next);
-          return resolveTextGenerationProvider(materialized);
+          const withJarvisSecrets = yield* materializeJarvisSecrets(materialized);
+          return resolveTextGenerationProvider(withJarvisSecrets);
         }),
       ),
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub).pipe(
         Stream.mapEffect((settings) =>
           materializeProviderEnvironmentSecrets(settings).pipe(
+            Effect.flatMap(materializeJarvisSecrets),
             Effect.catch((error: ServerSettingsError) =>
               Effect.logWarning("failed to materialize provider environment secrets", {
                 operation: error.operation,

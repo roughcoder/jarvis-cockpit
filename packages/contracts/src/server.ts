@@ -19,7 +19,7 @@ import {
 import { EditorId } from "./editor.ts";
 import { ModelCapabilities } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
-import { ServerSettings } from "./settings.ts";
+import { JarvisBrainConnection, ServerSettings } from "./settings.ts";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
   kind: Schema.Literal("keybindings.malformed-config"),
@@ -416,6 +416,7 @@ export const ServerConfig = Schema.Struct({
   providers: ServerProviders,
   availableEditors: Schema.Array(EditorId),
   observability: ServerObservability,
+  jarvisBrain: JarvisBrainConnection,
   settings: ServerSettings,
 });
 export type ServerConfig = typeof ServerConfig.Type;

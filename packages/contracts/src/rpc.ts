@@ -131,7 +131,14 @@ import {
   ServerUpsertKeybindingInput,
   ServerUpsertKeybindingResult,
 } from "./server.ts";
-import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
+import {
+  JarvisBrainCheckInput,
+  JarvisBrainCheckResult,
+  ServerSettings,
+  ServerSettingsError,
+  ServerSettingsPatch,
+} from "./settings.ts";
+import { JarvisCockpitSnapshotResult } from "./jarvis.ts";
 import {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
@@ -208,6 +215,8 @@ export const WS_METHODS = {
   serverRemoveKeybinding: "server.removeKeybinding",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
+  serverCheckJarvisBrain: "server.checkJarvisBrain",
+  serverGetJarvisSnapshot: "server.getJarvisSnapshot",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
@@ -281,6 +290,18 @@ export const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
 export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
   payload: Schema.Struct({ patch: ServerSettingsPatch }),
   success: ServerSettings,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerCheckJarvisBrainRpc = Rpc.make(WS_METHODS.serverCheckJarvisBrain, {
+  payload: JarvisBrainCheckInput,
+  success: JarvisBrainCheckResult,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerGetJarvisSnapshotRpc = Rpc.make(WS_METHODS.serverGetJarvisSnapshot, {
+  payload: Schema.Struct({}),
+  success: JarvisCockpitSnapshotResult,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
@@ -689,6 +710,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsServerCheckJarvisBrainRpc,
+  WsServerGetJarvisSnapshotRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
