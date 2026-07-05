@@ -185,6 +185,8 @@ export function resolveJarvisBrainConnection(
       : savedApiToken.length > 0 || settings.jarvis.apiTokenRedacted
         ? "settings"
         : undefined;
+  const oauthTokenConfigured =
+    isJarvisOAuthConfigured(config) && canUseJarvisOAuthForUrl(config, apiBaseUrl);
 
   return {
     enabled: config.jarvisCockpitEnabled,
@@ -196,8 +198,8 @@ export function resolveJarvisBrainConnection(
       savedApiToken.length > 0 ||
       Boolean(settings.jarvis.apiTokenRedacted),
     ...(apiTokenSource !== undefined ? { apiTokenSource } : {}),
-    oauthTokenConfigured: isJarvisOAuthConfigured(config),
-    ...(isJarvisOAuthConfigured(config) ? { oauthTokenSource: "environment" as const } : {}),
+    oauthTokenConfigured,
+    ...(oauthTokenConfigured ? { oauthTokenSource: "environment" as const } : {}),
   };
 }
 
@@ -639,12 +641,15 @@ export function checkJarvisBrain(input: {
         ? input.apiToken.trim()
         : (input.config.jarvisApiToken ?? input.settings.jarvis.apiToken.trim());
     const canUseOAuthForHealthCheck = canUseJarvisOAuthForUrl(input.config, apiBaseUrl);
-    const oauthToken =
+    const oauthTokenEffect =
       input.apiToken === undefined &&
       input.oauthAccessToken !== undefined &&
       canUseOAuthForHealthCheck
-        ? yield* input.oauthAccessToken
-        : undefined;
+        ? input.oauthAccessToken.pipe(
+            Effect.catch((error) => (legacyToken.length > 0 ? Effect.void : Effect.fail(error))),
+          )
+        : Effect.void;
+    const oauthToken = yield* oauthTokenEffect;
     const apiToken = oauthToken ?? legacyToken;
     const checkedAt = DateTime.formatIso(DateTime.nowUnsafe());
     const healthUrl = yield* Effect.try({

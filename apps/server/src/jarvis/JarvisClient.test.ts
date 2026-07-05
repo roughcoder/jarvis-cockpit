@@ -9,6 +9,7 @@ import {
   makeJarvisFixtureClient,
   makeJarvisClient,
   makeJarvisWorkerSessionClient,
+  resolveJarvisBrainConnection,
 } from "./JarvisClient.ts";
 
 const now = "2026-07-01T12:00:00+00:00";
@@ -334,6 +335,28 @@ it.effect("configured OAuth tokens are not sent to saved settings URLs", () =>
     assert.strictEqual(parsedSnapshot.runs[0]?.run_id, "run_1");
   }),
 );
+
+it("does not report OAuth configured when the effective brain URL cannot receive OAuth", () => {
+  const connection = resolveJarvisBrainConnection(
+    {
+      jarvisCockpitEnabled: true,
+      jarvisApiBaseUrl: undefined,
+      jarvisApiToken: undefined,
+      jarvisFixtureMode: false,
+      jarvisOAuthAudience: "jarvis-brain",
+      jarvisOAuthJarvisUser: "neil",
+    },
+    {
+      ...DEFAULT_SERVER_SETTINGS,
+      jarvis: {
+        ...DEFAULT_SERVER_SETTINGS.jarvis,
+        apiBaseUrl: "https://attacker.example",
+      },
+    },
+  );
+
+  assert.strictEqual(connection.oauthTokenConfigured, false);
+});
 
 it.effect("worker-session client export remains an alias for cockpit v1 live mode", () =>
   Effect.gen(function* () {
@@ -770,5 +793,36 @@ it.effect("Jarvis health checks retry the legacy token after OAuth rejection", (
     assert.strictEqual(result.ok, true);
     assert.strictEqual(requests[0]?.authorization, "Bearer oauth-token");
     assert.strictEqual(requests[1]?.authorization, "Bearer legacy-token");
+  }),
+);
+
+it.effect("Jarvis health checks fall back to the legacy token when OAuth minting fails", () =>
+  Effect.gen(function* () {
+    const requests: Array<{ authorization: string | null }> = [];
+
+    const result = yield* checkJarvisBrain({
+      config: {
+        jarvisCockpitEnabled: true,
+        jarvisApiBaseUrl: new URL("http://jarvis.local:8787"),
+        jarvisApiToken: "legacy-token",
+        jarvisFixtureMode: false,
+      },
+      settings: DEFAULT_SERVER_SETTINGS,
+      oauthAccessToken: Effect.fail(
+        new JarvisClientError({
+          operation: "jarvis.oauth",
+          message: "OAuth minting failed.",
+        }),
+      ),
+      fetch: async (_url, init) => {
+        requests.push({
+          authorization: new Headers(init?.headers).get("authorization"),
+        });
+        return jsonResponse({ ok: true });
+      },
+    });
+
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(requests[0]?.authorization, "Bearer legacy-token");
   }),
 );
