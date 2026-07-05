@@ -4,7 +4,7 @@ import * as Option from "effect/Option";
 import { exportJWK, generateKeyPair, importJWK, jwtVerify, type JWK } from "jose";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import { makeJarvisOAuthAccessToken } from "./JarvisOAuth.ts";
+import { getJarvisOAuthJwks, makeJarvisOAuthAccessToken } from "./JarvisOAuth.ts";
 
 const textEncoder = new TextEncoder();
 
@@ -81,5 +81,37 @@ it.effect("OAuth signing key creation reads the existing key after a concurrent 
     assert.strictEqual(setCalls, 0);
     assert.strictEqual(verified.payload.sub, oauthConfig.jarvisOAuthUserEmail);
     assert.strictEqual(verified.payload.jarvis_user, oauthConfig.jarvisOAuthJarvisUser);
+  }),
+);
+
+it.effect("OAuth JWKS strips private and signing-only key operations", () =>
+  Effect.gen(function* () {
+    const { privateKey } = yield* Effect.promise(() =>
+      generateKeyPair("RS256", { extractable: true }),
+    );
+    const privateJwk = {
+      ...(yield* Effect.promise(() => exportJWK(privateKey))),
+      kid: "jarvis-cockpit-local-rs256",
+      alg: "RS256",
+      use: "sig",
+      key_ops: ["sign"],
+    } satisfies JWK;
+    // @effect-diagnostics-next-line preferSchemaOverJson:off
+    const encoded = textEncoder.encode(JSON.stringify(privateJwk));
+    const secrets = ServerSecretStore.ServerSecretStore.of({
+      get: () => Effect.succeed(Option.some(encoded)),
+      set: () => Effect.die("unused"),
+      create: () => Effect.die("unused"),
+      getOrCreateRandom: () => Effect.die("unused"),
+      remove: () => Effect.die("unused"),
+    });
+
+    const jwks = yield* getJarvisOAuthJwks({ config: oauthConfig, secrets });
+    const key = jwks.keys[0] as JWK & Record<string, unknown>;
+
+    assert.strictEqual(key.key_ops, undefined);
+    assert.strictEqual(key.d, undefined);
+    assert.strictEqual(key.p, undefined);
+    assert.strictEqual(key.q, undefined);
   }),
 );
