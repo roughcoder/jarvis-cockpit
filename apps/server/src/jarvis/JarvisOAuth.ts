@@ -92,20 +92,34 @@ export const jarvisOAuthJwksRouteLayer = HttpRouter.add(
   Effect.gen(function* () {
     const config = yield* ServerConfig;
     const secrets = yield* ServerSecretStore.ServerSecretStore;
-    const jwks = yield* getJarvisOAuthJwks({ config, secrets }).pipe(
-      Effect.tapError((cause) =>
-        Effect.logWarning("Failed to load Jarvis OAuth JWKS", {
-          cause,
-        }),
-      ),
-      Effect.orElseSucceed(() => ({ keys: [] })),
+    return yield* getJarvisOAuthJwks({ config, secrets }).pipe(
+      Effect.matchEffect({
+        onFailure: (cause) =>
+          Effect.logWarning("Failed to load Jarvis OAuth JWKS", { cause }).pipe(
+            Effect.as(
+              HttpServerResponse.jsonUnsafe(
+                { error: "jarvis_oauth_jwks_unavailable" },
+                {
+                  status: 503,
+                  headers: {
+                    "Cache-Control": "no-store",
+                    "X-Content-Type-Options": "nosniff",
+                  },
+                },
+              ),
+            ),
+          ),
+        onSuccess: (jwks) =>
+          Effect.succeed(
+            HttpServerResponse.jsonUnsafe(jwks, {
+              headers: {
+                "Cache-Control": "public, max-age=300",
+                "X-Content-Type-Options": "nosniff",
+              },
+            }),
+          ),
+      }),
     );
-    return HttpServerResponse.jsonUnsafe(jwks, {
-      headers: {
-        "Cache-Control": "public, max-age=300",
-        "X-Content-Type-Options": "nosniff",
-      },
-    });
   }),
 );
 

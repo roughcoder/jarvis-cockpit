@@ -424,15 +424,15 @@ export function JarvisSettingsPanel() {
           description={
             oauthConfigured
               ? "The server has an admin-seeded OAuth mapping for this Jarvis brain."
-              : "Sign in, then connect the Jarvis brain. Manual tokens are only needed for recovery or headless setups."
+              : "Account pairing controls are disabled until the OAuth flow is wired. Use manual recovery tokens for now."
           }
           control={
             <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" variant="outline" disabled={oauthConfigured}>
+              <Button size="sm" variant="outline" disabled>
                 <LogInIcon className="size-3.5" />
                 Sign in
               </Button>
-              <Button size="sm" disabled={oauthConfigured}>
+              <Button size="sm" disabled>
                 <KeyRoundIcon className="size-3.5" />
                 Connect brain
               </Button>
