@@ -16,6 +16,7 @@ import { Argument, Flag } from "effect/unstable/cli";
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
+import { formatHostForUrl } from "../startupAccess.ts";
 
 export const modeFlag = Flag.choice("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
@@ -369,7 +370,7 @@ export const resolveServerConfig = (
       () => (mode === "desktop" ? "127.0.0.1" : undefined),
     );
     const logLevel = Option.getOrElse(cliLogLevel, () => env.logLevel);
-    const defaultIssuer = new URL(`http://${host ?? "127.0.0.1"}:${port}`);
+    const defaultIssuer = new URL(`http://${formatHostForUrl(host ?? "127.0.0.1")}:${port}`);
     const betterAuthUrl = env.betterAuthUrl ?? defaultIssuer;
 
     const config: ServerConfig.ServerConfig["Service"] = {

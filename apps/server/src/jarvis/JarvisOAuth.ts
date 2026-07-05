@@ -113,11 +113,7 @@ function loadSigningJwk(secrets: SecretStore): Effect.Effect<JWK, JarvisOAuthEff
   return secrets.get(JARVIS_OAUTH_SIGNING_KEY_SECRET).pipe(
     Effect.flatMap((existing) => {
       if (Option.isSome(existing)) {
-        return Effect.try({
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
-          try: () => JSON.parse(textDecoder.decode(existing.value)) as JWK,
-          catch: (cause) => new JarvisOAuthError({ operation: "decode-signing-key", cause }),
-        });
+        return decodeSigningJwk(existing.value);
       }
       return generateAndStoreSigningJwk(secrets);
     }),
@@ -140,11 +136,43 @@ function generateAndStoreSigningJwk(
     },
     catch: (cause) => new JarvisOAuthError({ operation: "generate-signing-key", cause }),
   }).pipe(
-    Effect.tap((jwk) => {
+    Effect.flatMap((jwk) => {
       const encoded = textEncoder.encode(JSON.stringify(jwk));
-      return secrets.set(JARVIS_OAUTH_SIGNING_KEY_SECRET, encoded);
+      return secrets.create(JARVIS_OAUTH_SIGNING_KEY_SECRET, encoded).pipe(
+        Effect.as(jwk),
+        Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
+          ServerSecretStore.isSecretAlreadyExistsError(error)
+            ? readExistingSigningJwkAfterConcurrentCreate(secrets)
+            : Effect.fail(error),
+        ),
+      );
     }),
   );
+}
+
+function readExistingSigningJwkAfterConcurrentCreate(
+  secrets: SecretStore,
+): Effect.Effect<JWK, JarvisOAuthEffectError> {
+  return secrets.get(JARVIS_OAUTH_SIGNING_KEY_SECRET).pipe(
+    Effect.flatMap((existing) =>
+      Option.isSome(existing)
+        ? decodeSigningJwk(existing.value)
+        : Effect.fail(
+            new JarvisOAuthError({
+              operation: "read-concurrent-signing-key",
+              cause: "Signing key was created concurrently but could not be read.",
+            }),
+          ),
+    ),
+  );
+}
+
+function decodeSigningJwk(value: Uint8Array): Effect.Effect<JWK, JarvisOAuthError> {
+  return Effect.try({
+    // @effect-diagnostics-next-line preferSchemaOverJson:off
+    try: () => JSON.parse(textDecoder.decode(value)) as JWK,
+    catch: (cause) => new JarvisOAuthError({ operation: "decode-signing-key", cause }),
+  });
 }
 
 function toPublicJwk(jwk: JWK): JWK {
