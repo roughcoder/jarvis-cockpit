@@ -290,6 +290,29 @@ it.effect("cockpit client retries the legacy bearer token when OAuth is rejected
   }),
 );
 
+it.effect("cockpit client does not retry the legacy bearer token when OAuth is forbidden", () =>
+  Effect.gen(function* () {
+    const requests: Array<{ authorization: string | null }> = [];
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      token: "legacy-token",
+      tokenProvider: () => Effect.succeed("oauth-token"),
+      fetch: async (_url, init) => {
+        requests.push({
+          authorization: new Headers(init?.headers).get("authorization"),
+        });
+        return jsonResponse({ error: "forbidden" }, { status: 403 });
+      },
+    });
+
+    const error = yield* client.getSnapshot().pipe(Effect.flip);
+
+    assert.strictEqual(error.status, 403);
+    assert.strictEqual(requests.length, 1);
+    assert.strictEqual(requests[0]?.authorization, "Bearer oauth-token");
+  }),
+);
+
 it.effect("configured OAuth tokens are not sent to saved settings URLs", () =>
   Effect.gen(function* () {
     let oauthRequested = false;
@@ -335,6 +358,63 @@ it.effect("configured OAuth tokens are not sent to saved settings URLs", () =>
     assert.strictEqual(parsedSnapshot.runs[0]?.run_id, "run_1");
   }),
 );
+
+it.effect("configured OAuth tokens are sent to the default brain URL", () =>
+  Effect.gen(function* () {
+    let oauthRequested = false;
+    const requests: Array<{ url: string; authorization: string | null }> = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (url, init) => {
+      requests.push({
+        url: String(url),
+        authorization: new Headers(init?.headers).get("authorization"),
+      });
+      return jsonResponse(snapshot);
+    }) as typeof fetch;
+    const client = makeJarvisClient({
+      jarvisCockpitEnabled: true,
+      jarvisApiBaseUrl: undefined,
+      jarvisApiToken: undefined,
+      jarvisFixtureMode: false,
+      oauthAccessToken: () =>
+        Effect.sync(() => {
+          oauthRequested = true;
+          return "oauth-token";
+        }),
+    });
+
+    const parsedSnapshot = yield* client.getSnapshot().pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          globalThis.fetch = originalFetch;
+        }),
+      ),
+    );
+
+    assert.strictEqual(oauthRequested, true);
+    assert.strictEqual(requests[0]?.url, "http://127.0.0.1:8791/v1/cockpit/snapshot?sync=probe");
+    assert.strictEqual(requests[0]?.authorization, "Bearer oauth-token");
+    assert.strictEqual(parsedSnapshot.runs[0]?.run_id, "run_1");
+  }),
+);
+
+it("reports OAuth configured for the default brain URL", () => {
+  const connection = resolveJarvisBrainConnection(
+    {
+      jarvisCockpitEnabled: true,
+      jarvisApiBaseUrl: undefined,
+      jarvisApiToken: undefined,
+      jarvisFixtureMode: false,
+      jarvisOAuthAudience: "jarvis-brain",
+      jarvisOAuthJarvisUser: "neil",
+    },
+    DEFAULT_SERVER_SETTINGS,
+  );
+
+  assert.strictEqual(connection.apiBaseUrl, "http://127.0.0.1:8791");
+  assert.strictEqual(connection.oauthTokenConfigured, true);
+  assert.strictEqual(connection.oauthTokenSource, "environment");
+});
 
 it("does not report OAuth configured when the effective brain URL cannot receive OAuth", () => {
   const connection = resolveJarvisBrainConnection(
@@ -793,6 +873,34 @@ it.effect("Jarvis health checks retry the legacy token after OAuth rejection", (
     assert.strictEqual(result.ok, true);
     assert.strictEqual(requests[0]?.authorization, "Bearer oauth-token");
     assert.strictEqual(requests[1]?.authorization, "Bearer legacy-token");
+  }),
+);
+
+it.effect("Jarvis health checks do not retry the legacy token after OAuth is forbidden", () =>
+  Effect.gen(function* () {
+    const requests: Array<{ authorization: string | null }> = [];
+
+    const result = yield* checkJarvisBrain({
+      config: {
+        jarvisCockpitEnabled: true,
+        jarvisApiBaseUrl: new URL("http://jarvis.local:8787"),
+        jarvisApiToken: "legacy-token",
+        jarvisFixtureMode: false,
+      },
+      settings: DEFAULT_SERVER_SETTINGS,
+      oauthAccessToken: Effect.succeed("oauth-token"),
+      fetch: async (_url, init) => {
+        requests.push({
+          authorization: new Headers(init?.headers).get("authorization"),
+        });
+        return jsonResponse({ error: "forbidden" }, { status: 403 });
+      },
+    });
+
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.status, 403);
+    assert.strictEqual(requests.length, 1);
+    assert.strictEqual(requests[0]?.authorization, "Bearer oauth-token");
   }),
 );
 

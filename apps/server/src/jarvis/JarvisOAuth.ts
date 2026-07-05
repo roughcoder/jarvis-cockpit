@@ -198,6 +198,7 @@ function toPublicJwk(jwk: JWK): JWK {
     dq: _dq,
     qi: _qi,
     oth: _oth,
+    key_ops: _keyOps,
     ...publicJwk
   } = jwk as JWK & Record<string, unknown>;
   return publicJwk as JWK;

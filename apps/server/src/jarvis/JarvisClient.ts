@@ -290,7 +290,7 @@ function resolveRequestAuth(
 }
 
 function isAuthRejectedStatus(status: number): boolean {
-  return status === 401 || status === 403;
+  return status === 401;
 }
 
 function isSameOrigin(candidate: string, configured: string): boolean {
@@ -305,10 +305,8 @@ function canUseJarvisOAuthForUrl(
   config: Pick<JarvisConnectionConfig, "jarvisApiBaseUrl">,
   apiBaseUrl: string,
 ): boolean {
-  return (
-    config.jarvisApiBaseUrl !== undefined &&
-    isSameOrigin(apiBaseUrl, config.jarvisApiBaseUrl.toString())
-  );
+  const trustedBaseUrl = config.jarvisApiBaseUrl?.toString() ?? DEFAULT_JARVIS_API_BASE_URL;
+  return isSameOrigin(apiBaseUrl, trustedBaseUrl);
 }
 
 export function makeJarvisCockpitClient(input: {
@@ -619,9 +617,7 @@ export function makeJarvisClient(config: {
   return makeJarvisCockpitClient({
     baseUrl: config.jarvisApiBaseUrl ?? new URL(DEFAULT_JARVIS_API_BASE_URL),
     ...(config.jarvisApiToken ? { token: config.jarvisApiToken } : {}),
-    ...(config.jarvisApiBaseUrl !== undefined && config.oauthAccessToken !== undefined
-      ? { tokenProvider: config.oauthAccessToken }
-      : {}),
+    ...(config.oauthAccessToken !== undefined ? { tokenProvider: config.oauthAccessToken } : {}),
   });
 }
 
