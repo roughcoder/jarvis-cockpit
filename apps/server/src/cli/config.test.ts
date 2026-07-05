@@ -607,4 +607,39 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       });
     }),
   );
+
+  it.effect("formats IPv6 hosts before deriving the default Better Auth issuer", () =>
+    Effect.gen(function* () {
+      const { join } = yield* Path.Path;
+      const baseDir = join(NodeOS.tmpdir(), "t3-cli-config-ipv6-base");
+
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.some("web"),
+          port: Option.some(3773),
+          host: Option.some("::1"),
+          baseDir: Option.some(baseDir),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      expect(resolved.betterAuthUrl?.toString()).toBe("http://[::1]:3773/");
+      expect(resolved.jarvisOAuthIssuer).toBe("http://[::1]:3773/");
+    }),
+  );
 });

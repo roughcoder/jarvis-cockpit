@@ -157,6 +157,11 @@ type JarvisAccessTokenProvider = (
   operation: string,
 ) => Effect.Effect<string | undefined, JarvisClientError>;
 
+interface ResolvedJarvisAuth {
+  readonly token?: string | undefined;
+  readonly recoveryToken?: string | undefined;
+}
+
 // Jarvis is the source of truth for this boundary. Keep endpoint semantics aligned with:
 // - https://github.com/roughcoder/jarvis/blob/main/docs/COCKPIT_API.md
 // - https://github.com/roughcoder/jarvis/blob/main/docs/FLEET.md
@@ -259,20 +264,36 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function resolveBearerToken(
+function resolveRequestAuth(
   input: {
     readonly token?: string;
     readonly tokenProvider?: JarvisAccessTokenProvider;
   },
   operation: string,
-): Effect.Effect<string | undefined, JarvisClientError> {
+): Effect.Effect<ResolvedJarvisAuth, JarvisClientError> {
   if (input.tokenProvider === undefined) {
-    return Effect.succeed(input.token);
+    return Effect.succeed({ token: input.token });
   }
   return input.tokenProvider(operation).pipe(
     Effect.catch((error) => (input.token ? Effect.succeed(input.token) : Effect.fail(error))),
-    Effect.map((token) => token ?? input.token),
+    Effect.map((token) =>
+      token !== undefined && token !== input.token
+        ? { token, recoveryToken: input.token }
+        : { token: token ?? input.token },
+    ),
   );
+}
+
+function isAuthRejectedStatus(status: number): boolean {
+  return status === 401 || status === 403;
+}
+
+function isSameOrigin(candidate: string, configured: string): boolean {
+  try {
+    return new URL(candidate).origin === new URL(configured).origin;
+  } catch {
+    return false;
+  }
 }
 
 export function makeJarvisCockpitClient(input: {
@@ -283,30 +304,41 @@ export function makeJarvisCockpitClient(input: {
 }): JarvisClient {
   const fetchImpl = input.fetch ?? fetch;
   const requestJson = (operation: string, path: string, init?: RequestInit) =>
-    resolveBearerToken(input, operation).pipe(
-      Effect.flatMap((token) =>
+    resolveRequestAuth(input, operation).pipe(
+      Effect.flatMap((auth) =>
         Effect.tryPromise({
           try: async () => {
-            const response = await fetchImpl(new URL(path, input.baseUrl), {
-              ...init,
-              headers: {
-                accept: "application/json",
-                ...(init?.body !== undefined ? { "content-type": "application/json" } : {}),
-                ...(token ? { authorization: `Bearer ${token}` } : {}),
-                ...init?.headers,
-              },
-            });
-            const text = await response.text();
-            if (!response.ok) {
+            const requestUrl = new URL(path, input.baseUrl);
+            const send = async (token: string | undefined) => {
+              const response = await fetchImpl(requestUrl, {
+                ...init,
+                headers: {
+                  accept: "application/json",
+                  ...(init?.body !== undefined ? { "content-type": "application/json" } : {}),
+                  ...(token ? { authorization: `Bearer ${token}` } : {}),
+                  ...init?.headers,
+                },
+              });
+              const text = await response.text();
+              return { response, text };
+            };
+            const first = await send(auth.token);
+            const result =
+              !first.response.ok &&
+              isAuthRejectedStatus(first.response.status) &&
+              auth.recoveryToken !== undefined
+                ? await send(auth.recoveryToken)
+                : first;
+            if (!result.response.ok) {
               throw new JarvisClientError({
                 operation,
-                status: response.status,
-                responseBody: truncateResponseBody(text),
-                message: `Jarvis request ${operation} failed with HTTP ${response.status}.`,
+                status: result.response.status,
+                responseBody: truncateResponseBody(result.text),
+                message: `Jarvis request ${operation} failed with HTTP ${result.response.status}.`,
               });
             }
             // @effect-diagnostics-next-line preferSchemaOverJson:off
-            const body = text.trim().length > 0 ? JSON.parse(text) : {};
+            const body = result.text.trim().length > 0 ? JSON.parse(result.text) : {};
             return body as unknown;
           },
           catch: (cause) =>
@@ -591,8 +623,11 @@ export function checkJarvisBrain(input: {
       input.apiToken !== undefined
         ? input.apiToken.trim()
         : (input.config.jarvisApiToken ?? input.settings.jarvis.apiToken.trim());
+    const canUseOAuthForHealthCheck = isSameOrigin(apiBaseUrl, connection.apiBaseUrl);
     const oauthToken =
-      input.apiToken === undefined && input.oauthAccessToken !== undefined
+      input.apiToken === undefined &&
+      input.oauthAccessToken !== undefined &&
+      canUseOAuthForHealthCheck
         ? yield* input.oauthAccessToken
         : undefined;
     const apiToken = oauthToken ?? legacyToken;
