@@ -52,6 +52,16 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     jarvisApiToken: undefined,
     jarvisFixtureMode: false,
   } as const;
+  const defaultAuthConfig = (origin = "http://127.0.0.1:4888/") =>
+    ({
+      betterAuthUrl: new URL(origin),
+      betterAuthSecret: undefined,
+      jarvisOAuthIssuer: origin,
+      jarvisOAuthAudience: undefined,
+      jarvisOAuthScopes: "jarvis:read jarvis:operate",
+      jarvisOAuthUserEmail: undefined,
+      jarvisOAuthJarvisUser: undefined,
+    }) as const;
 
   const openBootstrapFd = Effect.fn(function* (payload: DesktopBackendBootstrapValue) {
     const fs = yield* FileSystem.FileSystem;
@@ -113,6 +123,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       expect(resolved).toEqual({
         logLevel: "Warn",
         ...defaultObservabilityConfig,
+        ...defaultAuthConfig("http://0.0.0.0:4001/"),
         jarvisCockpitEnabled: true,
         jarvisApiBaseUrl: new URL("http://127.0.0.1:9876"),
         jarvisApiToken: "jarvis-secret-token",
@@ -184,6 +195,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logLevel: "Debug",
         ...defaultObservabilityConfig,
         ...defaultJarvisConfig,
+        ...defaultAuthConfig("http://127.0.0.1:8788/"),
         mode: "web",
         port: 8788,
         cwd: process.cwd(),
@@ -254,6 +266,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logLevel: "Info",
         ...defaultObservabilityConfig,
         ...defaultJarvisConfig,
+        ...defaultAuthConfig("http://127.0.0.1:8788/"),
         mode: "web",
         port: 8788,
         cwd: process.cwd(),
@@ -327,6 +340,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logLevel: "Info",
         ...defaultObservabilityConfig,
         ...defaultJarvisConfig,
+        ...defaultAuthConfig("http://127.0.0.2:4888/"),
         otlpTracesUrl: "http://localhost:4318/v1/traces",
         otlpMetricsUrl: "http://localhost:4318/v1/metrics",
         mode: "desktop",
@@ -455,6 +469,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logLevel: "Debug",
         ...defaultObservabilityConfig,
         ...defaultJarvisConfig,
+        ...defaultAuthConfig("http://127.0.0.1:8788/"),
         mode: "web",
         port: 8788,
         cwd: process.cwd(),
@@ -523,6 +538,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logLevel: "Info",
         ...defaultObservabilityConfig,
         ...defaultJarvisConfig,
+        ...defaultAuthConfig(),
         otlpTracesUrl: "http://localhost:4318/v1/traces",
         otlpMetricsUrl: "http://localhost:4318/v1/metrics",
         mode: "desktop",
@@ -589,6 +605,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logLevel: "Info",
         ...defaultObservabilityConfig,
         ...defaultJarvisConfig,
+        ...defaultAuthConfig("http://127.0.0.1:3773/"),
         mode: "web",
         port: 3773,
         cwd: process.cwd(),
