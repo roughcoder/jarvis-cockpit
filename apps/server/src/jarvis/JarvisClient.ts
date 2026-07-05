@@ -215,10 +215,13 @@ function makeJarvisClientFromConnection(input: {
   const connection = resolveJarvisBrainConnection(input.config, input.settings);
   const baseUrl = new URL(connection.apiBaseUrl);
   const token = input.config.jarvisApiToken ?? input.settings.jarvis.apiToken.trim();
+  const oauthAccessToken = canUseJarvisOAuthForUrl(input.config, connection.apiBaseUrl)
+    ? input.oauthAccessToken
+    : undefined;
   return makeJarvisCockpitClient({
     baseUrl,
     ...(token.length > 0 ? { token } : {}),
-    ...(input.oauthAccessToken !== undefined ? { tokenProvider: input.oauthAccessToken } : {}),
+    ...(oauthAccessToken !== undefined ? { tokenProvider: oauthAccessToken } : {}),
   });
 }
 
@@ -294,6 +297,16 @@ function isSameOrigin(candidate: string, configured: string): boolean {
   } catch {
     return false;
   }
+}
+
+function canUseJarvisOAuthForUrl(
+  config: Pick<JarvisConnectionConfig, "jarvisApiBaseUrl">,
+  apiBaseUrl: string,
+): boolean {
+  return (
+    config.jarvisApiBaseUrl !== undefined &&
+    isSameOrigin(apiBaseUrl, config.jarvisApiBaseUrl.toString())
+  );
 }
 
 export function makeJarvisCockpitClient(input: {
@@ -604,7 +617,9 @@ export function makeJarvisClient(config: {
   return makeJarvisCockpitClient({
     baseUrl: config.jarvisApiBaseUrl ?? new URL(DEFAULT_JARVIS_API_BASE_URL),
     ...(config.jarvisApiToken ? { token: config.jarvisApiToken } : {}),
-    ...(config.oauthAccessToken !== undefined ? { tokenProvider: config.oauthAccessToken } : {}),
+    ...(config.jarvisApiBaseUrl !== undefined && config.oauthAccessToken !== undefined
+      ? { tokenProvider: config.oauthAccessToken }
+      : {}),
   });
 }
 
@@ -623,7 +638,7 @@ export function checkJarvisBrain(input: {
       input.apiToken !== undefined
         ? input.apiToken.trim()
         : (input.config.jarvisApiToken ?? input.settings.jarvis.apiToken.trim());
-    const canUseOAuthForHealthCheck = isSameOrigin(apiBaseUrl, connection.apiBaseUrl);
+    const canUseOAuthForHealthCheck = canUseJarvisOAuthForUrl(input.config, apiBaseUrl);
     const oauthToken =
       input.apiToken === undefined &&
       input.oauthAccessToken !== undefined &&
@@ -660,13 +675,25 @@ export function checkJarvisBrain(input: {
 
     return yield* Effect.tryPromise({
       try: async () => {
-        const response = await (input.fetch ?? fetch)(healthUrl, {
-          headers: {
-            accept: "application/json",
-            ...(apiToken.length > 0 ? { authorization: `Bearer ${apiToken}` } : {}),
-          },
-        });
-        const text = await response.text();
+        const fetchImpl = input.fetch ?? fetch;
+        const send = async (token: string) => {
+          const response = await fetchImpl(healthUrl, {
+            headers: {
+              accept: "application/json",
+              ...(token.length > 0 ? { authorization: `Bearer ${token}` } : {}),
+            },
+          });
+          const text = await response.text();
+          return { response, text };
+        };
+        const first = await send(apiToken);
+        const result =
+          oauthToken !== undefined &&
+          legacyToken.length > 0 &&
+          isAuthRejectedStatus(first.response.status)
+            ? await send(legacyToken)
+            : first;
+        const { response, text } = result;
         let body: unknown = undefined;
         if (text.trim().length > 0) {
           try {
