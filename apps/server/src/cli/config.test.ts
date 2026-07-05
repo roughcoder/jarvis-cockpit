@@ -123,7 +123,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       expect(resolved).toEqual({
         logLevel: "Warn",
         ...defaultObservabilityConfig,
-        ...defaultAuthConfig("http://0.0.0.0:4001/"),
+        ...defaultAuthConfig("http://127.0.0.1:4001/"),
         jarvisCockpitEnabled: true,
         jarvisApiBaseUrl: new URL("http://127.0.0.1:9876"),
         jarvisApiToken: "jarvis-secret-token",
@@ -657,6 +657,42 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
 
       expect(resolved.betterAuthUrl?.toString()).toBe("http://[::1]:3773/");
       expect(resolved.jarvisOAuthIssuer).toBe("http://[::1]:3773/");
+    }),
+  );
+
+  it.effect("uses a loopback auth issuer for wildcard bind hosts", () =>
+    Effect.gen(function* () {
+      const { join } = yield* Path.Path;
+      const baseDir = join(NodeOS.tmpdir(), "t3-cli-config-wildcard-issuer-base");
+
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.some("web"),
+          port: Option.some(3773),
+          host: Option.some("::"),
+          baseDir: Option.some(baseDir),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      expect(resolved.host).toBe("::");
+      expect(resolved.betterAuthUrl?.toString()).toBe("http://127.0.0.1:3773/");
+      expect(resolved.jarvisOAuthIssuer).toBe("http://127.0.0.1:3773/");
     }),
   );
 });
