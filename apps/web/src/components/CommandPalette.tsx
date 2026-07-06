@@ -120,7 +120,11 @@ import { CommandPaletteResults } from "./CommandPaletteResults";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
-import { primaryServerConfigAtom, primaryServerKeybindingsAtom } from "../state/server";
+import {
+  primaryServerConfigAtom,
+  primaryServerKeybindingsAtom,
+  serverEnvironment,
+} from "../state/server";
 import { resolveShortcutCommand } from "../keybindings";
 import {
   Command,
@@ -508,6 +512,36 @@ function OpenCommandPaletteDialog(props: {
   }, [environments]);
   const isJarvisCockpitMode = jarvisCockpitEnvironmentIds.size > 0;
   const jarvisFixtureMode = primaryServerConfig?.jarvisBrain?.fixtureMode === true;
+  const jarvisStartEnvironmentId = useMemo(() => {
+    if (primaryEnvironmentId !== null && jarvisCockpitEnvironmentIds.has(primaryEnvironmentId)) {
+      return primaryEnvironmentId;
+    }
+    return jarvisCockpitEnvironmentIds.values().next().value ?? null;
+  }, [jarvisCockpitEnvironmentIds, primaryEnvironmentId]);
+  const jarvisProjectsQuery = useEnvironmentQuery(
+    jarvisStartEnvironmentId !== null
+      ? serverEnvironment.jarvisProjects({
+          environmentId: jarvisStartEnvironmentId,
+          input: { includeArchived: false },
+        })
+      : null,
+  );
+  const jarvisSnapshotQuery = useEnvironmentQuery(
+    jarvisStartEnvironmentId !== null
+      ? serverEnvironment.jarvisSnapshot({
+          environmentId: jarvisStartEnvironmentId,
+          input: {},
+        })
+      : null,
+  );
+  const jarvisProjects = useMemo(
+    () =>
+      (jarvisProjectsQuery.data?.projects ?? []).toSorted((left, right) =>
+        left.name.localeCompare(right.name),
+      ),
+    [jarvisProjectsQuery.data?.projects],
+  );
+  const jarvisWorkers = jarvisSnapshotQuery.data?.snapshot?.workers ?? [];
   const jarvisAnchorProject = useMemo(
     () =>
       projects.find(
@@ -957,6 +991,10 @@ function OpenCommandPaletteDialog(props: {
       hasAnchorProject: jarvisAnchorProject !== null,
       hasResumableThread: latestJarvisThread !== null,
       fixtureMode: jarvisFixtureMode,
+      routing: {
+        projects: jarvisProjects,
+        workers: jarvisWorkers,
+      },
     }).map((source) => ({
       kind: "action",
       value: source.value,
@@ -1007,7 +1045,15 @@ function OpenCommandPaletteDialog(props: {
       },
     }));
     return [{ value: "start-work-sources", label: "Start work", items }];
-  }, [handleNewThread, jarvisAnchorProject, jarvisFixtureMode, latestJarvisThread, navigate]);
+  }, [
+    handleNewThread,
+    jarvisAnchorProject,
+    jarvisFixtureMode,
+    jarvisProjects,
+    jarvisWorkers,
+    latestJarvisThread,
+    navigate,
+  ]);
 
   const openStartWorkFlow = useCallback(() => {
     pushPaletteView({

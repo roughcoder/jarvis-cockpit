@@ -161,6 +161,8 @@ import {
   JarvisProjectThreadTurnInput,
   JarvisProjectThreadTurnRpcResult,
   JarvisProjectUpdateInput,
+  JarvisStartWorkInput,
+  JarvisStartWorkValidationRpcResult,
 } from "./jarvis.ts";
 import {
   SourceControlCloneRepositoryInput,
@@ -245,6 +247,7 @@ export const WS_METHODS = {
   serverGetJarvisProjectMemory: "server.getJarvisProjectMemory",
   serverGetJarvisProjectFiles: "server.getJarvisProjectFiles",
   serverGetJarvisProjectThreads: "server.getJarvisProjectThreads",
+  serverValidateJarvisWork: "server.validateJarvisWork",
   serverCreateJarvisProject: "server.createJarvisProject",
   serverUpdateJarvisProject: "server.updateJarvisProject",
   serverArchiveJarvisProject: "server.archiveJarvisProject",
@@ -389,6 +392,14 @@ export const WsServerGetJarvisProjectThreadsRpc = Rpc.make(
     error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
   },
 );
+
+export const WsServerValidateJarvisWorkRpc = Rpc.make(WS_METHODS.serverValidateJarvisWork, {
+  payload: Schema.Struct({
+    input: JarvisStartWorkInput,
+  }),
+  success: JarvisStartWorkValidationRpcResult,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
 
 export const WsServerCreateJarvisProjectRpc = Rpc.make(WS_METHODS.serverCreateJarvisProject, {
   payload: Schema.Struct({
@@ -947,6 +958,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetJarvisProjectMemoryRpc,
   WsServerGetJarvisProjectFilesRpc,
   WsServerGetJarvisProjectThreadsRpc,
+  WsServerValidateJarvisWorkRpc,
   WsServerCreateJarvisProjectRpc,
   WsServerUpdateJarvisProjectRpc,
   WsServerArchiveJarvisProjectRpc,

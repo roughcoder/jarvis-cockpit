@@ -2,9 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildStartWorkRepositoryOptions,
+  buildStartWorkRoutingSummary,
   buildStartWorkSources,
   START_WORK_SEARCH_TERMS,
   START_WORK_TITLE,
+  startWorkValidationMessages,
 } from "./startWork.logic";
 
 describe("buildStartWorkSources", () => {
@@ -92,6 +94,39 @@ describe("buildStartWorkSources", () => {
     expect(byId.get("describe-work")?.description).toContain("codex");
   });
 
+  it("shows selected Jarvis routing context in the manual start row", () => {
+    const sources = buildStartWorkSources({
+      hasAnchorProject: true,
+      hasResumableThread: false,
+      routing: {
+        projects: [
+          {
+            id: "project_jarvis",
+            name: "Jarvis",
+            repos: [{ name: "jarvis-cockpit", remote: "roughcoder/jarvis-cockpit", default: true }],
+          },
+        ],
+        workers: [
+          {
+            worker_id: "mac-mini-worker",
+            display_name: "Mac mini",
+            repositories: [
+              { repo: "roughcoder/jarvis-cockpit", can_start_work: true, is_default: true },
+            ],
+          },
+        ],
+        engine: "codex",
+      },
+    });
+    const describeWork = sources.find((source) => source.id === "describe-work");
+
+    expect(describeWork?.description).toContain("Project: Jarvis");
+    expect(describeWork?.description).toContain("Repo: roughcoder/jarvis-cockpit");
+    expect(describeWork?.description).toContain("Worker: Auto: Mac mini");
+    expect(describeWork?.description).toContain("Engine: codex");
+    expect(describeWork?.description).toContain("Compatible");
+  });
+
   it("orders Jarvis repository options by start readiness and default marker", () => {
     const repositories = buildStartWorkRepositoryOptions([
       {
@@ -134,5 +169,54 @@ describe("buildStartWorkSources", () => {
   it("keeps upstream add-project spellings searchable on the root action", () => {
     expect(START_WORK_TITLE).toBe("Start work");
     expect(START_WORK_SEARCH_TERMS).toContain("add project");
+  });
+});
+
+describe("buildStartWorkRoutingSummary", () => {
+  it("blocks incompatible selected workers and reports engine support", () => {
+    const summary = buildStartWorkRoutingSummary({
+      projects: [
+        {
+          id: "project_jarvis",
+          name: "Jarvis",
+          repos: [{ name: "jarvis", remote: "roughcoder/jarvis", default: true }],
+        },
+      ],
+      workers: [
+        {
+          worker_id: "laptop-worker",
+          display_name: "Laptop",
+          repositories: [{ repo: "roughcoder/other", can_start_work: true }],
+          engines: [{ engine: "codex", status: "available" }],
+        },
+      ],
+      selectedWorkerId: "laptop-worker",
+      engine: "claude",
+    });
+
+    expect(summary.projectLabel).toBe("Jarvis");
+    expect(summary.repoLabel).toBe("roughcoder/jarvis");
+    expect(summary.workerLabel).toBe("Laptop");
+    expect(summary.compatibilityLabel).toBe("No compatible worker");
+    expect(summary.engineSupport).toBe("claude unsupported");
+    expect(summary.canDispatch).toBe(false);
+  });
+
+  it("surfaces Jarvis validation missing fields, authority, and reasons", () => {
+    const messages = startWorkValidationMessages({
+      ok: true,
+      validation: {
+        can_start: false,
+        missing: ["repo"],
+        missing_authority: ["github:write"],
+        reasons: ["selected worker cannot access the repository"],
+      },
+    });
+
+    expect(messages).toEqual([
+      "Missing: repo",
+      "Missing authority: github:write",
+      "selected worker cannot access the repository",
+    ]);
   });
 });

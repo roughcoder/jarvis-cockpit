@@ -414,7 +414,6 @@ function startWorkInputForTurnStart(
         : {}),
     ...(command.bootstrap?.jarvisRepo ? { repo: command.bootstrap.jarvisRepo } : {}),
     ...(prepareWorktree?.baseBranch ? { base_ref: prepareWorktree.baseBranch } : {}),
-    ...(prepareWorktree?.branch ? { branch: prepareWorktree.branch } : {}),
     ...(command.bootstrap?.jarvisWorkerId
       ? { worker_id: JarvisWorkerId.make(command.bootstrap.jarvisWorkerId) }
       : {}),
