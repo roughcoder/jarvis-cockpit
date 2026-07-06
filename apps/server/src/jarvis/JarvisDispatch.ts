@@ -593,10 +593,15 @@ function parseJarvisErrorBody(responseBody: string | null): {
       return { message: responseBody, code: null, recoverable: null };
     }
     const record = parsed as Record<string, unknown>;
+    // Jarvis rejected-write bodies nest the detail: {"ok": false, "error": {code, message, recoverable}}.
+    const source =
+      typeof record.error === "object" && record.error !== null
+        ? (record.error as Record<string, unknown>)
+        : record;
     return {
-      message: typeof record.message === "string" ? record.message : responseBody,
-      code: typeof record.code === "string" ? record.code : null,
-      recoverable: typeof record.recoverable === "boolean" ? record.recoverable : null,
+      message: typeof source.message === "string" ? source.message : responseBody,
+      code: typeof source.code === "string" ? source.code : null,
+      recoverable: typeof source.recoverable === "boolean" ? source.recoverable : null,
     };
   } catch {
     return { message: responseBody, code: null, recoverable: null };
