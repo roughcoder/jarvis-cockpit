@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import {
   ApprovalRequestId,
   CodexSettings,
+  EnvironmentId,
   EventId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -36,6 +37,7 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
@@ -220,6 +222,15 @@ const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory
   listBindings: () => Effect.succeed([]),
 });
 
+const serverConfigTestLayer = (overrides: Partial<ServerConfig["Service"]> = {}) =>
+  Layer.effect(
+    ServerConfig,
+    Effect.gen(function* () {
+      const base = yield* ServerConfig;
+      return ServerConfig.of({ ...base, ...overrides });
+    }),
+  ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), process.cwd())));
+
 const validationRuntimeFactory = makeRuntimeFactory();
 const validationLayer = it.layer(
   Layer.effect(
@@ -287,6 +298,63 @@ validationLayer("CodexAdapterLive validation", (it) => {
       });
     }),
   );
+
+  it.effect("passes native and Jarvis MCP servers to Codex sessions", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    const threadId = asThreadId("thread-mcp");
+    const layer = Layer.effect(
+      CodexAdapter,
+      Effect.gen(function* () {
+        const codexConfig = decodeCodexSettings({});
+        return yield* makeCodexAdapter(codexConfig, {
+          makeRuntime: runtimeFactory.factory,
+        });
+      }),
+    ).pipe(
+      Layer.provideMerge(serverConfigTestLayer({ jarvisMcpResourceUrl: "http://127.0.0.1:8795" })),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("environment-test"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerSessionId: "provider-session-test",
+        threadId,
+        endpoint: "http://127.0.0.1:3773/mcp",
+        authorizationHeader: "Bearer native-mcp-token",
+      });
+
+      try {
+        const adapter = yield* CodexAdapter;
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+
+        const runtimeOptions = runtimeFactory.factory.mock.calls[0]?.[0];
+        NodeAssert.ok(runtimeOptions);
+        NodeAssert.deepStrictEqual(runtimeOptions.appServerArgs, [
+          "-c",
+          "mcp_servers.t3-code.url=http://127.0.0.1:3773/mcp",
+          "-c",
+          'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+          "-c",
+          "mcp_servers.jarvis.url=http://127.0.0.1:8795/mcp",
+        ]);
+        NodeAssert.equal(runtimeOptions.environment?.T3_MCP_BEARER_TOKEN, "native-mcp-token");
+        NodeAssert.equal(
+          runtimeOptions.appServerArgs.some((arg) => arg.includes("mcp_servers.jarvis.bearer")),
+          false,
+        );
+      } finally {
+        McpProviderSession.clearMcpProviderSession(threadId);
+      }
+    }).pipe(Effect.provide(layer));
+  });
 });
 
 const sessionRuntimeFactory = makeRuntimeFactory();
