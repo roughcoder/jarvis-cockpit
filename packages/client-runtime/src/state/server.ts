@@ -194,6 +194,10 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId }) => environmentId,
       },
     }),
+    jarvisCapabilities: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:jarvis-capabilities",
+      tag: WS_METHODS.serverGetJarvisCapabilities,
+    }),
     jarvisSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:jarvis-snapshot",
       tag: WS_METHODS.serverGetJarvisSnapshot,

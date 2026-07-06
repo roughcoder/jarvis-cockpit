@@ -23,6 +23,7 @@ import { Route as SettingsJarvisRouteImport } from './routes/settings.jarvis'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagnostics'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
+import { Route as SettingsCapabilitiesRouteImport } from './routes/settings.capabilities'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
@@ -97,6 +98,11 @@ const SettingsConnectionsRoute = SettingsConnectionsRouteImport.update({
   path: '/connections',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsCapabilitiesRoute = SettingsCapabilitiesRouteImport.update({
+  id: '/capabilities',
+  path: '/capabilities',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsArchivedRoute = SettingsArchivedRouteImport.update({
   id: '/archived',
   path: '/archived',
@@ -125,6 +131,7 @@ export interface FileRoutesByFullPath {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/settings/archived': typeof SettingsArchivedRoute
+  '/settings/capabilities': typeof SettingsCapabilitiesRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -143,6 +150,7 @@ export interface FileRoutesByTo {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/settings/archived': typeof SettingsArchivedRoute
+  '/settings/capabilities': typeof SettingsCapabilitiesRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -164,6 +172,7 @@ export interface FileRoutesById {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/settings/archived': typeof SettingsArchivedRoute
+  '/settings/capabilities': typeof SettingsCapabilitiesRoute
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
@@ -186,6 +195,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/settings/archived'
+    | '/settings/capabilities'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
@@ -204,6 +214,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/settings/archived'
+    | '/settings/capabilities'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
@@ -224,6 +235,7 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/settings/archived'
+    | '/settings/capabilities'
     | '/settings/connections'
     | '/settings/diagnostics'
     | '/settings/general'
@@ -346,6 +358,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsConnectionsRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/capabilities': {
+      id: '/settings/capabilities'
+      path: '/capabilities'
+      fullPath: '/settings/capabilities'
+      preLoaderRoute: typeof SettingsCapabilitiesRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/archived': {
       id: '/settings/archived'
       path: '/archived'
@@ -396,6 +415,7 @@ const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 
 interface SettingsRouteChildren {
   SettingsArchivedRoute: typeof SettingsArchivedRoute
+  SettingsCapabilitiesRoute: typeof SettingsCapabilitiesRoute
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
@@ -410,6 +430,7 @@ interface SettingsRouteChildren {
 
 const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsArchivedRoute: SettingsArchivedRoute,
+  SettingsCapabilitiesRoute: SettingsCapabilitiesRoute,
   SettingsConnectionsRoute: SettingsConnectionsRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,

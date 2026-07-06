@@ -367,6 +367,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverGetSettings, AuthOrchestrationReadScope],
   [WS_METHODS.serverUpdateSettings, AuthOrchestrationOperateScope],
   [WS_METHODS.serverCheckJarvisBrain, AuthOrchestrationReadScope],
+  [WS_METHODS.serverGetJarvisCapabilities, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetJarvisMcpStatus, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetJarvisSnapshot, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetJarvisProjects, AuthOrchestrationReadScope],
@@ -1454,6 +1455,31 @@ const makeWsRpcLayer = (
                     status: error.status,
                   },
                 }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverGetJarvisCapabilities]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetJarvisCapabilities,
+            jarvisClient.getCapabilities().pipe(
+              Effect.catch((error) =>
+                nowIso.pipe(
+                  Effect.map((checkedAt) => ({
+                    ok: false as const,
+                    checked_at: checkedAt,
+                    routes: [],
+                    error: {
+                      message:
+                        error instanceof Error && error.message.trim().length > 0
+                          ? error.message
+                          : "Jarvis capability scan failed.",
+                      status: error instanceof JarvisClientError ? error.status : null,
+                    },
+                  })),
+                ),
               ),
             ),
             {
