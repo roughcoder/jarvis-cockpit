@@ -79,7 +79,7 @@ describe("resolveNoActiveThreadState", () => {
     ]);
   });
 
-  it("prompts to start project work when projects have no conversations", () => {
+  it("prompts to open a project conversation when projects have no conversations", () => {
     const state = resolveNoActiveThreadState({
       isJarvisCockpitMode: true,
       registryFailed: false,
@@ -89,10 +89,15 @@ describe("resolveNoActiveThreadState", () => {
       latestProjectConversation: null,
     });
 
-    expect(state.title).toBe("Start project work");
-    expect(state.description).toContain("Choose a Jarvis project");
+    expect(state.title).toBe("Open a project conversation");
+    expect(state.description).toContain("Create a Jarvis project conversation");
     expect(state.actions).toEqual([
-      { kind: "start-project-work", label: "Start project work", variant: "default" },
+      {
+        kind: "open-project-conversation",
+        label: "Open project conversation",
+        variant: "default",
+      },
+      { kind: "start-project-work", label: "Start project work", variant: "outline" },
     ]);
   });
 

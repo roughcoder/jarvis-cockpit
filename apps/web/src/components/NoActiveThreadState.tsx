@@ -7,6 +7,7 @@ import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import { useProjects, useThreadShells } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { useEnvironmentQuery } from "../state/query";
+import { useAtomCommand } from "../state/use-atom-command";
 import { cn } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { useNavigate } from "@tanstack/react-router";
@@ -17,10 +18,20 @@ import { buildThreadRouteParams } from "../threadRoutes";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
+  buildProjectConversationRouteParams,
+  formatProjectConversationFailure,
+  latestProjectConversation,
+} from "../jarvisProjectConversations.logic";
+import {
   findLatestProjectConversation,
   resolveNoActiveThreadState,
   type NoActiveThreadActionDescriptor,
 } from "./NoActiveThreadState.logic";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import { toastManager } from "./ui/toast";
 
 export function NoActiveThreadState() {
   const navigate = useNavigate();
@@ -49,6 +60,18 @@ export function NoActiveThreadState() {
   );
   const registryProjects =
     projectRegistryQuery.data?.ok === true ? projectRegistryQuery.data.projects : null;
+  const firstRegistryProject = registryProjects?.[0] ?? null;
+  const firstProjectThreadsQuery = useEnvironmentQuery(
+    isJarvisCockpitMode && primaryEnvironment && firstRegistryProject
+      ? serverEnvironment.jarvisProjectThreads({
+          environmentId: primaryEnvironment.environmentId,
+          input: { projectId: firstRegistryProject.id },
+        })
+      : null,
+  );
+  const createProjectThread = useAtomCommand(serverEnvironment.createJarvisProjectThread, {
+    reportFailure: false,
+  });
   const registryFailed =
     isJarvisCockpitMode &&
     !fixtureMode &&
@@ -60,18 +83,28 @@ export function NoActiveThreadState() {
       jarvisEnvironmentIds.has(project.environmentId) && !isJarvisStartProjectId(project.id),
   );
   const visibleJarvisProjects = registryProjects ?? projectedJarvisProjects;
-  const hasVisibleJarvisProjects = visibleJarvisProjects.length > 0;
-  const latestProjectConversation = findLatestProjectConversation({
+  const latestProjectedConversation = findLatestProjectConversation({
     projects: projectedJarvisProjects,
     conversations: threads,
   });
+  const latestRegistryConversation =
+    firstProjectThreadsQuery.data?.ok === true
+      ? latestProjectConversation(firstProjectThreadsQuery.data.threads ?? [])
+      : null;
+  const latestProjectConversationTarget = latestRegistryConversation
+    ? {
+        environmentId: primaryEnvironment?.environmentId ?? "",
+        projectId: latestRegistryConversation.project_id,
+        threadId: latestRegistryConversation.thread_id,
+      }
+    : latestProjectedConversation;
   const state = resolveNoActiveThreadState({
     isJarvisCockpitMode,
     registryFailed,
     registryPending,
     fixtureMode,
     visibleProjectCount: visibleJarvisProjects.length,
-    latestProjectConversation,
+    latestProjectConversation: latestProjectConversationTarget,
   });
   const showJarvisActions = isJarvisCockpitMode;
   const actionIcon = (action: NoActiveThreadActionDescriptor) => {
@@ -89,17 +122,72 @@ export function NoActiveThreadState() {
   const runAction = (action: NoActiveThreadActionDescriptor) => {
     switch (action.kind) {
       case "open-project-conversation":
-        if (latestProjectConversation === null) {
+        if (latestProjectConversationTarget !== null) {
+          if ("projectId" in latestProjectConversationTarget) {
+            void navigate({
+              to: "/jarvis-project/$environmentId/$projectId/$threadId",
+              params: buildProjectConversationRouteParams({
+                environmentId: latestProjectConversationTarget.environmentId,
+                projectId: latestProjectConversationTarget.projectId,
+                threadId: latestProjectConversationTarget.threadId,
+              }),
+            });
+            return;
+          }
+          void navigate({
+            to: "/$environmentId/$threadId",
+            params: buildThreadRouteParams(
+              scopeThreadRef(
+                latestProjectConversationTarget.environmentId as EnvironmentId,
+                latestProjectConversationTarget.threadId as ThreadId,
+              ),
+            ),
+          });
           return;
         }
-        void navigate({
-          to: "/$environmentId/$threadId",
-          params: buildThreadRouteParams(
-            scopeThreadRef(
-              latestProjectConversation.environmentId as EnvironmentId,
-              latestProjectConversation.threadId as ThreadId,
-            ),
-          ),
+        if (!primaryEnvironment || !firstRegistryProject) {
+          return;
+        }
+        void createProjectThread({
+          environmentId: primaryEnvironment.environmentId,
+          input: {
+            projectId: firstRegistryProject.id,
+            input: { title: `Conversation for ${firstRegistryProject.name}` },
+          },
+        }).then((result) => {
+          if (result._tag === "Failure") {
+            if (!isAtomCommandInterrupted(result)) {
+              toastManager.add({
+                type: "error",
+                title: "Could not create project conversation",
+                description: formatProjectConversationFailure(
+                  "create",
+                  squashAtomCommandFailure(result),
+                ),
+              });
+            }
+            return;
+          }
+          if (!result.value.ok || !result.value.thread) {
+            toastManager.add({
+              type: "error",
+              title: "Could not create project conversation",
+              description: formatProjectConversationFailure(
+                "create",
+                result.value.error?.message ?? "Jarvis did not return a project conversation.",
+              ),
+            });
+            return;
+          }
+          firstProjectThreadsQuery.refresh();
+          void navigate({
+            to: "/jarvis-project/$environmentId/$projectId/$threadId",
+            params: buildProjectConversationRouteParams({
+              environmentId: primaryEnvironment.environmentId,
+              projectId: firstRegistryProject.id,
+              threadId: result.value.thread.thread_id,
+            }),
+          });
         });
         return;
       case "start-project-work":
