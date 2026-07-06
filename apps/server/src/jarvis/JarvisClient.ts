@@ -5,12 +5,14 @@ import {
   JarvisArchiveInput,
   JarvisArtifact,
   JarvisCockpitCatalog,
+  JarvisCapabilitiesResult,
   JarvisControlResult,
   DEFAULT_JARVIS_API_BASE_URL,
   type JsonObject as JsonObjectType,
   type JarvisBrainCheckResult,
   type JarvisBrainConnection,
   type JarvisConnectionSource,
+  type JarvisRouteCapability,
   JarvisProject,
   JarvisProjectArchiveInput,
   JarvisProjectCreateInput,
@@ -63,9 +65,15 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { ServerConfig } from "../config.ts";
+import {
+  JARVIS_CAPABILITY_ROUTE_DEFINITIONS,
+  makeProbedJarvisCapability,
+  makeUnprobedJarvisCapability,
+} from "./JarvisCapabilities.ts";
 import { isJarvisOAuthConfigured } from "./JarvisOAuth.ts";
 
 export class JarvisClientError extends Error {
@@ -102,6 +110,7 @@ export class JarvisMissingContractError extends Error {
 
 export interface JarvisClient {
   readonly getCatalog: () => Effect.Effect<JarvisCockpitCatalog, JarvisClientError>;
+  readonly getCapabilities: () => Effect.Effect<JarvisCapabilitiesResult, JarvisClientError>;
   readonly getMcpStatus: () => Effect.Effect<JarvisMcpStatus, JarvisClientError>;
   readonly getSnapshot: () => Effect.Effect<JarvisRunsSnapshot, JarvisClientError>;
   readonly getProjects: (options?: {
@@ -456,6 +465,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function firstStringId(body: unknown, collectionKey: string, idKey: string): string | null {
+  if (!isRecord(body)) {
+    return null;
+  }
+  const collection = body[collectionKey];
+  if (!Array.isArray(collection)) {
+    return null;
+  }
+  for (const item of collection) {
+    if (!isRecord(item)) {
+      continue;
+    }
+    const id = item[idKey];
+    if (typeof id === "string" && id.trim().length > 0) {
+      return id;
+    }
+  }
+  return null;
+}
+
 function projectThreadPayloadFromResponse(
   operation: string,
   body: unknown,
@@ -595,6 +624,51 @@ export function makeJarvisCockpitClient(input: {
       ),
     );
 
+  const requestCapabilityProbe = (operation: string, path: string) =>
+    resolveRequestAuth(input, operation).pipe(
+      Effect.flatMap((auth) =>
+        Effect.tryPromise({
+          try: async () => {
+            const requestUrl = new URL(path, input.baseUrl);
+            const send = async (token: string | undefined) => {
+              const response = await fetchImpl(requestUrl, {
+                method: "GET",
+                headers: {
+                  accept: "application/json",
+                  ...(token ? { authorization: `Bearer ${token}` } : {}),
+                },
+              });
+              const text = await response.text();
+              return { response, text };
+            };
+            const first = await send(auth.token);
+            const result =
+              !first.response.ok &&
+              isAuthRejectedStatus(first.response.status) &&
+              auth.recoveryToken !== undefined
+                ? await send(auth.recoveryToken)
+                : first;
+            let body: unknown = undefined;
+            if (result.text.trim().length > 0) {
+              try {
+                // @effect-diagnostics-next-line preferSchemaOverJson:off
+                body = JSON.parse(result.text);
+              } catch {
+                body = undefined;
+              }
+            }
+            return { statusCode: result.response.status, body };
+          },
+          catch: (cause) =>
+            new JarvisClientError({
+              operation,
+              message: `Jarvis capability probe ${operation} failed before a response was read.`,
+              cause,
+            }),
+        }),
+      ),
+    );
+
   const postJson = (operation: string, path: string, payload: unknown) =>
     requestJson(operation, path, {
       method: "POST",
@@ -657,6 +731,76 @@ export function makeJarvisCockpitClient(input: {
       requestJson("cockpit.catalog", "/v1/cockpit/catalog").pipe(
         Effect.flatMap(decodeFor("cockpit.catalog", decodeCatalog)),
       ),
+    getCapabilities: () =>
+      Effect.gen(function* () {
+        const checkedAt = DateTime.formatIso(DateTime.nowUnsafe());
+        let projectId: string | null = null;
+        let threadId: string | null = null;
+        const routes: JarvisRouteCapability[] = [];
+
+        for (const route of JARVIS_CAPABILITY_ROUTE_DEFINITIONS) {
+          if (!route.safeToProbe) {
+            routes.push(makeUnprobedJarvisCapability(route, "Write route was not probed."));
+            continue;
+          }
+          if (route.requires === "project" && projectId === null) {
+            routes.push(
+              makeUnprobedJarvisCapability(route, "No project id was available for a safe probe."),
+            );
+            continue;
+          }
+          if (route.requires === "thread" && (projectId === null || threadId === null)) {
+            routes.push(
+              makeUnprobedJarvisCapability(
+                route,
+                "No project conversation id was available for a safe probe.",
+              ),
+            );
+            continue;
+          }
+
+          const path = route.path
+            .replace("{id}", encodeURIComponent(projectId ?? ""))
+            .replace("{tid}", encodeURIComponent(threadId ?? ""));
+          const probe = yield* requestCapabilityProbe(`capabilities.${route.id}`, path).pipe(
+            Effect.result,
+          );
+          if (Result.isFailure(probe)) {
+            routes.push(makeUnprobedJarvisCapability(route, probe.failure.message));
+            continue;
+          }
+
+          routes.push(
+            makeProbedJarvisCapability({
+              route,
+              path,
+              statusCode: probe.success.statusCode,
+              probedAt: checkedAt,
+            }),
+          );
+
+          if (
+            route.id === "projects.list" &&
+            probe.success.statusCode >= 200 &&
+            probe.success.statusCode < 300
+          ) {
+            projectId = firstStringId(probe.success.body, "projects", "id");
+          }
+          if (
+            route.id === "projects.threads.list" &&
+            probe.success.statusCode >= 200 &&
+            probe.success.statusCode < 300
+          ) {
+            threadId = firstStringId(probe.success.body, "threads", "thread_id");
+          }
+        }
+
+        return {
+          ok: true,
+          checked_at: checkedAt,
+          routes,
+        };
+      }),
     getMcpStatus: () =>
       requestJson("mcp.status", "/v1/mcp/status").pipe(
         Effect.flatMap(decodeFor("mcp.status", decodeMcpStatus)),
@@ -1015,6 +1159,7 @@ export function makeJarvisClient(config: {
 
     return {
       getCatalog: () => withClient("cockpit.catalog", (client) => client.getCatalog()),
+      getCapabilities: () => withClient("capabilities.get", (client) => client.getCapabilities()),
       getMcpStatus: () => withClient("mcp.status", (client) => client.getMcpStatus()),
       getSnapshot: () => withClient("cockpit.snapshot", (client) => client.getSnapshot()),
       getProjects: (options) =>
@@ -1242,6 +1387,7 @@ function makeMissingConfigurationClient(message: string): JarvisClient {
 
   return {
     getCatalog: () => fail("jarvis.client.configure"),
+    getCapabilities: () => fail("jarvis.client.configure"),
     getMcpStatus: () => fail("jarvis.client.configure"),
     getSnapshot: () => fail("jarvis.client.configure"),
     getProjects: () => fail("jarvis.client.configure"),
@@ -2132,6 +2278,24 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
           },
         },
         generated_at: now,
+      }),
+    getCapabilities: () =>
+      Effect.succeed({
+        ok: true,
+        checked_at: now,
+        routes: JARVIS_CAPABILITY_ROUTE_DEFINITIONS.map((route) => {
+          const path = route.path
+            .replace("{id}", encodeURIComponent(cockpitProjectId))
+            .replace("{tid}", encodeURIComponent("thread_fixture_orchestrator"));
+          return route.safeToProbe
+            ? makeProbedJarvisCapability({
+                route,
+                path,
+                statusCode: 200,
+                probedAt: now,
+              })
+            : makeUnprobedJarvisCapability(route, "Write route was not probed.");
+        }),
       }),
     getMcpStatus: () =>
       Effect.succeed({

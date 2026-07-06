@@ -295,6 +295,51 @@ export const JarvisMcpStatusResult = Schema.Struct({
 });
 export type JarvisMcpStatusResult = typeof JarvisMcpStatusResult.Type;
 
+export const JarvisRouteCapabilityGroup = Schema.Literals([
+  "project",
+  "memory",
+  "conversation",
+  "worker-dispatch",
+  "mcp",
+  "activity",
+]);
+export type JarvisRouteCapabilityGroup = typeof JarvisRouteCapabilityGroup.Type;
+
+export const JarvisRouteCapabilityStatus = Schema.Literals([
+  "available",
+  "missing",
+  "auth-error",
+  "not-probed",
+]);
+export type JarvisRouteCapabilityStatus = typeof JarvisRouteCapabilityStatus.Type;
+
+export const JarvisRouteCapability = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  group: JarvisRouteCapabilityGroup,
+  label: TrimmedNonEmptyString,
+  method: TrimmedNonEmptyString,
+  path: TrimmedNonEmptyString,
+  safe_to_probe: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  status: JarvisRouteCapabilityStatus,
+  status_code: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  detail: Schema.optional(Schema.NullOr(Schema.String)),
+  probed_at: Schema.optional(Schema.NullOr(IsoDateTime)),
+});
+export type JarvisRouteCapability = typeof JarvisRouteCapability.Type;
+
+export const JarvisCapabilitiesResult = Schema.Struct({
+  ok: Schema.Boolean,
+  checked_at: IsoDateTime,
+  routes: Schema.Array(JarvisRouteCapability),
+  error: Schema.optionalKey(
+    Schema.Struct({
+      message: Schema.String,
+      status: Schema.optional(Schema.NullOr(Schema.Number)),
+    }),
+  ),
+});
+export type JarvisCapabilitiesResult = typeof JarvisCapabilitiesResult.Type;
+
 export const JarvisProjectRepository = Schema.Struct({
   name: TrimmedNonEmptyString,
   remote: TrimmedNonEmptyString,

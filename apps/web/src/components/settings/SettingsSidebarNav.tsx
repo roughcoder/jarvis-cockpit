@@ -8,6 +8,7 @@ import {
   KeyboardIcon,
   Link2Icon,
   PlugIcon,
+  RouteIcon,
   ServerCogIcon,
   ServerIcon,
   Settings2Icon,
@@ -34,6 +35,7 @@ export type SettingsSectionPath =
   | "/settings/projects"
   | "/settings/workers"
   | "/settings/mcp"
+  | "/settings/capabilities"
   | "/settings/source-control"
   | "/settings/connections"
   | "/settings/archived";
@@ -50,6 +52,7 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   { label: "Projects", to: "/settings/projects", icon: FolderGit2Icon },
   { label: "Workers", to: "/settings/workers", icon: ServerIcon },
   { label: "MCP", to: "/settings/mcp", icon: PlugIcon },
+  { label: "Capabilities", to: "/settings/capabilities", icon: RouteIcon },
   { label: "Source Control", to: "/settings/source-control", icon: GitBranchIcon },
   { label: "Connections", to: "/settings/connections", icon: Link2Icon },
   { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
