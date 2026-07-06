@@ -4,7 +4,9 @@ import {
   CheckpointRef,
   CommandId,
   type JarvisArchiveInput,
+  type JarvisControlResult,
   type JarvisRestoreCheckpointInput,
+  JarvisSessionRef,
   type JarvisSessionCheckpoint,
   type JarvisStartWorkInput,
   type JarvisTurnInput,
@@ -18,11 +20,52 @@ import {
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 
-import { makeJarvisFixtureClient } from "./JarvisClient.ts";
+import { JarvisClientError, makeJarvisFixtureClient } from "./JarvisClient.ts";
 import { dispatchJarvisCommand } from "./JarvisDispatch.ts";
 
 const now = "2026-07-01T12:00:00+00:00";
 const jarvisThreadId = ThreadId.make("jarvis-session_sessref_macbook-worker_sess_fixture_codex");
+
+function jarvisTurnStartCommand(overrides?: {
+  readonly commandId?: string;
+  readonly messageId?: string;
+  readonly text?: string;
+  readonly threadId?: ThreadId;
+}) {
+  return {
+    type: "thread.turn.start" as const,
+    commandId: CommandId.make(overrides?.commandId ?? "cmd_start"),
+    threadId: overrides?.threadId ?? jarvisThreadId,
+    message: {
+      messageId: MessageId.make(overrides?.messageId ?? "msg_user"),
+      role: "user" as const,
+      text: overrides?.text ?? "Continue.",
+      attachments: [],
+    },
+    runtimeMode: "full-access" as const,
+    interactionMode: "default" as const,
+    createdAt: now,
+  };
+}
+
+function jarvisHttpError(input: {
+  readonly operation: string;
+  readonly status: number;
+  readonly code: string;
+  readonly message: string;
+  readonly recoverable?: boolean;
+}) {
+  return new JarvisClientError({
+    operation: input.operation,
+    status: input.status,
+    message: `${input.operation} failed`,
+    responseBody: JSON.stringify({
+      code: input.code,
+      message: input.message,
+      recoverable: input.recoverable ?? false,
+    }),
+  });
+}
 
 it.effect("routes first draft turns to Jarvis work start", () =>
   Effect.gen(function* () {
@@ -496,6 +539,240 @@ it.effect("forwards the client user message id in Jarvis turn metadata", () =>
 
     assert.deepStrictEqual(result, { sequence: 0 });
     assert.strictEqual(capturedTurnInput?.metadata?.client_message_id, "msg_client_user");
+  }),
+);
+
+it.effect("resumes a terminal Jarvis session and retries the turn once", () =>
+  Effect.gen(function* () {
+    const turnSessionRefs: string[] = [];
+    let resumedRunId: string | undefined;
+    let resumeIdempotencyKey: unknown;
+    const client = {
+      ...makeJarvisFixtureClient(),
+      sendTurn: (sessionRef: string, _input: JarvisTurnInput) => {
+        turnSessionRefs.push(sessionRef);
+        if (turnSessionRefs.length === 1) {
+          return Effect.fail(
+            jarvisHttpError({
+              operation: "sessions.turn",
+              status: 409,
+              code: "session_terminal",
+              message:
+                "worker session sess_dispatch_1 is interrupted and does not accept new turns",
+              recoverable: true,
+            }),
+          );
+        }
+        return Effect.succeed({ ok: true, cursor: "evt_turn_retry" });
+      },
+      resumeRun: (runId: string, input?: Record<string, unknown>) => {
+        resumedRunId = runId;
+        resumeIdempotencyKey = input?.idempotency_key;
+        return Effect.succeed({
+          ok: true,
+          cursor: "evt_resume",
+          session: {
+            session_ref: JarvisSessionRef.make("sessref_macbook-worker_sess_fixture_codex_resumed"),
+          },
+        } satisfies JarvisControlResult);
+      },
+    };
+
+    const result = yield* dispatchJarvisCommand({
+      client,
+      enabled: true,
+      command: jarvisTurnStartCommand({ commandId: "cmd_resume_retry" }),
+    });
+
+    assert.deepStrictEqual(turnSessionRefs, [
+      "sessref_macbook-worker_sess_fixture_codex",
+      "sessref_macbook-worker_sess_fixture_codex_resumed",
+    ]);
+    assert.strictEqual(resumedRunId, "run_fixture_dashboard");
+    assert.strictEqual(resumeIdempotencyKey, "cmd_resume_retry:resume");
+    assert.deepStrictEqual(result, {
+      sequence: 0,
+      promotedThreadId: ThreadId.make(
+        "jarvis-session_sessref_macbook-worker_sess_fixture_codex_resumed",
+      ),
+    });
+  }),
+);
+
+it.effect("surfaces the real Jarvis resume error when terminal recovery fails", () =>
+  Effect.gen(function* () {
+    let resumeCalls = 0;
+    const client = {
+      ...makeJarvisFixtureClient(),
+      sendTurn: () =>
+        Effect.fail(
+          jarvisHttpError({
+            operation: "sessions.turn",
+            status: 409,
+            code: "session_terminal",
+            message: "session is terminal",
+            recoverable: true,
+          }),
+        ),
+      resumeRun: () => {
+        resumeCalls += 1;
+        return Effect.fail(
+          jarvisHttpError({
+            operation: "work.resume",
+            status: 503,
+            code: "worker_unavailable",
+            message: "selected worker is offline",
+          }),
+        );
+      },
+    };
+
+    const exit = yield* Effect.exit(
+      dispatchJarvisCommand({
+        client,
+        enabled: true,
+        command: jarvisTurnStartCommand({ commandId: "cmd_resume_fails" }),
+      }),
+    );
+
+    assert.strictEqual(resumeCalls, 1);
+    assert.strictEqual(Exit.isFailure(exit), true);
+    if (Exit.isFailure(exit)) {
+      const cause = exit.cause.toString();
+      assert.ok(cause.includes("work.resume"));
+      assert.ok(cause.includes("HTTP 503"));
+      assert.ok(cause.includes("selected worker is offline"));
+    }
+  }),
+);
+
+it.effect("surfaces the real Jarvis turn error when the retried turn fails", () =>
+  Effect.gen(function* () {
+    let turnCalls = 0;
+    const client = {
+      ...makeJarvisFixtureClient(),
+      sendTurn: () => {
+        turnCalls += 1;
+        if (turnCalls === 1) {
+          return Effect.fail(
+            jarvisHttpError({
+              operation: "sessions.turn",
+              status: 409,
+              code: "session_terminal",
+              message: "session is terminal",
+              recoverable: true,
+            }),
+          );
+        }
+        return Effect.fail(
+          jarvisHttpError({
+            operation: "sessions.turn",
+            status: 500,
+            code: "internal_error",
+            message: "provider crashed while starting turn",
+          }),
+        );
+      },
+      resumeRun: () =>
+        Effect.succeed({
+          ok: true,
+          cursor: "evt_resume",
+          session: {
+            session_ref: JarvisSessionRef.make("sessref_macbook-worker_sess_fixture_codex_resumed"),
+          },
+        } satisfies JarvisControlResult),
+    };
+
+    const exit = yield* Effect.exit(
+      dispatchJarvisCommand({
+        client,
+        enabled: true,
+        command: jarvisTurnStartCommand({ commandId: "cmd_retry_fails" }),
+      }),
+    );
+
+    assert.strictEqual(turnCalls, 2);
+    assert.strictEqual(Exit.isFailure(exit), true);
+    if (Exit.isFailure(exit)) {
+      const cause = exit.cause.toString();
+      assert.ok(cause.includes("sessions.turn"));
+      assert.ok(cause.includes("HTTP 500"));
+      assert.ok(cause.includes("provider crashed while starting turn"));
+    }
+  }),
+);
+
+it.effect("does not resume non-terminal Jarvis turn failures", () =>
+  Effect.gen(function* () {
+    let resumeCalls = 0;
+    const client = {
+      ...makeJarvisFixtureClient(),
+      sendTurn: () =>
+        Effect.fail(
+          jarvisHttpError({
+            operation: "sessions.turn",
+            status: 400,
+            code: "validation_failed",
+            message: "prompt is required",
+          }),
+        ),
+      resumeRun: () => {
+        resumeCalls += 1;
+        return Effect.succeed({ ok: true, cursor: "evt_resume" });
+      },
+    };
+
+    const exit = yield* Effect.exit(
+      dispatchJarvisCommand({
+        client,
+        enabled: true,
+        command: jarvisTurnStartCommand({ commandId: "cmd_validation_fails" }),
+      }),
+    );
+
+    assert.strictEqual(resumeCalls, 0);
+    assert.strictEqual(Exit.isFailure(exit), true);
+    if (Exit.isFailure(exit)) {
+      const cause = exit.cause.toString();
+      assert.ok(cause.includes("sessions.turn"));
+      assert.ok(cause.includes("HTTP 400"));
+      assert.ok(cause.includes("prompt is required"));
+    }
+  }),
+);
+
+it.effect("includes Jarvis operation, HTTP status, and response message in dispatch errors", () =>
+  Effect.gen(function* () {
+    const client = {
+      ...makeJarvisFixtureClient(),
+      sendTurn: () =>
+        Effect.fail(
+          jarvisHttpError({
+            operation: "sessions.turn",
+            status: 409,
+            code: "session_active",
+            message: "session already has an active turn",
+            recoverable: true,
+          }),
+        ),
+    };
+
+    const exit = yield* Effect.exit(
+      dispatchJarvisCommand({
+        client,
+        enabled: true,
+        command: jarvisTurnStartCommand({ commandId: "cmd_error_detail" }),
+      }),
+    );
+
+    assert.strictEqual(Exit.isFailure(exit), true);
+    if (Exit.isFailure(exit)) {
+      const cause = exit.cause.toString();
+      assert.ok(cause.includes("sessions.turn"));
+      assert.ok(cause.includes("HTTP 409"));
+      assert.ok(cause.includes("session already has an active turn"));
+      assert.ok(!cause.includes("Failed to dispatch Jarvis cockpit command thread.turn.start."));
+    }
   }),
 );
 

@@ -83,6 +83,7 @@ import {
   deriveWorkLogEntries,
   hasActionableProposedPlan,
   isLatestTurnSettled,
+  shouldShowJarvisResumeSendHint,
 } from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
 import { getAnchoredTurnMetrics, type TimelineScrollMode } from "./chat/timelineScrollAnchoring";
@@ -1738,6 +1739,10 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
   const phase = derivePhase(activeThread?.session ?? null);
+  const showJarvisResumeSendHint = shouldShowJarvisResumeSendHint({
+    isJarvisCockpitEnvironment: activeIsJarvisCockpitEnvironment,
+    session: activeThread?.session ?? null,
+  });
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
   const pendingApprovals = useMemo(
@@ -4263,11 +4268,23 @@ function ChatViewContent(props: ChatViewProps) {
       if (startResult._tag === "Failure") {
         failure = startResult;
       } else {
-        if (draftId !== null && startResult.value.promotedThreadId !== undefined) {
-          markPromotedDraftThreadByDraftId(
-            draftId,
-            scopeThreadRef(environmentId, startResult.value.promotedThreadId),
-          );
+        const promotedThreadId = startResult.value.promotedThreadId;
+        if (promotedThreadId !== undefined) {
+          if (draftId !== null) {
+            markPromotedDraftThreadByDraftId(
+              draftId,
+              scopeThreadRef(environmentId, promotedThreadId),
+            );
+          } else if (promotedThreadId !== threadIdForSend) {
+            await navigate({
+              to: "/$environmentId/$threadId",
+              params: {
+                environmentId,
+                threadId: promotedThreadId,
+              },
+              replace: true,
+            });
+          }
         }
         turnStartSucceeded = true;
       }
@@ -5239,6 +5256,7 @@ function ChatViewContent(props: ChatViewProps) {
                       isServerThread={isServerThread}
                       isLocalDraftThread={isLocalDraftThread}
                       isJarvisCockpitEnvironment={activeIsJarvisCockpitEnvironment}
+                      showJarvisResumeSendHint={showJarvisResumeSendHint}
                       phase={phase}
                       isConnecting={isConnecting}
                       isSendBusy={isSendBusy}

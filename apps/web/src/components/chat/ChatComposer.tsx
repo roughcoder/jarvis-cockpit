@@ -908,6 +908,7 @@ export interface ChatComposerProps {
   isServerThread: boolean;
   isLocalDraftThread: boolean;
   isJarvisCockpitEnvironment: boolean;
+  showJarvisResumeSendHint: boolean;
 
   // Session phase
   phase: SessionPhase;
@@ -1017,6 +1018,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadId,
     activeThreadEnvironmentId: _activeThreadEnvironmentId,
     activeThread,
+    showJarvisResumeSendHint,
     isServerThread: _isServerThread,
     isLocalDraftThread,
     phase,
@@ -3124,9 +3126,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           ? `${environmentUnavailable.label}: ${connectionStatusText(
                               environmentUnavailable.connection,
                             )}`
-                          : phase === "disconnected"
-                            ? "Ask for follow-up changes or attach images"
-                            : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                          : showJarvisResumeSendHint
+                            ? "Send a follow-up to resume this Jarvis session"
+                            : phase === "disconnected"
+                              ? "Ask for follow-up changes or attach images"
+                              : "Ask anything, @tag files/folders, $use skills, or / for commands"
                 }
                 disabled={
                   isConnecting ||
@@ -3170,59 +3174,87 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               />
             </div>
           ) : (
-            <div
-              data-chat-composer-footer="true"
-              data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
-              className={cn(
-                "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-2.5 pb-2.5 sm:px-3 sm:pb-3",
-                pendingUserInputs.length > 0 && "pt-2",
-                isComposerFooterCompact ? "gap-1.5" : "gap-2 sm:gap-0",
-                showMobilePendingAnswerActions && "hidden sm:flex",
-              )}
-            >
-              <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                <ProviderModelPicker
-                  compact={isComposerFooterCompact}
-                  activeInstanceId={selectedInstanceId}
-                  model={selectedModelForPickerWithCustomFallback}
-                  lockedProvider={lockedProvider}
-                  lockedContinuationGroupKey={lockedContinuationGroupKey}
-                  instanceEntries={providerInstanceEntries}
-                  keybindings={keybindings}
-                  modelOptionsByInstance={modelOptionsByInstance}
-                  terminalOpen={terminalOpen}
-                  open={isComposerModelPickerOpen}
-                  {...(composerProviderState.modelPickerIconClassName
-                    ? {
-                        activeProviderIconClassName: composerProviderState.modelPickerIconClassName,
-                      }
-                    : {})}
-                  onOpenChange={(open) => {
-                    setIsComposerModelPickerOpen(open);
-                  }}
-                  getModelDisabledReason={getModelDisabledReason}
-                  onInstanceModelChange={onProviderModelSelect}
-                />
+            <>
+              {showJarvisResumeSendHint ? (
+                <div className="px-2.5 pb-1 text-muted-foreground text-xs sm:px-3">
+                  Sending will resume this Jarvis session.
+                </div>
+              ) : null}
+              <div
+                data-chat-composer-footer="true"
+                data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
+                className={cn(
+                  "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-2.5 pb-2.5 sm:px-3 sm:pb-3",
+                  pendingUserInputs.length > 0 && "pt-2",
+                  isComposerFooterCompact ? "gap-1.5" : "gap-2 sm:gap-0",
+                  showMobilePendingAnswerActions && "hidden sm:flex",
+                )}
+              >
+                <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  <ProviderModelPicker
+                    compact={isComposerFooterCompact}
+                    activeInstanceId={selectedInstanceId}
+                    model={selectedModelForPickerWithCustomFallback}
+                    lockedProvider={lockedProvider}
+                    lockedContinuationGroupKey={lockedContinuationGroupKey}
+                    instanceEntries={providerInstanceEntries}
+                    keybindings={keybindings}
+                    modelOptionsByInstance={modelOptionsByInstance}
+                    terminalOpen={terminalOpen}
+                    open={isComposerModelPickerOpen}
+                    {...(composerProviderState.modelPickerIconClassName
+                      ? {
+                          activeProviderIconClassName:
+                            composerProviderState.modelPickerIconClassName,
+                        }
+                      : {})}
+                    onOpenChange={(open) => {
+                      setIsComposerModelPickerOpen(open);
+                    }}
+                    getModelDisabledReason={getModelDisabledReason}
+                    onInstanceModelChange={onProviderModelSelect}
+                  />
 
-                {isComposerFooterCompact ? (
-                  <CompactComposerControlsMenu
-                    activePlan={showPlanSidebarToggle}
-                    interactionMode={interactionMode}
-                    planSidebarLabel={planSidebarLabel}
-                    planSidebarOpen={planSidebarOpen}
-                    runtimeMode={runtimeMode}
-                    showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
-                    traitsMenuContent={providerTraitsMenuContent}
-                    onToggleInteractionMode={toggleInteractionMode}
-                    onTogglePlanSidebar={togglePlanSidebar}
-                    onRuntimeModeChange={handleRuntimeModeChange}
-                    jarvisMenuContent={
-                      canRouteJarvisStart ? (
-                        <ComposerJarvisRoutingMenuContent
+                  {isComposerFooterCompact ? (
+                    <CompactComposerControlsMenu
+                      activePlan={showPlanSidebarToggle}
+                      interactionMode={interactionMode}
+                      planSidebarLabel={planSidebarLabel}
+                      planSidebarOpen={planSidebarOpen}
+                      runtimeMode={runtimeMode}
+                      showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
+                      traitsMenuContent={providerTraitsMenuContent}
+                      onToggleInteractionMode={toggleInteractionMode}
+                      onTogglePlanSidebar={togglePlanSidebar}
+                      onRuntimeModeChange={handleRuntimeModeChange}
+                      jarvisMenuContent={
+                        canRouteJarvisStart ? (
+                          <ComposerJarvisRoutingMenuContent
+                            selectedProject={selectedJarvisProject}
+                            selectedRepo={selectedJarvisRepoEntry}
+                            environmentProjects={environmentProjects}
+                            workers={jarvisWorkers}
+                            selectedEngine={selectedJarvisEngine}
+                            selectedWorkerOverrideId={selectedWorkerOverrideIdForDispatch}
+                            defaultWorkerId={jarvisDefaultWorkerId}
+                            routingSummary={jarvisRoutingSummary}
+                            compatibilityWarning={jarvisCompatibilityWarning}
+                            onProjectSelect={handleJarvisProjectSelect}
+                            onRepoSelect={setSelectedJarvisRepoRemote}
+                            onWorkerOverrideChange={setSelectedWorkerOverrideId}
+                          />
+                        ) : undefined
+                      }
+                    />
+                  ) : (
+                    <>
+                      {canRouteJarvisStart ? (
+                        <ComposerJarvisRoutingControls
                           selectedProject={selectedJarvisProject}
                           selectedRepo={selectedJarvisRepoEntry}
                           environmentProjects={environmentProjects}
                           workers={jarvisWorkers}
+                          workersPending={jarvisSnapshotQuery.isPending}
                           selectedEngine={selectedJarvisEngine}
                           selectedWorkerOverrideId={selectedWorkerOverrideIdForDispatch}
                           defaultWorkerId={jarvisDefaultWorkerId}
@@ -3232,77 +3264,64 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           onRepoSelect={setSelectedJarvisRepoRemote}
                           onWorkerOverrideChange={setSelectedWorkerOverrideId}
                         />
-                      ) : undefined
-                    }
-                  />
-                ) : (
-                  <>
-                    {canRouteJarvisStart ? (
-                      <ComposerJarvisRoutingControls
-                        selectedProject={selectedJarvisProject}
-                        selectedRepo={selectedJarvisRepoEntry}
-                        environmentProjects={environmentProjects}
-                        workers={jarvisWorkers}
-                        workersPending={jarvisSnapshotQuery.isPending}
-                        selectedEngine={selectedJarvisEngine}
-                        selectedWorkerOverrideId={selectedWorkerOverrideIdForDispatch}
-                        defaultWorkerId={jarvisDefaultWorkerId}
-                        routingSummary={jarvisRoutingSummary}
-                        compatibilityWarning={jarvisCompatibilityWarning}
-                        onProjectSelect={handleJarvisProjectSelect}
-                        onRepoSelect={setSelectedJarvisRepoRemote}
-                        onWorkerOverrideChange={setSelectedWorkerOverrideId}
+                      ) : null}
+                      {providerTraitsPicker ? (
+                        <>
+                          <Separator
+                            orientation="vertical"
+                            className="mx-0.5 hidden h-4 sm:block"
+                          />
+                          {providerTraitsPicker}
+                        </>
+                      ) : null}
+                      <ComposerFooterModeControls
+                        showInteractionModeToggle={
+                          composerProviderControls.showInteractionModeToggle
+                        }
+                        interactionMode={interactionMode}
+                        runtimeMode={runtimeMode}
+                        showPlanToggle={showPlanSidebarToggle}
+                        planSidebarLabel={planSidebarLabel}
+                        planSidebarOpen={planSidebarOpen}
+                        onToggleInteractionMode={toggleInteractionMode}
+                        onRuntimeModeChange={handleRuntimeModeChange}
+                        onTogglePlanSidebar={togglePlanSidebar}
                       />
-                    ) : null}
-                    {providerTraitsPicker ? (
-                      <>
-                        <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-                        {providerTraitsPicker}
-                      </>
-                    ) : null}
-                    <ComposerFooterModeControls
-                      showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
-                      interactionMode={interactionMode}
-                      runtimeMode={runtimeMode}
-                      showPlanToggle={showPlanSidebarToggle}
-                      planSidebarLabel={planSidebarLabel}
-                      planSidebarOpen={planSidebarOpen}
-                      onToggleInteractionMode={toggleInteractionMode}
-                      onRuntimeModeChange={handleRuntimeModeChange}
-                      onTogglePlanSidebar={togglePlanSidebar}
-                    />
-                  </>
-                )}
-              </div>
+                    </>
+                  )}
+                </div>
 
-              {/* Right side: send / stop button */}
-              <div
-                data-chat-composer-actions="right"
-                data-chat-composer-primary-actions-compact={
-                  isComposerPrimaryActionsCompact ? "true" : "false"
-                }
-                className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
-              >
-                <ComposerFooterPrimaryActions
-                  compact={isComposerPrimaryActionsCompact}
-                  activeContextWindow={activeContextWindow}
-                  activeThreadProviderDisplayName={activeThreadProviderDisplayName}
-                  pendingAction={pendingPrimaryAction}
-                  isRunning={phase === "running"}
-                  showPlanFollowUpPrompt={pendingUserInputs.length === 0 && showPlanFollowUpPrompt}
-                  promptHasText={prompt.trim().length > 0}
-                  isSendBusy={isSendBusy}
-                  isConnecting={isConnecting}
-                  isEnvironmentUnavailable={environmentUnavailable !== null}
-                  isPreparingWorktree={isPreparingWorktree}
-                  hasSendableContent={composerSendState.hasSendableContent}
-                  preserveComposerFocusOnPointerDown={isMobileViewport}
-                  onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
-                  onInterrupt={handleInterruptPrimaryAction}
-                  onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
-                />
+                {/* Right side: send / stop button */}
+                <div
+                  data-chat-composer-actions="right"
+                  data-chat-composer-primary-actions-compact={
+                    isComposerPrimaryActionsCompact ? "true" : "false"
+                  }
+                  className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
+                >
+                  <ComposerFooterPrimaryActions
+                    compact={isComposerPrimaryActionsCompact}
+                    activeContextWindow={activeContextWindow}
+                    activeThreadProviderDisplayName={activeThreadProviderDisplayName}
+                    pendingAction={pendingPrimaryAction}
+                    isRunning={phase === "running"}
+                    showPlanFollowUpPrompt={
+                      pendingUserInputs.length === 0 && showPlanFollowUpPrompt
+                    }
+                    promptHasText={prompt.trim().length > 0}
+                    isSendBusy={isSendBusy}
+                    isConnecting={isConnecting}
+                    isEnvironmentUnavailable={environmentUnavailable !== null}
+                    isPreparingWorktree={isPreparingWorktree}
+                    hasSendableContent={composerSendState.hasSendableContent}
+                    preserveComposerFocusOnPointerDown={isMobileViewport}
+                    onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
+                    onInterrupt={handleInterruptPrimaryAction}
+                    onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
+                  />
+                </div>
               </div>
-            </div>
+            </>
           )}
         </div>
       </div>

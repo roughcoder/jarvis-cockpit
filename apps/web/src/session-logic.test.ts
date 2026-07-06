@@ -18,10 +18,12 @@ import {
   findSidebarProposedPlan,
   hasActionableProposedPlan,
   isLatestTurnSettled,
+  shouldShowJarvisResumeSendHint,
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
   workEntryIndicatesToolSuccess,
 } from "./session-logic";
+import type { ThreadSession } from "./types";
 
 let nextActivityId = 0;
 
@@ -47,6 +49,56 @@ function makeActivity(overrides: {
     ...(overrides.sequence !== undefined ? { sequence: overrides.sequence } : {}),
   };
 }
+
+function makeSession(status: ThreadSession["status"]): ThreadSession {
+  return {
+    threadId: ThreadId.make("thread-1"),
+    status,
+    providerName: null,
+    runtimeMode: "full-access",
+    activeTurnId: null,
+    lastError: null,
+    updatedAt: "2026-02-23T00:00:00.000Z",
+  };
+}
+
+describe("shouldShowJarvisResumeSendHint", () => {
+  it("indicates that terminal Jarvis sends will resume the session", () => {
+    expect(
+      shouldShowJarvisResumeSendHint({
+        isJarvisCockpitEnvironment: true,
+        session: makeSession("interrupted"),
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowJarvisResumeSendHint({
+        isJarvisCockpitEnvironment: true,
+        session: makeSession("stopped"),
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowJarvisResumeSendHint({
+        isJarvisCockpitEnvironment: true,
+        session: makeSession("error"),
+      }),
+    ).toBe(true);
+  });
+
+  it("does not show the resume hint for live or non-Jarvis sessions", () => {
+    expect(
+      shouldShowJarvisResumeSendHint({
+        isJarvisCockpitEnvironment: true,
+        session: makeSession("ready"),
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowJarvisResumeSendHint({
+        isJarvisCockpitEnvironment: false,
+        session: makeSession("interrupted"),
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("derivePendingApprovals", () => {
   it("tracks open approvals and removes resolved ones", () => {

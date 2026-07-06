@@ -6,6 +6,7 @@ import {
   type DispatchResult,
   type JarvisArchiveInput,
   type JarvisControlResult,
+  type JarvisWorkerSession,
   type JarvisSessionCheckpoint,
   type JarvisStartWorkValidation,
   type JarvisSupportedControl,
@@ -24,6 +25,16 @@ import {
 
 const JARVIS_CHECKPOINTS_PAGE_LIMIT = 100;
 const JARVIS_CHECKPOINTS_MAX_PAGES = 100;
+
+type JarvisSessionDispatchResult = {
+  readonly result: JarvisControlResult | null;
+  readonly resumedSessionRef: string | null;
+};
+
+type JarvisTurnDispatchResult = {
+  readonly result: JarvisControlResult;
+  readonly resumedSessionRef: string | null;
+};
 
 export function dispatchJarvisCommand(input: {
   readonly client: JarvisClient;
@@ -70,16 +81,38 @@ export function dispatchJarvisCommand(input: {
     return Effect.succeed(null);
   }
   return ensureJarvisControlSupported(input.client, sessionRef, input.command).pipe(
-    Effect.flatMap(() => dispatchJarvisWrite(input.client, sessionRef, input.command)),
+    Effect.flatMap(
+      (session): Effect.Effect<JarvisSessionDispatchResult, OrchestrationDispatchCommandError> => {
+        if (input.command.type === "thread.turn.start" && session !== null) {
+          return dispatchJarvisTurnWithResume(
+            input.client,
+            sessionRef,
+            session.run_id,
+            input.command,
+          );
+        }
+        return dispatchJarvisWrite(input.client, sessionRef, input.command).pipe(
+          Effect.map(
+            (result): JarvisSessionDispatchResult => ({ result, resumedSessionRef: null }),
+          ),
+        );
+      },
+    ),
     Effect.flatMap((result) => {
-      if (result === null) {
+      if (result.result === null) {
         return Effect.fail(
           new OrchestrationDispatchCommandError({
             message: `Jarvis cockpit does not support command ${input.command.type} for Jarvis-managed sessions.`,
           }),
         );
       }
-      return dispatchReceiptForJarvisResult(result, input.command.type);
+      return dispatchReceiptForJarvisResult(
+        result.result,
+        input.command.type,
+        result.resumedSessionRef && result.resumedSessionRef !== sessionRef
+          ? { promotedThreadId: jarvisThreadIdForSession(result.resumedSessionRef) }
+          : {},
+      );
     }),
   );
 }
@@ -176,6 +209,89 @@ function dispatchJarvisWrite(
     default:
       return Effect.succeed(null);
   }
+}
+
+function dispatchJarvisTurnWithResume(
+  client: JarvisClient,
+  sessionRef: string,
+  runId: string,
+  command: Extract<OrchestrationCommand, { readonly type: "thread.turn.start" }>,
+): Effect.Effect<JarvisTurnDispatchResult, OrchestrationDispatchCommandError> {
+  const turnInput = turnInputForCommand(command);
+  const sendTurn = (targetSessionRef: string) =>
+    client
+      .sendTurn(targetSessionRef, turnInput)
+      .pipe(Effect.mapError((cause) => jarvisDispatchError(command.type, cause)));
+
+  return sendTurn(sessionRef).pipe(
+    Effect.flatMap((result) => {
+      if (!isRecoverableTerminalControlResult(result)) {
+        return Effect.succeed({
+          result,
+          resumedSessionRef: null,
+        } satisfies JarvisTurnDispatchResult);
+      }
+      return resumeJarvisRunAndRetryTurn(client, runId, command, sendTurn);
+    }),
+    Effect.catch((error: OrchestrationDispatchCommandError) => {
+      if (!isRecoverableTerminalDispatchError(error.cause)) {
+        return Effect.fail(error);
+      }
+      return resumeJarvisRunAndRetryTurn(client, runId, command, sendTurn);
+    }),
+  );
+}
+
+function resumeJarvisRunAndRetryTurn(
+  client: JarvisClient,
+  runId: string,
+  command: Extract<OrchestrationCommand, { readonly type: "thread.turn.start" }>,
+  sendTurn: (
+    sessionRef: string,
+  ) => Effect.Effect<JarvisControlResult, OrchestrationDispatchCommandError>,
+): Effect.Effect<JarvisTurnDispatchResult, OrchestrationDispatchCommandError> {
+  return client
+    .resumeRun(runId, {
+      idempotency_key: `${command.commandId}:resume`,
+    })
+    .pipe(
+      Effect.mapError((cause) => jarvisDispatchOperationError(`${command.type}.resume`, cause)),
+      Effect.flatMap((resumeResult) => {
+        if (!resumeResult.ok) {
+          return Effect.fail(
+            new OrchestrationDispatchCommandError({
+              message: `Jarvis rejected work.resume: ${resumeResult.error?.message ?? "unknown error"}`,
+              cause: resumeResult.error,
+            }),
+          );
+        }
+        const resumedSessionRef = resumeResult.session?.session_ref;
+        if (resumedSessionRef === undefined) {
+          return Effect.fail(
+            new OrchestrationDispatchCommandError({
+              message:
+                "Jarvis accepted work.resume but did not return a session_ref. Cockpit cannot continue the resumed turn without a canonical Jarvis session.",
+              cause: resumeResult,
+            }),
+          );
+        }
+        return sendTurn(resumedSessionRef).pipe(
+          Effect.map((result) => ({ result, resumedSessionRef })),
+        );
+      }),
+    );
+}
+
+function turnInputForCommand(
+  command: Extract<OrchestrationCommand, { readonly type: "thread.turn.start" }>,
+) {
+  return {
+    prompt: command.message.text,
+    idempotency_key: String(command.commandId),
+    metadata: {
+      client_message_id: String(command.message.messageId),
+    },
+  };
 }
 
 function restoreJarvisCheckpointByTurnCount(
@@ -278,10 +394,10 @@ function ensureJarvisControlSupported(
   client: JarvisClient,
   sessionRef: string,
   command: OrchestrationCommand,
-): Effect.Effect<void, OrchestrationDispatchCommandError> {
+): Effect.Effect<JarvisWorkerSession | null, OrchestrationDispatchCommandError> {
   const requiredControl = jarvisControlForCommand(command);
   if (requiredControl === null) {
-    return Effect.void;
+    return Effect.succeed(null);
   }
   return client.getSession(sessionRef).pipe(
     Effect.mapError((cause) => jarvisDispatchOperationError(`${command.type}.capability`, cause)),
@@ -294,7 +410,10 @@ function ensureJarvisControlSupported(
         );
       }
       if (session.supported_controls.includes(requiredControl)) {
-        return Effect.void;
+        return Effect.succeed(session);
+      }
+      if (command.type === "thread.turn.start" && isTerminalResumeCandidate(session.status)) {
+        return Effect.succeed(session);
       }
       return Effect.fail(
         new OrchestrationDispatchCommandError({
@@ -350,6 +469,7 @@ function dispatchReceiptForJarvisResult(
   commandType: OrchestrationCommand["type"],
   options?: {
     readonly requiresPromotedThread?: boolean;
+    readonly promotedThreadId?: DispatchResult["promotedThreadId"];
   },
 ): Effect.Effect<DispatchResult | null, OrchestrationDispatchCommandError> {
   if (result === null) {
@@ -367,6 +487,7 @@ function dispatchReceiptForJarvisResult(
     }
     return Effect.succeed({
       sequence: 0,
+      ...(options?.promotedThreadId ? { promotedThreadId: options.promotedThreadId } : {}),
       ...(result.session?.session_ref
         ? { promotedThreadId: jarvisThreadIdForSession(result.session.session_ref) }
         : {}),
@@ -382,16 +503,113 @@ function dispatchReceiptForJarvisResult(
 
 function jarvisDispatchError(commandType: OrchestrationCommand["type"], cause: unknown) {
   return new OrchestrationDispatchCommandError({
-    message: `Failed to dispatch Jarvis cockpit command ${commandType}.`,
+    message: jarvisDispatchFailureMessage(commandType, cause),
     cause,
   });
 }
 
 function jarvisDispatchOperationError(commandType: string, cause: unknown) {
   return new OrchestrationDispatchCommandError({
-    message: `Failed to dispatch Jarvis cockpit command ${commandType}.`,
+    message: jarvisDispatchFailureMessage(commandType, cause),
     cause,
   });
+}
+
+function jarvisDispatchFailureMessage(commandType: string, cause: unknown): string {
+  const details = jarvisClientErrorDetails(cause);
+  if (details === null) {
+    return `Failed to dispatch Jarvis cockpit command ${commandType}.`;
+  }
+  const status = details.status === null ? "no HTTP status" : `HTTP ${details.status}`;
+  return `Failed to dispatch Jarvis cockpit command ${commandType}: ${details.operation} ${status}: ${details.message}`;
+}
+
+function isRecoverableTerminalDispatchError(cause: unknown): boolean {
+  const details = jarvisClientErrorDetails(cause);
+  return details !== null && isRecoverableTerminalJarvisError(details);
+}
+
+function isRecoverableTerminalControlResult(result: JarvisControlResult): boolean {
+  if (result.ok || result.error === undefined) {
+    return false;
+  }
+  return isRecoverableTerminalJarvisError(result.error);
+}
+
+function isRecoverableTerminalJarvisError(input: {
+  readonly code?: string | null;
+  readonly message: string;
+  readonly recoverable?: boolean | null;
+}): boolean {
+  if (input.recoverable !== true) {
+    return false;
+  }
+  if (input.code === "session_terminal") {
+    return true;
+  }
+  return /\b(?:terminal|interrupted)\b/i.test(input.message);
+}
+
+function isTerminalResumeCandidate(status: JarvisWorkerSession["status"]): boolean {
+  return (
+    status === "interrupted" ||
+    status === "completed" ||
+    status === "stopped" ||
+    status === "failed"
+  );
+}
+
+function jarvisClientErrorDetails(cause: unknown): {
+  readonly operation: string;
+  readonly status: number | null;
+  readonly message: string;
+  readonly code: string | null;
+  readonly recoverable: boolean | null;
+} | null {
+  if (!isJarvisClientError(cause)) {
+    return null;
+  }
+  const body = parseJarvisErrorBody(cause.responseBody);
+  return {
+    operation: cause.operation,
+    status: cause.status,
+    message: body.message ?? cause.message,
+    code: body.code,
+    recoverable: body.recoverable,
+  };
+}
+
+function parseJarvisErrorBody(responseBody: string | null): {
+  readonly message: string | null;
+  readonly code: string | null;
+  readonly recoverable: boolean | null;
+} {
+  if (responseBody === null || responseBody.trim().length === 0) {
+    return { message: null, code: null, recoverable: null };
+  }
+  try {
+    const parsed = JSON.parse(responseBody) as unknown;
+    if (typeof parsed !== "object" || parsed === null) {
+      return { message: responseBody, code: null, recoverable: null };
+    }
+    const record = parsed as Record<string, unknown>;
+    return {
+      message: typeof record.message === "string" ? record.message : responseBody,
+      code: typeof record.code === "string" ? record.code : null,
+      recoverable: typeof record.recoverable === "boolean" ? record.recoverable : null,
+    };
+  } catch {
+    return { message: responseBody, code: null, recoverable: null };
+  }
+}
+
+function isJarvisClientError(cause: unknown): cause is JarvisClientError {
+  return (
+    typeof cause === "object" &&
+    cause !== null &&
+    (cause as { readonly _tag?: unknown })._tag === "JarvisClientError" &&
+    typeof (cause as { readonly operation?: unknown }).operation === "string"
+  );
 }
 
 function startWorkInputForTurnStart(

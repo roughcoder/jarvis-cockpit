@@ -1391,3 +1391,17 @@ export function derivePhase(session: ThreadSession | null): SessionPhase {
   if (session.status === "running") return "running";
   return "ready";
 }
+
+export function shouldShowJarvisResumeSendHint(input: {
+  readonly isJarvisCockpitEnvironment: boolean;
+  readonly session: ThreadSession | null;
+}): boolean {
+  if (!input.isJarvisCockpitEnvironment || input.session === null) {
+    return false;
+  }
+  return (
+    input.session.status === "interrupted" ||
+    input.session.status === "stopped" ||
+    input.session.status === "error"
+  );
+}
