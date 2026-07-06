@@ -348,8 +348,8 @@ Required endpoint or field:
 10. Engine selector options are constrained by Jarvis catalog/worker support.
 11. Local T3 project creation remains available only through an explicit
     legacy/debug affordance, if supported at all.
-11. Unit tests prove cockpit start-work does not dispatch `project.create`.
-12. Browser smoke verifies a new user can reach a Jarvis run/session timeline
+12. Unit tests prove cockpit start-work does not dispatch `project.create`.
+13. Browser smoke verifies a new user can reach a Jarvis run/session timeline
     without seeing local-folder onboarding.
 
 ## Verification Plan

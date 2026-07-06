@@ -26,13 +26,16 @@ export const make = Effect.gen(function* () {
       : isRemoteReachable
         ? "remote-reachable"
         : "loopback-browser";
+  const localJarvisBrowserBootstrap = policy === "loopback-browser" && config.jarvisCockpitEnabled;
 
   const bootstrapMethods: ServerAuthDescriptor["bootstrapMethods"] =
     policy === "desktop-managed-local"
       ? ["desktop-bootstrap"]
       : config.mode === "desktop" && policy === "remote-reachable"
         ? ["desktop-bootstrap", "one-time-token"]
-        : ["one-time-token"];
+        : localJarvisBrowserBootstrap
+          ? ["local-jarvis-browser", "one-time-token"]
+          : ["one-time-token"];
 
   const descriptor: ServerAuthDescriptor = {
     policy,

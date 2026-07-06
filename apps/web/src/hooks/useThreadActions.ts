@@ -26,6 +26,7 @@ import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
+import { isJarvisThreadId } from "../jarvisCockpit";
 
 export class ThreadArchiveBlockedError extends Schema.TaggedErrorClass<ThreadArchiveBlockedError>()(
   "ThreadArchiveBlockedError",
@@ -93,7 +94,11 @@ export function useThreadActions() {
       const resolved = resolveThreadTarget(target);
       if (!resolved) return AsyncResult.success(undefined);
       const { thread, threadRef } = resolved;
-      if (thread.session?.status === "running" && thread.session.activeTurnId != null) {
+      if (
+        thread.session?.status === "running" &&
+        thread.session.activeTurnId != null &&
+        !isJarvisThreadId(threadRef.threadId)
+      ) {
         return AsyncResult.failure(
           Cause.fail(
             new ThreadArchiveBlockedError({

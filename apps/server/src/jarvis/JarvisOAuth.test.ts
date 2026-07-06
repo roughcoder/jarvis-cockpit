@@ -79,8 +79,9 @@ it.effect("OAuth signing key creation reads the existing key after a concurrent 
 
     assert.strictEqual(createCalls, 1);
     assert.strictEqual(setCalls, 0);
-    assert.strictEqual(verified.payload.sub, oauthConfig.jarvisOAuthUserEmail);
+    assert.strictEqual(verified.payload.sub, oauthConfig.jarvisOAuthJarvisUser);
     assert.strictEqual(verified.payload.jarvis_user, oauthConfig.jarvisOAuthJarvisUser);
+    assert.strictEqual(verified.payload.email, oauthConfig.jarvisOAuthUserEmail);
   }),
 );
 

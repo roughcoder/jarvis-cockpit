@@ -80,6 +80,24 @@ it.layer(NodeServices.layer)("EnvironmentAuthPolicy.layer", (it) => {
     ),
   );
 
+  it.effect("advertises local Jarvis browser bootstrap for loopback Jarvis cockpit web hosts", () =>
+    Effect.gen(function* () {
+      const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;
+      const descriptor = yield* policy.getDescriptor();
+
+      expect(descriptor.policy).toBe("loopback-browser");
+      expect(descriptor.bootstrapMethods).toEqual(["local-jarvis-browser", "one-time-token"]);
+    }).pipe(
+      Effect.provide(
+        makeEnvironmentAuthPolicyLayer({
+          mode: "web",
+          host: "127.0.0.1",
+          jarvisCockpitEnabled: true,
+        }),
+      ),
+    ),
+  );
+
   it.effect("uses remote-reachable policy for wildcard web hosts", () =>
     Effect.gen(function* () {
       const policy = yield* EnvironmentAuthPolicy.EnvironmentAuthPolicy;

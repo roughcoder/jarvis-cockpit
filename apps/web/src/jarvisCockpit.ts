@@ -8,6 +8,7 @@ import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
  */
 export const JARVIS_PROJECT_ID_PREFIX = "jarvis-run_";
 export const JARVIS_THREAD_ID_PREFIX = "jarvis-session_";
+export const JARVIS_START_PROJECT_ID = "jarvis-start";
 
 export function isJarvisCockpitEnvironment(
   config: Pick<ServerConfig, "environment"> | undefined,
@@ -40,6 +41,10 @@ export function isJarvisCockpitMode(
 
 export function isJarvisProjectId(projectId: string): boolean {
   return projectId.startsWith(JARVIS_PROJECT_ID_PREFIX);
+}
+
+export function isJarvisStartProjectId(projectId: string): boolean {
+  return projectId === JARVIS_START_PROJECT_ID;
 }
 
 export function isJarvisThreadId(threadId: string): boolean {

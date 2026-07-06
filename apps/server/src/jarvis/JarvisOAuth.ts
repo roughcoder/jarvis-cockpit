@@ -54,14 +54,15 @@ export function makeJarvisOAuthAccessToken(input: {
       try: async () => {
         const key = await importJWK(privateJwk, "RS256");
         const jarvisUser = input.config.jarvisOAuthJarvisUser?.trim() ?? "";
-        const subject = input.config.jarvisOAuthUserEmail?.trim() || jarvisUser;
+        const email = input.config.jarvisOAuthUserEmail?.trim();
         return new SignJWT({
           scope: normalizeScopes(input.config.jarvisOAuthScopes),
           jarvis_user: jarvisUser,
+          ...(email ? { email } : {}),
         })
           .setProtectedHeader({ alg: "RS256", kid: JARVIS_OAUTH_KEY_ID, typ: "JWT" })
           .setIssuer(input.config.jarvisOAuthIssuer ?? "")
-          .setSubject(subject)
+          .setSubject(jarvisUser)
           .setAudience(input.config.jarvisOAuthAudience?.trim() ?? "")
           .setIssuedAt(now)
           .setExpirationTime(now + JARVIS_OAUTH_ACCESS_TOKEN_TTL_SECONDS)

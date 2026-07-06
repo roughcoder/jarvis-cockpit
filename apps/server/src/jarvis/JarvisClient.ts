@@ -1,3 +1,5 @@
+import * as NodeBuffer from "node:buffer";
+
 import {
   JarvisApprovalInput,
   JarvisArchiveInput,
@@ -5,9 +7,32 @@ import {
   JarvisCockpitCatalog,
   JarvisControlResult,
   DEFAULT_JARVIS_API_BASE_URL,
+  type JsonObject as JsonObjectType,
   type JarvisBrainCheckResult,
   type JarvisBrainConnection,
   type JarvisConnectionSource,
+  JarvisProject,
+  JarvisProjectArchiveInput,
+  JarvisProjectCreateInput,
+  JarvisProjectCreateThreadInput,
+  JarvisProjectDetailResponse,
+  JarvisProjectFile,
+  JarvisProjectFileRetractInput,
+  JarvisProjectFilesResponse,
+  JarvisProjectFileUploadInput,
+  JarvisProjectId,
+  JarvisProjectListResponse,
+  JarvisProjectMemoryCorrectInput,
+  JarvisProjectMemoryCurationInput,
+  JarvisProjectMemoryForgetInput,
+  JarvisProjectMemoryResponse,
+  JarvisProjectThread,
+  JarvisProjectThreadArchiveInput,
+  JarvisProjectThreadId,
+  JarvisProjectThreadsResponse,
+  JarvisProjectThreadTurnInput,
+  JarvisProjectThreadTurnResult,
+  JarvisProjectUpdateInput,
   JarvisRequestId,
   JarvisRestoreCheckpointInput,
   JarvisRun,
@@ -74,6 +99,71 @@ export class JarvisMissingContractError extends Error {
 export interface JarvisClient {
   readonly getCatalog: () => Effect.Effect<JarvisCockpitCatalog, JarvisClientError>;
   readonly getSnapshot: () => Effect.Effect<JarvisRunsSnapshot, JarvisClientError>;
+  readonly getProjects: (options?: {
+    readonly includeArchived?: boolean;
+  }) => Effect.Effect<ReadonlyArray<JarvisProject>, JarvisClientError>;
+  readonly getProject: (projectId: string) => Effect.Effect<JarvisProject, JarvisClientError>;
+  readonly getProjectMemory: (
+    projectId: string,
+  ) => Effect.Effect<JarvisProjectMemoryResponse, JarvisClientError>;
+  readonly getProjectFiles: (
+    projectId: string,
+    options?: { readonly includeRetracted?: boolean },
+  ) => Effect.Effect<ReadonlyArray<JarvisProjectFile>, JarvisClientError>;
+  readonly getProjectThreads: (
+    projectId: string,
+  ) => Effect.Effect<ReadonlyArray<JarvisProjectThread>, JarvisClientError>;
+  readonly createProject: (
+    input: JarvisProjectCreateInput,
+  ) => Effect.Effect<JarvisProject, JarvisClientError>;
+  readonly updateProject: (
+    projectId: string,
+    input: JarvisProjectUpdateInput,
+  ) => Effect.Effect<JarvisProject, JarvisClientError>;
+  readonly archiveProject: (
+    projectId: string,
+    input?: JarvisProjectArchiveInput,
+  ) => Effect.Effect<JarvisProject, JarvisClientError>;
+  readonly deleteProject: (projectId: string) => Effect.Effect<JsonObjectType, JarvisClientError>;
+  readonly recordProjectFinding: (
+    projectId: string,
+    input: JarvisProjectMemoryCurationInput,
+  ) => Effect.Effect<JsonObjectType, JarvisClientError>;
+  readonly recordProjectDecision: (
+    projectId: string,
+    input: JarvisProjectMemoryCurationInput,
+  ) => Effect.Effect<JsonObjectType, JarvisClientError>;
+  readonly forgetProjectMemory: (
+    projectId: string,
+    input: JarvisProjectMemoryForgetInput,
+  ) => Effect.Effect<JsonObjectType, JarvisClientError>;
+  readonly correctProjectMemory: (
+    projectId: string,
+    input: JarvisProjectMemoryCorrectInput,
+  ) => Effect.Effect<JsonObjectType, JarvisClientError>;
+  readonly uploadProjectFile: (
+    projectId: string,
+    input: JarvisProjectFileUploadInput,
+  ) => Effect.Effect<JsonObjectType, JarvisClientError>;
+  readonly retractProjectFile: (
+    projectId: string,
+    docId: string,
+    input?: JarvisProjectFileRetractInput,
+  ) => Effect.Effect<JsonObjectType, JarvisClientError>;
+  readonly createProjectThread: (
+    projectId: string,
+    input?: JarvisProjectCreateThreadInput,
+  ) => Effect.Effect<JarvisProjectThread, JarvisClientError>;
+  readonly archiveProjectThread: (
+    projectId: string,
+    threadId: string,
+    input?: JarvisProjectThreadArchiveInput,
+  ) => Effect.Effect<JarvisProjectThread, JarvisClientError>;
+  readonly sendProjectThreadTurn: (
+    projectId: string,
+    threadId: string,
+    input: JarvisProjectThreadTurnInput,
+  ) => Effect.Effect<JarvisProjectThreadTurnResult, JarvisClientError>;
   readonly getSession: (
     sessionRef: string,
   ) => Effect.Effect<JarvisWorkerSession, JarvisClientError>;
@@ -209,7 +299,7 @@ function makeJarvisClientFromConnection(input: {
   readonly oauthAccessToken?: JarvisAccessTokenProvider;
 }): JarvisClient {
   if (input.config.jarvisFixtureMode) {
-    return makeJarvisFixtureClient();
+    return makeSharedJarvisFixtureClient();
   }
   if (!input.config.jarvisCockpitEnabled) {
     return makeMissingConfigurationClient("Jarvis cockpit mode is disabled.");
@@ -231,6 +321,21 @@ const decodeCatalog = Schema.decodeUnknownEffect(JarvisCockpitCatalog);
 const decodeSnapshot = Schema.decodeUnknownEffect(JarvisRunsSnapshot);
 const decodeControlResult = Schema.decodeUnknownEffect(JarvisControlResult);
 const decodeStartWorkValidationResult = Schema.decodeUnknownEffect(JarvisStartWorkValidationResult);
+const decodeProjectListResponse = Schema.decodeUnknownEffect(JarvisProjectListResponse);
+const decodeProjectDetailResponse = Schema.decodeUnknownEffect(JarvisProjectDetailResponse);
+const decodeProjectMemoryResponse = Schema.decodeUnknownEffect(JarvisProjectMemoryResponse);
+const decodeProjectFilesResponse = Schema.decodeUnknownEffect(JarvisProjectFilesResponse);
+const decodeProjectThreadsResponse = Schema.decodeUnknownEffect(JarvisProjectThreadsResponse);
+const decodeProjectThread = Schema.decodeUnknownEffect(JarvisProjectThread);
+const decodeProjectThreadResponse = (operation: string, body: unknown) =>
+  Effect.gen(function* () {
+    const candidate = projectThreadPayloadFromResponse(operation, body);
+    if (candidate instanceof JarvisClientError) {
+      return yield* Effect.fail(candidate);
+    }
+    return yield* decodeFor(operation, decodeProjectThread)(candidate);
+  });
+const decodeJsonObject = Schema.decodeUnknownEffect(Schema.Record(Schema.String, Schema.Json));
 const decodeSessionDetail = Schema.decodeUnknownEffect(JarvisSessionDetailResponse);
 const decodeSessionEventsPage = Schema.decodeUnknownEffect(JarvisSessionEventsPage);
 const decodeSessionRequestsPage = Schema.decodeUnknownEffect(JarvisSessionRequestsPage);
@@ -265,8 +370,36 @@ const withSurfaceMetadata = <Input extends object>(
   };
 };
 
+const withoutWriteMetadata = <Input extends object>(input: Input): Omit<Input, "metadata"> => {
+  const { metadata: _metadata, ...payload } = input as Input & { readonly metadata?: unknown };
+  return payload;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function projectThreadPayloadFromResponse(
+  operation: string,
+  body: unknown,
+): unknown | JarvisClientError {
+  if (!isRecord(body)) {
+    return body;
+  }
+  if ("thread" in body) {
+    return body.thread;
+  }
+  if ("threads" in body) {
+    const threads = body.threads;
+    if (Array.isArray(threads) && threads.length > 0) {
+      return threads[0];
+    }
+    return new JarvisClientError({
+      operation,
+      message: "Jarvis returned no project thread.",
+    });
+  }
+  return body;
 }
 
 function resolveRequestAuth(
@@ -327,7 +460,9 @@ export function makeJarvisCockpitClient(input: {
                 ...init,
                 headers: {
                   accept: "application/json",
-                  ...(init?.body !== undefined ? { "content-type": "application/json" } : {}),
+                  ...(init?.body != null && !isFormDataBody(init.body)
+                    ? { "content-type": "application/json" }
+                    : {}),
                   ...(token ? { authorization: `Bearer ${token}` } : {}),
                   ...init?.headers,
                 },
@@ -343,11 +478,12 @@ export function makeJarvisCockpitClient(input: {
                 ? await send(auth.recoveryToken)
                 : first;
             if (!result.response.ok) {
+              const responseBody = truncateResponseBody(result.text);
               throw new JarvisClientError({
                 operation,
                 status: result.response.status,
-                responseBody: truncateResponseBody(result.text),
-                message: `Jarvis request ${operation} failed with HTTP ${result.response.status}.`,
+                responseBody,
+                message: summarizeHttpError(operation, result.response.status, responseBody),
               });
             }
             // @effect-diagnostics-next-line preferSchemaOverJson:off
@@ -372,6 +508,57 @@ export function makeJarvisCockpitClient(input: {
       body: JSON.stringify(payload),
     });
 
+  const requestText = (operation: string, path: string, init?: RequestInit) =>
+    resolveRequestAuth(input, operation).pipe(
+      Effect.flatMap((auth) =>
+        Effect.tryPromise({
+          try: async () => {
+            const requestUrl = new URL(path, input.baseUrl);
+            const send = async (token: string | undefined) => {
+              const response = await fetchImpl(requestUrl, {
+                ...init,
+                headers: {
+                  accept: "text/event-stream, text/plain, application/json",
+                  ...(init?.body != null && !isFormDataBody(init.body)
+                    ? { "content-type": "application/json" }
+                    : {}),
+                  ...(token ? { authorization: `Bearer ${token}` } : {}),
+                  ...init?.headers,
+                },
+              });
+              const text = await response.text();
+              return { response, text };
+            };
+            const first = await send(auth.token);
+            const result =
+              !first.response.ok &&
+              isAuthRejectedStatus(first.response.status) &&
+              auth.recoveryToken !== undefined
+                ? await send(auth.recoveryToken)
+                : first;
+            if (!result.response.ok) {
+              const responseBody = truncateResponseBody(result.text);
+              throw new JarvisClientError({
+                operation,
+                status: result.response.status,
+                responseBody,
+                message: summarizeHttpError(operation, result.response.status, responseBody),
+              });
+            }
+            return result.text;
+          },
+          catch: (cause) =>
+            cause instanceof JarvisClientError
+              ? cause
+              : new JarvisClientError({
+                  operation,
+                  message: `Jarvis request ${operation} failed before a valid response was read.`,
+                  cause,
+                }),
+        }),
+      ),
+    );
+
   return {
     getCatalog: () =>
       requestJson("cockpit.catalog", "/v1/cockpit/catalog").pipe(
@@ -381,6 +568,128 @@ export function makeJarvisCockpitClient(input: {
       requestJson("cockpit.snapshot", "/v1/cockpit/snapshot?sync=probe").pipe(
         Effect.flatMap(decodeFor("cockpit.snapshot", decodeSnapshot)),
       ),
+    getProjects: (options) =>
+      requestJson(
+        "projects.list",
+        appendQuery("/v1/projects", {
+          include_archived: options?.includeArchived ? "true" : undefined,
+        }),
+      ).pipe(
+        Effect.flatMap(decodeFor("projects.list", decodeProjectListResponse)),
+        Effect.map((response) => response.projects),
+      ),
+    getProject: (projectId) =>
+      requestJson("projects.get", `/v1/projects/${encodeURIComponent(projectId)}`).pipe(
+        Effect.flatMap(decodeFor("projects.get", decodeProjectDetailResponse)),
+        Effect.map((response) => response.project),
+      ),
+    getProjectMemory: (projectId) =>
+      requestJson("projects.memory", `/v1/projects/${encodeURIComponent(projectId)}/memory`).pipe(
+        Effect.flatMap(decodeFor("projects.memory", decodeProjectMemoryResponse)),
+      ),
+    getProjectFiles: (projectId, options) =>
+      requestJson(
+        "projects.files",
+        appendQuery(`/v1/projects/${encodeURIComponent(projectId)}/files`, {
+          include_retracted: options?.includeRetracted ? "true" : undefined,
+        }),
+      ).pipe(
+        Effect.flatMap(decodeFor("projects.files", decodeProjectFilesResponse)),
+        Effect.map((response) => response.files),
+      ),
+    getProjectThreads: (projectId) =>
+      requestJson("projects.threads", `/v1/projects/${encodeURIComponent(projectId)}/threads`).pipe(
+        Effect.flatMap(decodeFor("projects.threads", decodeProjectThreadsResponse)),
+        Effect.map((response) => response.threads),
+      ),
+    createProject: (projectInput) =>
+      postJson("projects.create", "/v1/projects", withoutWriteMetadata(projectInput)).pipe(
+        Effect.flatMap(decodeFor("projects.create", decodeProjectDetailResponse)),
+        Effect.map((response) => response.project),
+      ),
+    updateProject: (projectId, projectInput) =>
+      requestJson("projects.update", `/v1/projects/${encodeURIComponent(projectId)}`, {
+        method: "PATCH",
+        body: JSON.stringify(withoutWriteMetadata(projectInput)),
+      }).pipe(
+        Effect.flatMap(decodeFor("projects.update", decodeProjectDetailResponse)),
+        Effect.map((response) => response.project),
+      ),
+    archiveProject: (projectId, archiveInput = {}) =>
+      postJson(
+        "projects.archive",
+        `/v1/projects/${encodeURIComponent(projectId)}/archive`,
+        withoutWriteMetadata(archiveInput),
+      ).pipe(
+        Effect.flatMap(decodeFor("projects.archive", decodeProjectDetailResponse)),
+        Effect.map((response) => response.project),
+      ),
+    deleteProject: (projectId) =>
+      requestJson("projects.delete", `/v1/projects/${encodeURIComponent(projectId)}`, {
+        method: "DELETE",
+      }).pipe(Effect.flatMap(decodeFor("projects.delete", decodeJsonObject))),
+    recordProjectFinding: (projectId, input) =>
+      postJson(
+        "projects.findings.create",
+        `/v1/projects/${encodeURIComponent(projectId)}/findings`,
+        withSurfaceMetadata(input),
+      ).pipe(Effect.flatMap(decodeFor("projects.findings.create", decodeJsonObject))),
+    recordProjectDecision: (projectId, input) =>
+      postJson(
+        "projects.decisions.create",
+        `/v1/projects/${encodeURIComponent(projectId)}/decisions`,
+        withSurfaceMetadata(input),
+      ).pipe(Effect.flatMap(decodeFor("projects.decisions.create", decodeJsonObject))),
+    forgetProjectMemory: (projectId, input) =>
+      postJson(
+        "projects.memory.forget",
+        `/v1/projects/${encodeURIComponent(projectId)}/memory/forget`,
+        withSurfaceMetadata(input),
+      ).pipe(Effect.flatMap(decodeFor("projects.memory.forget", decodeJsonObject))),
+    correctProjectMemory: (projectId, input) =>
+      postJson(
+        "projects.memory.correct",
+        `/v1/projects/${encodeURIComponent(projectId)}/memory/correct`,
+        withSurfaceMetadata(input),
+      ).pipe(Effect.flatMap(decodeFor("projects.memory.correct", decodeJsonObject))),
+    uploadProjectFile: (projectId, input) =>
+      requestJson("projects.files.upload", `/v1/projects/${encodeURIComponent(projectId)}/files`, {
+        method: "POST",
+        body: projectFileUploadFormData(input),
+      }).pipe(Effect.flatMap(decodeFor("projects.files.upload", decodeJsonObject))),
+    retractProjectFile: (projectId, docId) =>
+      requestJson(
+        "projects.files.retract",
+        `/v1/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(docId)}`,
+        {
+          method: "DELETE",
+        },
+      ).pipe(Effect.flatMap(decodeFor("projects.files.retract", decodeJsonObject))),
+    createProjectThread: (projectId, threadInput = {}) =>
+      postJson(
+        "projects.threads.create",
+        `/v1/projects/${encodeURIComponent(projectId)}/threads`,
+        withSurfaceMetadata(threadInput),
+      ).pipe(
+        Effect.flatMap((body) => decodeProjectThreadResponse("projects.threads.create", body)),
+      ),
+    archiveProjectThread: (projectId, threadId, archiveInput = {}) =>
+      postJson(
+        "projects.threads.archive",
+        `/v1/projects/${encodeURIComponent(projectId)}/threads/${encodeURIComponent(threadId)}/archive`,
+        withSurfaceMetadata(archiveInput),
+      ).pipe(
+        Effect.flatMap((body) => decodeProjectThreadResponse("projects.threads.archive", body)),
+      ),
+    sendProjectThreadTurn: (projectId, threadId, turnInput) =>
+      requestText(
+        "projects.threads.turn",
+        `/v1/projects/${encodeURIComponent(projectId)}/threads/${encodeURIComponent(threadId)}/turns`,
+        {
+          method: "POST",
+          body: JSON.stringify(withSurfaceMetadata(turnInput)),
+        },
+      ).pipe(Effect.map(parseProjectThreadTurnSse)),
     getSession: (sessionRef) =>
       requestJson("sessions.get", `/v1/sessions/${encodeURIComponent(sessionRef)}`).pipe(
         Effect.flatMap(decodeFor("sessions.get", decodeSessionDetail)),
@@ -393,7 +702,10 @@ export function makeJarvisCockpitClient(input: {
           after: options?.after,
           limit: options?.limit,
         }),
-      ).pipe(Effect.flatMap(decodeFor("sessions.events", decodeSessionEventsPage))),
+      ).pipe(
+        Effect.map((body) => normalizeSessionEventsPage(body, sessionRef)),
+        Effect.flatMap(decodeFor("sessions.events", decodeSessionEventsPage)),
+      ),
     getRequests: (sessionRef, options) =>
       requestJson(
         "sessions.requests",
@@ -536,6 +848,9 @@ export function makeJarvisClient(config: {
   readonly getSettings?: Effect.Effect<ServerSettings, ServerSettingsError>;
   readonly oauthAccessToken?: JarvisAccessTokenProvider;
 }): JarvisClient {
+  if (config.jarvisFixtureMode) {
+    return makeSharedJarvisFixtureClient();
+  }
   if (config.getSettings !== undefined) {
     const getSettings = config.getSettings;
     const withClient = <A, E>(
@@ -575,6 +890,58 @@ export function makeJarvisClient(config: {
     return {
       getCatalog: () => withClient("cockpit.catalog", (client) => client.getCatalog()),
       getSnapshot: () => withClient("cockpit.snapshot", (client) => client.getSnapshot()),
+      getProjects: (options) =>
+        withClient("projects.list", (client) => client.getProjects(options)),
+      getProject: (projectId) =>
+        withClient("projects.get", (client) => client.getProject(projectId)),
+      getProjectMemory: (projectId) =>
+        withClient("projects.memory", (client) => client.getProjectMemory(projectId)),
+      getProjectFiles: (projectId, options) =>
+        withClient("projects.files", (client) => client.getProjectFiles(projectId, options)),
+      getProjectThreads: (projectId) =>
+        withClient("projects.threads", (client) => client.getProjectThreads(projectId)),
+      createProject: (input) =>
+        withClient("projects.create", (client) => client.createProject(input)),
+      updateProject: (projectId, input) =>
+        withClient("projects.update", (client) => client.updateProject(projectId, input)),
+      archiveProject: (projectId, input) =>
+        withClient("projects.archive", (client) => client.archiveProject(projectId, input)),
+      deleteProject: (projectId) =>
+        withClient("projects.delete", (client) => client.deleteProject(projectId)),
+      recordProjectFinding: (projectId, input) =>
+        withClient("projects.findings.create", (client) =>
+          client.recordProjectFinding(projectId, input),
+        ),
+      recordProjectDecision: (projectId, input) =>
+        withClient("projects.decisions.create", (client) =>
+          client.recordProjectDecision(projectId, input),
+        ),
+      forgetProjectMemory: (projectId, input) =>
+        withClient("projects.memory.forget", (client) =>
+          client.forgetProjectMemory(projectId, input),
+        ),
+      correctProjectMemory: (projectId, input) =>
+        withClient("projects.memory.correct", (client) =>
+          client.correctProjectMemory(projectId, input),
+        ),
+      uploadProjectFile: (projectId, input) =>
+        withClient("projects.files.upload", (client) => client.uploadProjectFile(projectId, input)),
+      retractProjectFile: (projectId, docId, input) =>
+        withClient("projects.files.retract", (client) =>
+          client.retractProjectFile(projectId, docId, input),
+        ),
+      createProjectThread: (projectId, input) =>
+        withClient("projects.threads.create", (client) =>
+          client.createProjectThread(projectId, input),
+        ),
+      archiveProjectThread: (projectId, threadId, input) =>
+        withClient("projects.threads.archive", (client) =>
+          client.archiveProjectThread(projectId, threadId, input),
+        ),
+      sendProjectThreadTurn: (projectId, threadId, input) =>
+        withClient("projects.threads.turn", (client) =>
+          client.sendProjectThreadTurn(projectId, threadId, input),
+        ),
       getSession: (sessionRef) =>
         withClient("sessions.get", (client) => client.getSession(sessionRef)),
       getSessionEvents: (sessionRef, options) =>
@@ -608,9 +975,6 @@ export function makeJarvisClient(config: {
     };
   }
 
-  if (config.jarvisFixtureMode) {
-    return makeJarvisFixtureClient();
-  }
   if (!config.jarvisCockpitEnabled) {
     return makeMissingConfigurationClient("Jarvis cockpit mode is disabled.");
   }
@@ -744,6 +1108,24 @@ function makeMissingConfigurationClient(message: string): JarvisClient {
   return {
     getCatalog: () => fail("jarvis.client.configure"),
     getSnapshot: () => fail("jarvis.client.configure"),
+    getProjects: () => fail("jarvis.client.configure"),
+    getProject: () => fail("jarvis.client.configure"),
+    getProjectMemory: () => fail("jarvis.client.configure"),
+    getProjectFiles: () => fail("jarvis.client.configure"),
+    getProjectThreads: () => fail("jarvis.client.configure"),
+    createProject: () => fail("jarvis.client.configure"),
+    updateProject: () => fail("jarvis.client.configure"),
+    archiveProject: () => fail("jarvis.client.configure"),
+    deleteProject: () => fail("jarvis.client.configure"),
+    recordProjectFinding: () => fail("jarvis.client.configure"),
+    recordProjectDecision: () => fail("jarvis.client.configure"),
+    forgetProjectMemory: () => fail("jarvis.client.configure"),
+    correctProjectMemory: () => fail("jarvis.client.configure"),
+    uploadProjectFile: () => fail("jarvis.client.configure"),
+    retractProjectFile: () => fail("jarvis.client.configure"),
+    createProjectThread: () => fail("jarvis.client.configure"),
+    archiveProjectThread: () => fail("jarvis.client.configure"),
+    sendProjectThreadTurn: () => fail("jarvis.client.configure"),
     getSession: () => fail("jarvis.client.configure"),
     getSessionEvents: () => fail("jarvis.client.configure"),
     getRequests: () => fail("jarvis.client.configure"),
@@ -823,6 +1205,79 @@ export function makeJarvisFixtureClient(): JarvisClient {
       surface: "jarvis-cockpit",
     },
   };
+  const jarvisProjectId = JarvisProjectId.make("jarvis");
+  const cockpitProjectId = JarvisProjectId.make("jarvis-cockpit");
+  let projects: ReadonlyArray<JarvisProject> = [
+    {
+      id: cockpitProjectId,
+      name: "Jarvis Cockpit",
+      peer_id: "project:jarvis-cockpit",
+      aliases: ["cockpit", "t3 cockpit"],
+      owner: "neil",
+      members: ["neil"],
+      visibility: "household",
+      status: "active",
+      repos: [
+        { name: "cockpit", remote: "roughcoder/jarvis-cockpit", default: true },
+        { name: "runtime", remote: "roughcoder/jarvis", default: false },
+      ],
+      links: { jira: "", urls: [] },
+      files_root: "jarvis-workspace/projects/jarvis-cockpit/files",
+    },
+    {
+      id: jarvisProjectId,
+      name: "Jarvis Runtime",
+      peer_id: "project:jarvis",
+      aliases: ["jarvis"],
+      owner: "neil",
+      members: ["neil"],
+      visibility: "household",
+      status: "active",
+      repos: [{ name: "runtime", remote: "roughcoder/jarvis", default: true }],
+      links: { jira: "", urls: [] },
+      files_root: "jarvis-workspace/projects/jarvis/files",
+    },
+  ];
+  const projectThreads = new Map<string, JarvisProjectThread[]>([
+    [
+      cockpitProjectId,
+      [
+        {
+          thread_id: JarvisProjectThreadId.make("thread_fixture_cockpit_plan"),
+          project_id: cockpitProjectId,
+          session_id: "project:jarvis-cockpit:orchestrator:thread_fixture_cockpit_plan",
+          title: "Cockpit planning",
+          created_at: now,
+          updated_at: now,
+          created_by: "neil",
+        },
+      ],
+    ],
+    [jarvisProjectId, []],
+  ]);
+  const projectFiles = new Map<string, JarvisProjectFile[]>([
+    [
+      cockpitProjectId,
+      [
+        {
+          doc_id: "fixture-cockpit-spec",
+          title: "Cockpit API Spec",
+          session_id: "project:jarvis-cockpit:uploads:fixture-cockpit-spec",
+          original_path: "projects/jarvis-cockpit/files/fixture-cockpit-spec.md",
+          content_hash: "sha256:fixture",
+          artifact_type: "spec",
+          uploaded_by: "fixture",
+          observed_at: now,
+          retracted: false,
+          ingestion: { queued: false },
+          metadata: { source: "fixture" },
+        },
+      ],
+    ],
+    [jarvisProjectId, []],
+  ]);
+  let generatedProjectThreadCount = 1;
+  let generatedProjectFileCount = 1;
   const events: ReadonlyArray<JarvisSessionEvent> = [
     {
       event_id: JarvisSessionEvent.fields.event_id.make("evt_fixture_1"),
@@ -901,6 +1356,59 @@ export function makeJarvisFixtureClient(): JarvisClient {
             status: "ready",
             default_branch: "main",
             is_default: true,
+            can_start_work: true,
+          },
+          {
+            repo: "roughcoder/jarvis-cockpit",
+            status: "ready",
+            default_branch: "main",
+            is_default: false,
+            can_start_work: true,
+          },
+        ],
+        public_metadata: {},
+      },
+      {
+        worker_id: "mac-mini-worker" as JarvisWorkerSession["worker_id"],
+        display_name: "Mac mini",
+        status: "online",
+        health: "healthy",
+        last_seen_at: now,
+        capabilities: ["code.edit", "shell.run", "browser.use", "github.pr.create"],
+        engines: [
+          {
+            engine: "codex",
+            display_name: "Codex",
+            status: "available",
+            default: true,
+            supports: {
+              streaming: true,
+              resume: true,
+              interrupt: true,
+              approval_requests: true,
+              input_requests: true,
+              checkpoints: true,
+            },
+          },
+        ],
+        capacity: {
+          max_sessions: 4,
+          active_sessions: 0,
+          queued_sessions: 0,
+        },
+        repositories: [
+          {
+            repo: "roughcoder/jarvis",
+            status: "ready",
+            default_branch: "main",
+            is_default: true,
+            can_start_work: true,
+          },
+          {
+            repo: "roughcoder/jarvis-cockpit",
+            status: "ready",
+            default_branch: "main",
+            is_default: false,
             can_start_work: true,
           },
         ],
@@ -1015,6 +1523,42 @@ export function makeJarvisFixtureClient(): JarvisClient {
     fixtureSnapshot.sessions.find((candidate) => candidate.session_ref === candidateSessionRef);
   const findRun = (candidateRunId: string): JarvisRun | undefined =>
     fixtureSnapshot.runs.find((candidate) => candidate.run_id === candidateRunId);
+  const findProject = (candidateProjectId: string): JarvisProject | undefined =>
+    projects.find((candidate) => candidate.id === candidateProjectId);
+  const projectPeerId = (projectId: string) => `project:${projectId}`;
+  const fixtureProjectFromCreateInput = (input: JarvisProjectCreateInput): JarvisProject => {
+    const name = input.name;
+    const id = input.id ?? JarvisProjectId.make(fixtureIdSlug(name));
+    return {
+      id,
+      name,
+      peer_id: input.peer_id ?? projectPeerId(id),
+      aliases: input.aliases ?? [],
+      owner: input.owner ?? "fixture",
+      members: input.members ?? ["fixture"],
+      visibility: input.visibility ?? "household",
+      status: input.status ?? "active",
+      repos: input.repos ?? [],
+      links: input.links ?? { urls: [] },
+      files_root: input.files_root ?? `jarvis-workspace/projects/${id}/files`,
+    };
+  };
+  const fixtureProjectFromUpdateInput = (
+    project: JarvisProject,
+    input: JarvisProjectUpdateInput,
+  ): JarvisProject => ({
+    ...project,
+    ...(input.name !== undefined ? { name: input.name } : {}),
+    ...(input.peer_id !== undefined ? { peer_id: input.peer_id } : {}),
+    ...(input.aliases !== undefined ? { aliases: input.aliases } : {}),
+    ...(input.owner !== undefined ? { owner: input.owner } : {}),
+    ...(input.members !== undefined ? { members: input.members } : {}),
+    ...(input.visibility !== undefined ? { visibility: input.visibility } : {}),
+    ...(input.status !== undefined ? { status: input.status } : {}),
+    ...(input.repos !== undefined ? { repos: input.repos } : {}),
+    ...(input.links !== undefined ? { links: input.links } : {}),
+    ...(input.files_root !== undefined ? { files_root: input.files_root } : {}),
+  });
 
   const fixtureEvent = (input: {
     readonly eventId: string;
@@ -1141,7 +1685,7 @@ export function makeJarvisFixtureClient(): JarvisClient {
         turnId: `${syntheticRunId}_turn_1`,
         messageId: `${syntheticRunId}_message_1`,
         data: {
-          text: `Fixture mode started "${title}". Connect a real Jarvis API to execute this work with live workers.`,
+          text: `Fixture mode started "${title}" on ${workerId}. Connect a real Jarvis API to execute this work with live workers.`,
         },
       }),
       fixtureEvent({
@@ -1278,6 +1822,93 @@ export function makeJarvisFixtureClient(): JarvisClient {
     };
   };
 
+  const updateFixtureSession = (
+    candidateSessionRef: string,
+    update: (session: JarvisWorkerSession) => JarvisWorkerSession,
+  ): JarvisWorkerSession => {
+    const targetSession = findSession(candidateSessionRef) ?? session;
+    const updatedSession = update(targetSession);
+    const shouldDecrementCapacity =
+      targetSession.status === "running" &&
+      (updatedSession.status !== "running" || updatedSession.archived_at != null);
+    fixtureSnapshot = {
+      ...fixtureSnapshot,
+      cursor: updatedSession.latest_event_cursor || fixtureSnapshot.cursor,
+      generated_at: now,
+      sessions: fixtureSnapshot.sessions.map((candidate) =>
+        candidate.session_ref === updatedSession.session_ref ? updatedSession : candidate,
+      ),
+      workers: shouldDecrementCapacity
+        ? fixtureSnapshot.workers.map((worker) =>
+            worker.worker_id === updatedSession.worker_id
+              ? {
+                  ...worker,
+                  capacity: {
+                    ...worker.capacity,
+                    active_sessions: Math.max(0, worker.capacity.active_sessions - 1),
+                  },
+                }
+              : worker,
+          )
+        : fixtureSnapshot.workers,
+    };
+    return updatedSession;
+  };
+
+  const updateFixtureRun = (
+    candidateRunId: string,
+    update: (run: JarvisRun) => JarvisRun,
+  ): JarvisRun => {
+    const targetRun = findRun(candidateRunId) ?? run;
+    const updatedRun = update(targetRun);
+    const archivedSessionRefs = new Set(
+      fixtureSnapshot.sessions
+        .filter((candidate) => candidate.run_id === updatedRun.run_id)
+        .filter((candidate) => candidate.status === "running" || candidate.archived_at == null)
+        .map((candidate) => candidate.session_ref),
+    );
+    fixtureSnapshot = {
+      ...fixtureSnapshot,
+      cursor: updatedRun.latest_cursor || fixtureSnapshot.cursor,
+      generated_at: now,
+      runs: fixtureSnapshot.runs.map((candidate) =>
+        candidate.run_id === updatedRun.run_id ? updatedRun : candidate,
+      ),
+      sessions:
+        updatedRun.archived_at != null
+          ? fixtureSnapshot.sessions.map((candidate) =>
+              candidate.run_id === updatedRun.run_id
+                ? { ...candidate, archived_at: updatedRun.archived_at, updated_at: now }
+                : candidate,
+            )
+          : fixtureSnapshot.sessions,
+      workers:
+        updatedRun.archived_at != null
+          ? fixtureSnapshot.workers.map((worker) => {
+              const archivedActiveCount = fixtureSnapshot.sessions.filter(
+                (candidate) =>
+                  candidate.worker_id === worker.worker_id &&
+                  candidate.status === "running" &&
+                  archivedSessionRefs.has(candidate.session_ref),
+              ).length;
+              return archivedActiveCount > 0
+                ? {
+                    ...worker,
+                    capacity: {
+                      ...worker.capacity,
+                      active_sessions: Math.max(
+                        0,
+                        worker.capacity.active_sessions - archivedActiveCount,
+                      ),
+                    },
+                  }
+                : worker;
+            })
+          : fixtureSnapshot.workers,
+    };
+    return updatedRun;
+  };
+
   return {
     getCatalog: () =>
       Effect.succeed({
@@ -1337,6 +1968,341 @@ export function makeJarvisFixtureClient(): JarvisClient {
         generated_at: now,
       }),
     getSnapshot: () => Effect.succeed(fixtureSnapshot),
+    getProjects: (options) =>
+      Effect.succeed(
+        options?.includeArchived
+          ? projects
+          : projects.filter((project) => project.status !== "archived"),
+      ),
+    getProject: (candidateProjectId) => {
+      const project = findProject(candidateProjectId);
+      return project
+        ? Effect.succeed(project)
+        : Effect.fail(
+            new JarvisClientError({
+              operation: "fixture.projects.get",
+              status: 404,
+              message: `No fixture project ${candidateProjectId}.`,
+            }),
+          );
+    },
+    getProjectMemory: (candidateProjectId) => {
+      const project = findProject(candidateProjectId);
+      return project
+        ? Effect.succeed({
+            api_version: "v1" as const,
+            schema_version: 1,
+            project_id: project.id,
+            peer_id: project.peer_id,
+            representation:
+              project.id === cockpitProjectId
+                ? "Jarvis Cockpit is the browser surface for Jarvis projects, worker sessions, and project orchestrator conversations."
+                : "Jarvis Runtime owns workers, project registry memory, and Cockpit API orchestration.",
+            conclusions: [
+              {
+                id: `${project.id}:decision:first-class-jarvis`,
+                content:
+                  "Cockpit treats Jarvis projects and workers as the primary product surface.",
+                artifact_type: "decision",
+                recorded_by: "fixture",
+                observed_at: now,
+              },
+            ],
+          })
+        : Effect.fail(
+            new JarvisClientError({
+              operation: "fixture.projects.memory",
+              status: 404,
+              message: `No fixture project ${candidateProjectId}.`,
+            }),
+          );
+    },
+    getProjectFiles: (candidateProjectId, options) =>
+      Effect.succeed(
+        (projectFiles.get(candidateProjectId) ?? []).filter(
+          (file) => options?.includeRetracted || !file.retracted,
+        ),
+      ),
+    getProjectThreads: (candidateProjectId) =>
+      Effect.succeed(projectThreads.get(candidateProjectId) ?? []),
+    createProject: (input) => {
+      const project = fixtureProjectFromCreateInput(input);
+      if (findProject(project.id) !== undefined) {
+        return Effect.fail(
+          new JarvisClientError({
+            operation: "fixture.projects.create",
+            status: 409,
+            message: `Fixture project ${project.id} already exists.`,
+          }),
+        );
+      }
+      projects = [project, ...projects];
+      projectThreads.set(project.id, []);
+      projectFiles.set(project.id, []);
+      return Effect.succeed(project);
+    },
+    updateProject: (candidateProjectId, input) => {
+      const project = findProject(candidateProjectId);
+      if (project === undefined) {
+        return Effect.fail(
+          new JarvisClientError({
+            operation: "fixture.projects.update",
+            status: 404,
+            message: `No fixture project ${candidateProjectId}.`,
+          }),
+        );
+      }
+      const updated = fixtureProjectFromUpdateInput(project, input);
+      projects = projects.map((candidate) =>
+        candidate.id === candidateProjectId ? updated : candidate,
+      );
+      return Effect.succeed(updated);
+    },
+    archiveProject: (candidateProjectId) => {
+      const project = findProject(candidateProjectId);
+      if (project === undefined) {
+        return Effect.fail(
+          new JarvisClientError({
+            operation: "fixture.projects.archive",
+            status: 404,
+            message: `No fixture project ${candidateProjectId}.`,
+          }),
+        );
+      }
+      const archived = { ...project, status: "archived" };
+      projects = projects.map((candidate) =>
+        candidate.id === candidateProjectId ? archived : candidate,
+      );
+      return Effect.succeed(archived);
+    },
+    deleteProject: (candidateProjectId) => {
+      const project = findProject(candidateProjectId);
+      if (project === undefined) {
+        return Effect.fail(
+          new JarvisClientError({
+            operation: "fixture.projects.delete",
+            status: 404,
+            message: `No fixture project ${candidateProjectId}.`,
+          }),
+        );
+      }
+      projects = projects.filter((candidate) => candidate.id !== candidateProjectId);
+      projectThreads.delete(candidateProjectId);
+      projectFiles.delete(candidateProjectId);
+      return Effect.succeed({
+        ok: true,
+        project_id: candidateProjectId,
+      });
+    },
+    recordProjectFinding: (candidateProjectId, input) =>
+      findProject(candidateProjectId)
+        ? Effect.succeed({
+            ok: true,
+            content_hash: `sha256:fixture-${fixtureIdSlug(input.content)}`,
+            artifact_type: "finding",
+            project_id: candidateProjectId,
+          })
+        : Effect.fail(
+            new JarvisClientError({
+              operation: "fixture.projects.findings.create",
+              status: 404,
+              message: `No fixture project ${candidateProjectId}.`,
+            }),
+          ),
+    recordProjectDecision: (candidateProjectId, input) =>
+      findProject(candidateProjectId)
+        ? Effect.succeed({
+            ok: true,
+            content_hash: `sha256:fixture-${fixtureIdSlug(input.content)}`,
+            artifact_type: "decision",
+            project_id: candidateProjectId,
+          })
+        : Effect.fail(
+            new JarvisClientError({
+              operation: "fixture.projects.decisions.create",
+              status: 404,
+              message: `No fixture project ${candidateProjectId}.`,
+            }),
+          ),
+    forgetProjectMemory: (candidateProjectId, input) =>
+      findProject(candidateProjectId)
+        ? Effect.succeed({
+            ok: true,
+            result: input.confirm ? "Forgotten." : "Confirmation required.",
+            project_id: candidateProjectId,
+          })
+        : Effect.fail(
+            new JarvisClientError({
+              operation: "fixture.projects.memory.forget",
+              status: 404,
+              message: `No fixture project ${candidateProjectId}.`,
+            }),
+          ),
+    correctProjectMemory: (candidateProjectId, input) =>
+      findProject(candidateProjectId)
+        ? Effect.succeed({
+            ok: true,
+            result: input.confirm ? "Corrected." : "Confirmation required.",
+            replacement: input.replacement,
+            project_id: candidateProjectId,
+          })
+        : Effect.fail(
+            new JarvisClientError({
+              operation: "fixture.projects.memory.correct",
+              status: 404,
+              message: `No fixture project ${candidateProjectId}.`,
+            }),
+          ),
+    uploadProjectFile: (candidateProjectId, input) => {
+      if (!findProject(candidateProjectId)) {
+        return Effect.fail(
+          new JarvisClientError({
+            operation: "fixture.projects.files.upload",
+            status: 404,
+            message: `No fixture project ${candidateProjectId}.`,
+          }),
+        );
+      }
+      generatedProjectFileCount += 1;
+      const docId = `fixture-${fixtureIdSlug(input.filename)}-${generatedProjectFileCount}`;
+      const file: JarvisProjectFile = {
+        doc_id: docId,
+        title: input.title ?? input.filename,
+        session_id: `project:${candidateProjectId}:uploads:${docId}`,
+        original_path: `projects/${candidateProjectId}/files/${input.filename}`,
+        content_hash: `sha256:${docId}`,
+        artifact_type: input.artifact_type ?? "spec",
+        uploaded_by: "fixture",
+        observed_at: now,
+        retracted: false,
+        ingestion: { queued: false },
+        metadata: { source: "fixture" },
+      };
+      projectFiles.set(candidateProjectId, [file, ...(projectFiles.get(candidateProjectId) ?? [])]);
+      return Effect.succeed({
+        ok: true,
+        api_version: "v1",
+        schema_version: 1,
+        project_id: candidateProjectId,
+        doc_id: docId,
+        file: projectFileJson(file),
+      });
+    },
+    retractProjectFile: (candidateProjectId, docId) => {
+      const file = projectFiles
+        .get(candidateProjectId)
+        ?.find((candidate) => candidate.doc_id === docId);
+      if (file === undefined) {
+        return Effect.fail(
+          new JarvisClientError({
+            operation: "fixture.projects.files.retract",
+            status: 404,
+            message: `No fixture project file ${candidateProjectId}/${docId}.`,
+          }),
+        );
+      }
+      const retracted = { ...file, retracted: true };
+      projectFiles.set(
+        candidateProjectId,
+        (projectFiles.get(candidateProjectId) ?? []).map((candidate) =>
+          candidate.doc_id === docId ? retracted : candidate,
+        ),
+      );
+      return Effect.succeed({
+        ok: true,
+        api_version: "v1",
+        schema_version: 1,
+        project_id: candidateProjectId,
+        doc_id: docId,
+        file: projectFileJson(retracted),
+      });
+    },
+    createProjectThread: (candidateProjectId, input = {}) => {
+      const project = findProject(candidateProjectId);
+      if (project === undefined) {
+        return Effect.fail(
+          new JarvisClientError({
+            operation: "fixture.projects.threads.create",
+            status: 404,
+            message: `No fixture project ${candidateProjectId}.`,
+          }),
+        );
+      }
+      generatedProjectThreadCount += 1;
+      const title = firstTrimmed(input.title) ?? `Conversation ${generatedProjectThreadCount}`;
+      const threadSlug = fixtureIdSlug(title);
+      const thread: JarvisProjectThread = {
+        thread_id: JarvisProjectThreadId.make(
+          `thread_fixture_${fixtureIdSlug(project.id)}_${threadSlug}_${generatedProjectThreadCount}`,
+        ),
+        project_id: project.id,
+        session_id: `project:${project.id}:orchestrator:thread_fixture_${threadSlug}_${generatedProjectThreadCount}`,
+        title,
+        created_at: now,
+        updated_at: now,
+        created_by: "fixture",
+      };
+      projectThreads.set(candidateProjectId, [
+        thread,
+        ...(projectThreads.get(candidateProjectId) ?? []),
+      ]);
+      return Effect.succeed(thread);
+    },
+    archiveProjectThread: (candidateProjectId, threadId) => {
+      const thread = projectThreads
+        .get(candidateProjectId)
+        ?.find((candidate) => candidate.thread_id === threadId);
+      if (thread === undefined) {
+        return Effect.fail(
+          new JarvisClientError({
+            operation: "fixture.projects.threads.archive",
+            status: 404,
+            message: `No fixture project thread ${candidateProjectId}/${threadId}.`,
+          }),
+        );
+      }
+      projectThreads.set(
+        candidateProjectId,
+        (projectThreads.get(candidateProjectId) ?? []).filter(
+          (candidate) => candidate.thread_id !== threadId,
+        ),
+      );
+      return Effect.succeed(thread);
+    },
+    sendProjectThreadTurn: (candidateProjectId, threadId, input) => {
+      const project = findProject(candidateProjectId);
+      const thread = projectThreads
+        .get(candidateProjectId)
+        ?.find((candidate) => candidate.thread_id === threadId);
+      if (project === undefined || thread === undefined) {
+        return Effect.fail(
+          new JarvisClientError({
+            operation: "fixture.projects.threads.turn",
+            status: 404,
+            message: `No fixture project thread ${candidateProjectId}/${threadId}.`,
+          }),
+        );
+      }
+      const text = `Fixture Jarvis recorded a Codex project conversation for ${project.name}: ${input.text}`;
+      return Effect.succeed({
+        ok: true,
+        text,
+        events: [
+          {
+            event: "thread.turn.started",
+            data: { thread_id: thread.thread_id, project_id: project.id },
+          },
+          {
+            event: "thread.reply",
+            data: { text },
+          },
+          {
+            event: "thread.turn.done",
+            data: { thread_id: thread.thread_id },
+          },
+        ],
+      });
+    },
     getSession: (candidateSessionRef) =>
       findSession(candidateSessionRef)
         ? Effect.succeed(findSession(candidateSessionRef)!)
@@ -1427,27 +2393,50 @@ export function makeJarvisFixtureClient(): JarvisClient {
         run: { ...run, status: "interrupted" },
         session: { ...session, status: "interrupted" },
       }),
-    stopSession: () =>
-      Effect.succeed({
+    stopSession: (candidateSessionRef) => {
+      const updatedSession = updateFixtureSession(candidateSessionRef, (targetSession) => ({
+        ...targetSession,
+        status: "stopped",
+        updated_at: now,
+      }));
+      const updatedRun = findRun(updatedSession.run_id) ?? run;
+      return Effect.succeed({
         ok: true,
         cursor: "evt_fixture_3",
-        run: { ...run, status: "stopped" },
-        session: { ...session, status: "stopped" },
-      }),
-    archiveSession: () =>
-      Effect.succeed({
+        run: updatedRun,
+        session: updatedSession,
+      });
+    },
+    archiveSession: (candidateSessionRef) => {
+      const updatedSession = updateFixtureSession(candidateSessionRef, (targetSession) => ({
+        ...targetSession,
+        archived_at: now,
+        updated_at: now,
+      }));
+      const updatedRun = findRun(updatedSession.run_id) ?? run;
+      return Effect.succeed({
         ok: true,
         cursor: "evt_fixture_3",
-        run,
-        session: { ...session, archived_at: now },
-      }),
-    archiveRun: () =>
-      Effect.succeed({
+        run: updatedRun,
+        session: updatedSession,
+      });
+    },
+    archiveRun: (candidateRunId) => {
+      const updatedRun = updateFixtureRun(candidateRunId, (targetRun) => ({
+        ...targetRun,
+        archived_at: now,
+        updated_at: now,
+      }));
+      const archivedSession =
+        fixtureSnapshot.sessions.find((candidate) => candidate.run_id === updatedRun.run_id) ??
+        session;
+      return Effect.succeed({
         ok: true,
         cursor: "evt_fixture_3",
-        run: { ...run, archived_at: now },
-        session,
-      }),
+        run: updatedRun,
+        session: archivedSession,
+      });
+    },
     restoreCheckpoint: (_sessionRef, restoreInput) =>
       Effect.succeed({
         ok: true,
@@ -1504,6 +2493,60 @@ export function makeJarvisFixtureClient(): JarvisClient {
   };
 }
 
+let sharedJarvisFixtureClient: JarvisClient | undefined;
+
+function makeSharedJarvisFixtureClient(): JarvisClient {
+  sharedJarvisFixtureClient ??= makeJarvisFixtureClient();
+  return sharedJarvisFixtureClient;
+}
+
+function parseProjectThreadTurnSse(text: string): JarvisProjectThreadTurnResult {
+  const events: Record<string, Schema.Json>[] = [];
+  const replyParts: string[] = [];
+  for (const block of text.split(/\r?\n\r?\n/u)) {
+    const trimmedBlock = block.trim();
+    if (trimmedBlock.length === 0) {
+      continue;
+    }
+    let eventType = "message";
+    const dataLines: string[] = [];
+    for (const line of trimmedBlock.split(/\r?\n/u)) {
+      if (line.startsWith("event:")) {
+        eventType = line.slice("event:".length).trim();
+        continue;
+      }
+      if (line.startsWith("data:")) {
+        dataLines.push(line.slice("data:".length).trimStart());
+      }
+    }
+    const dataText = dataLines.join("\n");
+    let data: unknown = dataText;
+    if (dataText.length > 0) {
+      try {
+        data = JSON.parse(dataText);
+      } catch {
+        data = dataText;
+      }
+    }
+    events.push({ event: eventType, data: data as Schema.Json });
+    if (eventType === "thread.reply") {
+      if (typeof data === "string") {
+        replyParts.push(data);
+      } else if (isRecord(data)) {
+        const candidate = data.text ?? data.reply ?? data.content;
+        if (typeof candidate === "string") {
+          replyParts.push(candidate);
+        }
+      }
+    }
+  }
+  return {
+    ok: true,
+    text: replyParts.join(""),
+    events,
+  };
+}
+
 function appendQuery(path: string, params: Record<string, string | number | undefined>): string {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -1513,6 +2556,40 @@ function appendQuery(path: string, params: Record<string, string | number | unde
   }
   const serialized = query.toString();
   return serialized.length > 0 ? `${path}?${serialized}` : path;
+}
+
+function isFormDataBody(body: Exclude<RequestInit["body"], null | undefined>): boolean {
+  return typeof FormData !== "undefined" && body instanceof FormData;
+}
+
+function projectFileUploadFormData(input: JarvisProjectFileUploadInput): FormData {
+  const formData = new FormData();
+  const mimeType = input.mime_type ?? "application/octet-stream";
+  const content = NodeBuffer.Buffer.from(input.content_base64, "base64");
+  formData.append("file", new Blob([content], { type: mimeType }), input.filename);
+  if (input.title !== undefined) {
+    formData.append("title", input.title);
+  }
+  if (input.artifact_type !== undefined) {
+    formData.append("artifact_type", input.artifact_type);
+  }
+  return formData;
+}
+
+function projectFileJson(file: JarvisProjectFile): JsonObjectType {
+  return {
+    doc_id: file.doc_id,
+    title: file.title ?? "",
+    session_id: file.session_id ?? "",
+    original_path: file.original_path ?? "",
+    content_hash: file.content_hash ?? "",
+    artifact_type: file.artifact_type ?? "",
+    uploaded_by: file.uploaded_by ?? "",
+    observed_at: file.observed_at ?? "",
+    retracted: file.retracted,
+    ingestion: file.ingestion ?? {},
+    metadata: file.metadata ?? {},
+  };
 }
 
 function firstTrimmed(...values: ReadonlyArray<unknown>): string | null {
@@ -1540,4 +2617,63 @@ function fixtureIdSlug(value: string): string {
 
 function truncateResponseBody(text: string): string {
   return text.length <= 4_000 ? text : `${text.slice(0, 4_000)}...`;
+}
+
+function summarizeHttpError(operation: string, status: number, responseBody: string): string {
+  const detail = extractHttpErrorDetail(responseBody);
+  return `Jarvis request ${operation} failed with HTTP ${status}${detail ? `: ${detail}` : "."}`;
+}
+
+function extractHttpErrorDetail(responseBody: string): string | null {
+  if (responseBody.trim().length === 0) {
+    return null;
+  }
+  try {
+    const body = JSON.parse(responseBody) as unknown;
+    const detail = errorDetailFromBody(body);
+    return detail === null ? null : truncateErrorDetail(detail);
+  } catch {
+    return null;
+  }
+}
+
+function errorDetailFromBody(body: unknown): string | null {
+  if (typeof body === "string") {
+    return body.trim() || null;
+  }
+  if (!isRecord(body)) {
+    return null;
+  }
+  if (typeof body.error === "string") {
+    return body.error.trim() || null;
+  }
+  if (isRecord(body.error)) {
+    return firstTrimmed(body.error.message, body.error.code);
+  }
+  return firstTrimmed(body.message, body.code);
+}
+
+function truncateErrorDetail(detail: string): string {
+  return detail.length <= 300 ? detail : `${detail.slice(0, 300)}...`;
+}
+
+function normalizeSessionEventsPage(body: unknown, sessionRef: string): unknown {
+  if (!isRecord(body) || !Array.isArray(body.items)) {
+    return body;
+  }
+  return {
+    ...body,
+    items: body.items.map((item) => {
+      if (!isRecord(item)) {
+        return item;
+      }
+      const runId = typeof item.run_id === "string" ? item.run_id.trim() : "";
+      return runId.length > 0
+        ? item
+        : {
+            ...item,
+            run_id: `session:${sessionRef}`,
+          };
+    }),
+  };
 }

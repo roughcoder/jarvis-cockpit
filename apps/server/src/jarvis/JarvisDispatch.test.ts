@@ -97,6 +97,65 @@ it.effect("routes first draft turns to Jarvis work start", () =>
   }),
 );
 
+it.effect("does not send local draft branch as a Jarvis worker branch", () =>
+  Effect.gen(function* () {
+    let capturedStartWork: JarvisStartWorkInput | undefined;
+    const client = {
+      ...makeJarvisFixtureClient(),
+      startWork: (input: JarvisStartWorkInput) => {
+        capturedStartWork = input;
+        return makeJarvisFixtureClient().startWork(input);
+      },
+    };
+
+    yield* dispatchJarvisCommand({
+      client,
+      enabled: true,
+      command: {
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd_start_work_no_branch"),
+        threadId: ThreadId.make("thread_draft"),
+        message: {
+          messageId: MessageId.make("msg_user"),
+          role: "user",
+          text: "Check the cockpit status.",
+          attachments: [],
+        },
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "codex",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        bootstrap: {
+          createThread: {
+            projectId: ProjectId.make("project_1"),
+            title: "Cockpit status",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "codex",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: "jarvis/local-draft-branch",
+            worktreePath: null,
+            createdAt: now,
+          },
+          jarvisEngine: "codex",
+          jarvisRepo: "roughcoder/jarvis-cockpit",
+          jarvisWorkerId: "macbook-worker",
+        },
+        createdAt: now,
+      },
+    });
+
+    assert.strictEqual(capturedStartWork?.repo, "roughcoder/jarvis-cockpit");
+    assert.strictEqual(capturedStartWork?.worker_id, "macbook-worker");
+    assert.strictEqual(capturedStartWork?.branch, undefined);
+    assert.strictEqual(capturedStartWork?.branch_strategy, "auto");
+  }),
+);
+
 it.effect("derives Jarvis start-work engine from known provider routing keys", () =>
   Effect.gen(function* () {
     let capturedStartWork: JarvisStartWorkInput | undefined;

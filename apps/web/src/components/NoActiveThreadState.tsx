@@ -11,10 +11,10 @@ export function NoActiveThreadState() {
   const isJarvisCockpitMode = environments.some((environment) =>
     isJarvisCockpitEnvironment(environment.serverConfig ?? undefined),
   );
-  const headerLabel = isJarvisCockpitMode ? "No active session" : "No active thread";
-  const title = isJarvisCockpitMode ? "Pick a session to continue" : "Pick a thread to continue";
+  const headerLabel = isJarvisCockpitMode ? "No active project" : "No active thread";
+  const title = isJarvisCockpitMode ? "Pick a project to continue" : "Pick a thread to continue";
   const description = isJarvisCockpitMode
-    ? "Select a Jarvis session or use Start work to dispatch new work."
+    ? "Select a Jarvis project or use Start work to dispatch new work."
     : "Select an existing thread or create a new one to get started.";
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">

@@ -1,10 +1,10 @@
 import type {
   ApprovalRequestId,
   EnvironmentId,
+  JarvisProject,
   JarvisWorkerProfile,
   ModelSelection,
   PreviewAnnotationPayload,
-  ProjectId,
   ProviderApprovalDecision,
   ProviderInteractionMode,
   ResolvedKeybindingsConfig,
@@ -15,18 +15,11 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 import {
-  DEFAULT_MODEL,
   ProviderDriverKind,
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   connectionStatusText,
   type EnvironmentConnectionPresentation,
@@ -95,7 +88,7 @@ import {
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../pierre-icons";
-import { cn, newProjectId, randomUUID } from "~/lib/utils";
+import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -115,9 +108,9 @@ import {
   BotIcon,
   CircleAlertIcon,
   FolderGit2Icon,
+  GitBranchIcon,
   ListTodoIcon,
   PencilRulerIcon,
-  PlusIcon,
   RotateCcwIcon,
   ServerIcon,
   TriangleAlertIcon,
@@ -149,12 +142,8 @@ import { formatProviderSkillDisplayName } from "../../providerSkillPresentation"
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
-import { useProjects } from "../../state/entities";
-import { projectEnvironment } from "../../state/projects";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentQuery } from "../../state/query";
-import { useAtomCommand } from "../../state/use-atom-command";
-import { inferProjectTitleFromPath, resolveProjectPathForDispatch } from "../../lib/projectPaths";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -189,6 +178,8 @@ const COMPOSER_FLOATING_LAYER_SELECTOR = [
 ].join(",");
 
 const WORKER_AUTO_VALUE = "__auto__";
+type ComposerJarvisProject = Pick<JarvisProject, "id" | "name" | "repos">;
+type ComposerJarvisRepo = ComposerJarvisProject["repos"][number];
 
 function jarvisEngineForComposerSelection(input: {
   selectedProvider: ProviderDriverKind;
@@ -209,40 +200,13 @@ function jarvisEngineForComposerSelection(input: {
   return "codex";
 }
 
-function projectRepoKeys(project: EnvironmentProject | null): ReadonlySet<string> {
-  const keys = new Set<string>();
-  if (!project) return keys;
-  if (isSyntheticJarvisProject(project)) return keys;
-  const add = (value: string | null | undefined) => {
-    const trimmed = value?.trim().toLowerCase();
-    if (trimmed) keys.add(trimmed);
-  };
-  add(project.title);
-  add(project.workspaceRoot);
-  add(lastPathSegment(project.workspaceRoot));
-  add(project.repositoryIdentity?.canonicalKey);
-  add(project.repositoryIdentity?.displayName);
-  add(project.repositoryIdentity?.name);
-  if (project.repositoryIdentity?.owner && project.repositoryIdentity?.name) {
-    add(`${project.repositoryIdentity.owner}/${project.repositoryIdentity.name}`);
-  }
-  return keys;
+function jarvisRepoForProject(project: ComposerJarvisProject | null): string | null {
+  const repo = project?.repos.find((candidate) => candidate.default) ?? project?.repos[0];
+  return repo?.remote ?? null;
 }
 
-function isSyntheticJarvisProject(project: EnvironmentProject): boolean {
-  return project.repositoryIdentity == null && project.workspaceRoot.startsWith("jarvis://");
-}
-
-function jarvisRepoForProject(project: EnvironmentProject | null): string | null {
-  const identity = project?.repositoryIdentity;
-  if (!identity) return null;
-  return (
-    identity.displayName ??
-    identity.canonicalKey ??
-    (identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null) ??
-    identity.name ??
-    null
-  );
+function jarvisRepoLabel(repo: ComposerJarvisRepo | null | undefined): string {
+  return repo?.remote?.trim() || repo?.name?.trim() || "No repo";
 }
 
 function lastPathSegment(path: string): string | undefined {
@@ -257,21 +221,18 @@ function workerSupportsEngine(worker: JarvisWorkerProfile, engine: string): bool
   );
 }
 
-function workerCanStartProject(
-  worker: JarvisWorkerProfile,
-  project: EnvironmentProject | null,
-): boolean {
+function workerCanStartRepo(worker: JarvisWorkerProfile, repo: string | null): boolean {
   const repositories = worker.repositories ?? [];
-  if (repositories.length === 0 || project === null) {
+  if (repositories.length === 0 || repo === null) {
     return true;
   }
-  const keys = projectRepoKeys(project);
-  if (keys.size === 0) {
-    return repositories.some((repository) => repository.can_start_work);
-  }
-  return repositories.some(
-    (repository) => repository.can_start_work && keys.has(repository.repo.trim().toLowerCase()),
-  );
+  const selected = repo.trim().toLowerCase();
+  const selectedSegment = lastPathSegment(selected);
+  return repositories.some((repository) => {
+    if (!repository.can_start_work) return false;
+    const workerRepo = repository.repo.trim().toLowerCase();
+    return workerRepo === selected || workerRepo === selectedSegment;
+  });
 }
 
 function workerIsHealthyEnough(worker: JarvisWorkerProfile): boolean {
@@ -286,27 +247,25 @@ function workerLabel(worker: JarvisWorkerProfile | null | undefined): string {
   return worker?.display_name?.trim() || worker?.worker_id || "Unknown worker";
 }
 
-function shortProjectLabel(project: EnvironmentProject | null): string {
+function shortProjectLabel(project: ComposerJarvisProject | null): string {
   if (!project) return "Project";
-  return project.title || lastPathSegment(project.workspaceRoot) || "Project";
+  return project.name || "Project";
 }
 
 function ComposerJarvisRoutingControls(props: {
-  environmentId: EnvironmentId;
-  selectedProject: EnvironmentProject | null;
-  environmentProjects: ReadonlyArray<EnvironmentProject>;
+  selectedProject: ComposerJarvisProject | null;
+  selectedRepo: ComposerJarvisRepo | null;
+  environmentProjects: ReadonlyArray<ComposerJarvisProject>;
   workers: ReadonlyArray<JarvisWorkerProfile>;
   workersPending: boolean;
   selectedEngine: string;
   selectedWorkerOverrideId: string | null;
   defaultWorkerId: string | null;
   compatibilityWarning: string | null;
-  showCreateProject: boolean;
-  onProjectSelect: (projectId: ProjectId) => void;
+  onProjectSelect: (projectId: string) => void;
+  onRepoSelect: (repoRemote: string | null) => void;
   onWorkerOverrideChange: (workerId: string | null) => void;
-  onProjectCreated: (project: EnvironmentProject) => void;
 }) {
-  const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const compatibleWorkers = useMemo(
     () =>
       sortWorkers(
@@ -314,10 +273,10 @@ function ComposerJarvisRoutingControls(props: {
           (worker) =>
             workerIsHealthyEnough(worker) &&
             workerSupportsEngine(worker, props.selectedEngine) &&
-            workerCanStartProject(worker, props.selectedProject),
+            workerCanStartRepo(worker, props.selectedRepo?.remote ?? null),
         ),
       ),
-    [props.selectedEngine, props.selectedProject, props.workers],
+    [props.selectedEngine, props.selectedRepo, props.workers],
   );
   const incompatibleWorkers = useMemo(
     () =>
@@ -349,51 +308,6 @@ function ComposerJarvisRoutingControls(props: {
           ? "Workers..."
           : "No worker";
 
-  const createProjectFromPrompt = async () => {
-    const rawPath = window.prompt("Project path");
-    const cwd = resolveProjectPathForDispatch(
-      rawPath ?? "",
-      props.selectedProject?.workspaceRoot ?? null,
-    );
-    if (cwd.length === 0) return;
-    const projectId = newProjectId();
-    const result = await createProject({
-      environmentId: props.environmentId,
-      input: {
-        projectId,
-        title: inferProjectTitleFromPath(cwd),
-        workspaceRoot: cwd,
-        createWorkspaceRootIfMissing: true,
-        defaultModelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: DEFAULT_MODEL,
-        },
-      },
-    });
-    if (result._tag === "Failure") {
-      if (!isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        toastManager.add({
-          type: "error",
-          title: "Could not create project",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        });
-      }
-      return;
-    }
-    const createdProject = props.environmentProjects.find((project) => project.id === projectId);
-    if (createdProject) {
-      props.onProjectCreated(createdProject);
-    } else {
-      props.onProjectSelect(projectId);
-    }
-    toastManager.add({
-      type: "success",
-      title: "Project created",
-      description: cwd,
-    });
-  };
-
   return (
     <>
       <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
@@ -405,11 +319,16 @@ function ComposerJarvisRoutingControls(props: {
               variant="ghost"
               className="min-w-0 max-w-44 shrink justify-start whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
               aria-label="Select Jarvis project"
+              disabled={props.environmentProjects.length === 0}
             />
           }
         >
           <FolderGit2Icon className="size-4 shrink-0" />
-          <span className="min-w-0 truncate">{shortProjectLabel(props.selectedProject)}</span>
+          <span className="min-w-0 truncate">
+            {props.environmentProjects.length === 0
+              ? "No project"
+              : shortProjectLabel(props.selectedProject)}
+          </span>
         </MenuTrigger>
         <MenuPopup align="start" side="top" className="min-w-64">
           <MenuGroup>
@@ -417,19 +336,45 @@ function ComposerJarvisRoutingControls(props: {
             {props.environmentProjects.map((project) => (
               <MenuItem key={project.id} onClick={() => props.onProjectSelect(project.id)}>
                 <FolderGit2Icon className="size-4" />
-                <span className="min-w-0 flex-1 truncate">{project.title}</span>
+                <span className="min-w-0 flex-1 truncate">{project.name}</span>
               </MenuItem>
             ))}
           </MenuGroup>
-          {props.showCreateProject ? (
-            <>
-              <MenuDivider />
-              <MenuItem onClick={() => void createProjectFromPrompt()}>
-                <PlusIcon className="size-4" />
-                Create project...
-              </MenuItem>
-            </>
-          ) : null}
+        </MenuPopup>
+      </Menu>
+
+      <Menu>
+        <MenuTrigger
+          render={
+            <Button
+              size="sm"
+              variant="ghost"
+              className="min-w-0 max-w-56 shrink justify-start whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+              aria-label="Select Jarvis repository"
+              disabled={!props.selectedProject || props.selectedProject.repos.length === 0}
+            />
+          }
+        >
+          <GitBranchIcon className="size-4 shrink-0" />
+          <span className="min-w-0 truncate">{jarvisRepoLabel(props.selectedRepo)}</span>
+        </MenuTrigger>
+        <MenuPopup align="start" side="top" className="min-w-72">
+          <MenuGroup>
+            <MenuGroupLabel>Repository</MenuGroupLabel>
+            <MenuRadioGroup
+              value={props.selectedRepo?.remote ?? ""}
+              onValueChange={(value) => props.onRepoSelect(value || null)}
+            >
+              {props.selectedProject?.repos.map((repo) => (
+                <MenuRadioItem key={`${repo.name}:${repo.remote}`} value={repo.remote}>
+                  <span className="min-w-0 flex-1 truncate">{jarvisRepoLabel(repo)}</span>
+                  {repo.default ? (
+                    <span className="text-[11px] text-muted-foreground">default</span>
+                  ) : null}
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+          </MenuGroup>
         </MenuPopup>
       </Menu>
 
@@ -523,14 +468,16 @@ function ComposerJarvisRoutingControls(props: {
 }
 
 function ComposerJarvisRoutingMenuContent(props: {
-  selectedProject: EnvironmentProject | null;
-  environmentProjects: ReadonlyArray<EnvironmentProject>;
+  selectedProject: ComposerJarvisProject | null;
+  selectedRepo: ComposerJarvisRepo | null;
+  environmentProjects: ReadonlyArray<ComposerJarvisProject>;
   workers: ReadonlyArray<JarvisWorkerProfile>;
   selectedEngine: string;
   selectedWorkerOverrideId: string | null;
   defaultWorkerId: string | null;
   compatibilityWarning: string | null;
-  onProjectSelect: (projectId: ProjectId) => void;
+  onProjectSelect: (projectId: string) => void;
+  onRepoSelect: (repoRemote: string | null) => void;
   onWorkerOverrideChange: (workerId: string | null) => void;
 }) {
   const compatibleWorkers = useMemo(
@@ -540,10 +487,10 @@ function ComposerJarvisRoutingMenuContent(props: {
           (worker) =>
             workerIsHealthyEnough(worker) &&
             workerSupportsEngine(worker, props.selectedEngine) &&
-            workerCanStartProject(worker, props.selectedProject),
+            workerCanStartRepo(worker, props.selectedRepo?.remote ?? null),
         ),
       ),
-    [props.selectedEngine, props.selectedProject, props.workers],
+    [props.selectedEngine, props.selectedRepo, props.workers],
   );
   const incompatibleWorkers = useMemo(
     () =>
@@ -566,19 +513,48 @@ function ComposerJarvisRoutingMenuContent(props: {
     <>
       <MenuGroup>
         <MenuGroupLabel>Jarvis project</MenuGroupLabel>
-        <MenuRadioGroup
-          value={props.selectedProject?.id ?? ""}
-          onValueChange={(value) => {
-            if (!value) return;
-            props.onProjectSelect(value as ProjectId);
-          }}
-        >
-          {props.environmentProjects.map((project) => (
-            <MenuRadioItem key={project.id} value={project.id}>
-              <span className="min-w-0 truncate">{project.title}</span>
-            </MenuRadioItem>
-          ))}
-        </MenuRadioGroup>
+        {props.environmentProjects.length === 0 ? (
+          <MenuGroupLabel className="max-w-72 normal-case text-muted-foreground">
+            Create a project in Jarvis Projects before starting work.
+          </MenuGroupLabel>
+        ) : (
+          <MenuRadioGroup
+            value={props.selectedProject?.id ?? ""}
+            onValueChange={(value) => {
+              if (!value) return;
+              props.onProjectSelect(value);
+            }}
+          >
+            {props.environmentProjects.map((project) => (
+              <MenuRadioItem key={project.id} value={project.id}>
+                <span className="min-w-0 truncate">{project.name}</span>
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+        )}
+      </MenuGroup>
+      <MenuDivider />
+      <MenuGroup>
+        <MenuGroupLabel>Jarvis repository</MenuGroupLabel>
+        {props.selectedProject === null || props.selectedProject.repos.length === 0 ? (
+          <MenuGroupLabel className="max-w-72 normal-case text-muted-foreground">
+            Add repositories to this project before starting work.
+          </MenuGroupLabel>
+        ) : (
+          <MenuRadioGroup
+            value={props.selectedRepo?.remote ?? ""}
+            onValueChange={(value) => props.onRepoSelect(value || null)}
+          >
+            {props.selectedProject.repos.map((repo) => (
+              <MenuRadioItem key={`${repo.name}:${repo.remote}`} value={repo.remote}>
+                <span className="min-w-0 flex-1 truncate">{jarvisRepoLabel(repo)}</span>
+                {repo.default ? (
+                  <span className="text-[11px] text-muted-foreground">default</span>
+                ) : null}
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+        )}
       </MenuGroup>
       <MenuDivider />
       <MenuGroup>
@@ -1333,23 +1309,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Jarvis routing context
   // ------------------------------------------------------------------
   const canRouteJarvisStart = props.isJarvisCockpitEnvironment && isLocalDraftThread;
-  const allProjects = useProjects();
+  const jarvisProjectsQuery = useEnvironmentQuery(
+    canRouteJarvisStart
+      ? serverEnvironment.jarvisProjects({ environmentId, input: { includeArchived: false } })
+      : null,
+  );
   const environmentProjects = useMemo(
     () =>
-      allProjects
-        .filter((project) => project.environmentId === environmentId)
-        .toSorted((left, right) => left.title.localeCompare(right.title)),
-    [allProjects, environmentId],
+      (jarvisProjectsQuery.data?.projects ?? []).toSorted((left, right) =>
+        left.name.localeCompare(right.name),
+      ),
+    [jarvisProjectsQuery.data?.projects],
   );
   const [selectedJarvisProjectId, setSelectedJarvisProjectId] = useState<string | null>(null);
+  const [selectedJarvisRepoRemote, setSelectedJarvisRepoRemote] = useState<string | null>(null);
   const [selectedWorkerOverrideId, setSelectedWorkerOverrideId] = useState<string | null>(null);
-  const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const composerDraftTargetKey =
     typeof composerDraftTarget === "string"
       ? composerDraftTarget
       : `${composerDraftTarget.environmentId}:${composerDraftTarget.threadId}`;
   useEffect(() => {
     setSelectedJarvisProjectId(null);
+    setSelectedJarvisRepoRemote(null);
     setSelectedWorkerOverrideId(null);
   }, [composerDraftTargetKey]);
   const selectedJarvisProject = useMemo(() => {
@@ -1362,7 +1343,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const activeProject =
       activeThread?.projectId === undefined
         ? null
-        : environmentProjects.find((project) => project.id === activeThread.projectId);
+        : environmentProjects.find(
+            (project) => String(project.id) === String(activeThread.projectId),
+          );
     return activeProject ?? environmentProjects[0] ?? null;
   }, [activeThread?.projectId, canRouteJarvisStart, environmentProjects, selectedJarvisProjectId]);
   useEffect(() => {
@@ -1375,15 +1358,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
   }, [canRouteJarvisStart, environmentProjects, selectedJarvisProjectId]);
 
-  const handleJarvisProjectSelect = useCallback(
-    (projectId: ProjectId) => {
-      setSelectedJarvisProjectId(projectId);
-      setDraftThreadContext(composerDraftTarget, {
-        projectRef: scopeProjectRef(environmentId, projectId),
-      });
-    },
-    [composerDraftTarget, environmentId, setDraftThreadContext],
-  );
+  const handleJarvisProjectSelect = useCallback((projectId: string) => {
+    setSelectedJarvisProjectId(projectId);
+    setSelectedJarvisRepoRemote(null);
+  }, []);
+
+  const selectedJarvisRepoEntry = useMemo(() => {
+    if (!selectedJarvisProject) return null;
+    const explicit =
+      selectedJarvisRepoRemote === null
+        ? null
+        : selectedJarvisProject.repos.find((repo) => repo.remote === selectedJarvisRepoRemote);
+    return (
+      explicit ??
+      selectedJarvisProject.repos.find((repo) => repo.default) ??
+      selectedJarvisProject.repos[0] ??
+      null
+    );
+  }, [selectedJarvisProject, selectedJarvisRepoRemote]);
+
+  useEffect(() => {
+    if (
+      selectedJarvisRepoRemote !== null &&
+      selectedJarvisProject !== null &&
+      !selectedJarvisProject.repos.some((repo) => repo.remote === selectedJarvisRepoRemote)
+    ) {
+      setSelectedJarvisRepoRemote(null);
+    }
+  }, [selectedJarvisProject, selectedJarvisRepoRemote]);
 
   const jarvisSnapshotQuery = useEnvironmentQuery(
     canRouteJarvisStart ? serverEnvironment.jarvisSnapshot({ environmentId, input: {} }) : null,
@@ -1404,20 +1406,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         (worker) =>
           workerIsHealthyEnough(worker) &&
           workerSupportsEngine(worker, selectedJarvisEngine) &&
-          workerCanStartProject(worker, selectedJarvisProject),
+          workerCanStartRepo(worker, selectedJarvisRepoEntry?.remote ?? null),
       ),
-    [jarvisWorkers, selectedJarvisEngine, selectedJarvisProject],
+    [jarvisWorkers, selectedJarvisEngine, selectedJarvisRepoEntry],
   );
   const jarvisDefaultWorkerId = useMemo(() => {
-    const projectRepoKeysSet = projectRepoKeys(selectedJarvisProject);
+    const selectedRepo = selectedJarvisRepoEntry?.remote.trim().toLowerCase() ?? null;
+    const selectedRepoSegment = selectedRepo ? lastPathSegment(selectedRepo) : undefined;
     const repositoryDefault = compatibleJarvisWorkers.find((worker) =>
       (worker.repositories ?? []).some(
         (repository) =>
-          repository.is_default && projectRepoKeysSet.has(repository.repo.trim().toLowerCase()),
+          repository.is_default &&
+          (selectedRepo === null ||
+            repository.repo.trim().toLowerCase() === selectedRepo ||
+            repository.repo.trim().toLowerCase() === selectedRepoSegment),
       ),
     );
     return repositoryDefault?.worker_id ?? compatibleJarvisWorkers[0]?.worker_id ?? null;
-  }, [compatibleJarvisWorkers, selectedJarvisProject]);
+  }, [compatibleJarvisWorkers, selectedJarvisRepoEntry]);
   const selectedOverrideWorker = useMemo(
     () =>
       selectedWorkerOverrideId === null
@@ -1431,8 +1437,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedOverrideWorker !== null &&
     compatibleJarvisWorkers.some((worker) => worker.worker_id === selectedOverrideWorker.worker_id);
   const selectedJarvisRepo = useMemo(
-    () => jarvisRepoForProject(selectedJarvisProject),
-    [selectedJarvisProject],
+    () => selectedJarvisRepoEntry?.remote ?? jarvisRepoForProject(selectedJarvisProject),
+    [selectedJarvisProject, selectedJarvisRepoEntry],
   );
   const jarvisCompatibilityWarning = useMemo(() => {
     if (!canRouteJarvisStart) {
@@ -3139,6 +3145,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       canRouteJarvisStart ? (
                         <ComposerJarvisRoutingMenuContent
                           selectedProject={selectedJarvisProject}
+                          selectedRepo={selectedJarvisRepoEntry}
                           environmentProjects={environmentProjects}
                           workers={jarvisWorkers}
                           selectedEngine={selectedJarvisEngine}
@@ -3146,6 +3153,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           defaultWorkerId={jarvisDefaultWorkerId}
                           compatibilityWarning={jarvisCompatibilityWarning}
                           onProjectSelect={handleJarvisProjectSelect}
+                          onRepoSelect={setSelectedJarvisRepoRemote}
                           onWorkerOverrideChange={setSelectedWorkerOverrideId}
                         />
                       ) : undefined
@@ -3155,8 +3163,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   <>
                     {canRouteJarvisStart ? (
                       <ComposerJarvisRoutingControls
-                        environmentId={environmentId}
                         selectedProject={selectedJarvisProject}
+                        selectedRepo={selectedJarvisRepoEntry}
                         environmentProjects={environmentProjects}
                         workers={jarvisWorkers}
                         workersPending={jarvisSnapshotQuery.isPending}
@@ -3164,10 +3172,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         selectedWorkerOverrideId={selectedWorkerOverrideIdForDispatch}
                         defaultWorkerId={jarvisDefaultWorkerId}
                         compatibilityWarning={jarvisCompatibilityWarning}
-                        showCreateProject={false}
                         onProjectSelect={handleJarvisProjectSelect}
+                        onRepoSelect={setSelectedJarvisRepoRemote}
                         onWorkerOverrideChange={setSelectedWorkerOverrideId}
-                        onProjectCreated={(project) => handleJarvisProjectSelect(project.id)}
                       />
                     ) : null}
                     {providerTraitsPicker ? (

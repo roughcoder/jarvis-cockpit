@@ -4028,6 +4028,13 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeProject) return;
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
+    if (activeIsJarvisCockpitEnvironment && isLocalDraftThread && !ctxSelectedJarvisRepo) {
+      setThreadError(
+        threadIdForSend,
+        "Create a Jarvis project before starting work. Jarvis Cockpit dispatches through projects, not loose repositories.",
+      );
+      return;
+    }
     const worktreeProjectCwd =
       isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
         ? activeProjectFilesystemCwd
@@ -4195,8 +4202,12 @@ function ChatViewContent(props: ChatViewProps) {
 
     let turnStartSucceeded = false;
     if (failure === null && turnAttachmentsResult._tag === "Success") {
+      const hasJarvisRoutingBootstrap =
+        Boolean(ctxSelectedJarvisWorkerOverrideId) ||
+        Boolean(ctxSelectedJarvisRepo) ||
+        Boolean(ctxSelectedJarvisEngine);
       const bootstrap =
-        isLocalDraftThread || baseBranchForWorktree
+        isLocalDraftThread || baseBranchForWorktree || hasJarvisRoutingBootstrap
           ? {
               ...(isLocalDraftThread
                 ? {

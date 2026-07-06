@@ -28,6 +28,11 @@ const LOOPBACK_AUTH = {
   sessionCookieName: "t3_session",
 } as const;
 
+const LOCAL_JARVIS_AUTH = {
+  ...LOOPBACK_AUTH,
+  bootstrapMethods: ["local-jarvis-browser", "one-time-token"],
+} as const;
+
 const DESKTOP_AUTH = {
   policy: "desktop-managed-local",
   bootstrapMethods: ["desktop-bootstrap"],
@@ -98,6 +103,10 @@ async function installAuthApi(input: {
   readonly browserSession?: (
     credential: string,
   ) => Effect.Effect<AuthBrowserSessionResult, EnvironmentAuthInvalidError>;
+  readonly localJarvisBrowserSession?: () => Effect.Effect<
+    AuthBrowserSessionResult,
+    EnvironmentAuthInvalidError
+  >;
   readonly pairingCredential?: (payload: AuthCreatePairingCredentialInput) => Effect.Effect<{
     readonly id: string;
     readonly credential: string;
@@ -109,6 +118,9 @@ async function installAuthApi(input: {
     ...(input.session ? { session: () => Effect.succeed(input.session!()) } : {}),
     ...(input.browserSession
       ? { browserSession: (payload) => input.browserSession!(payload.credential) }
+      : {}),
+    ...(input.localJarvisBrowserSession
+      ? { localJarvisBrowserSession: input.localJarvisBrowserSession }
       : {}),
     ...(input.pairingCredential
       ? { pairingCredential: (payload) => input.pairingCredential!(payload) }
@@ -167,6 +179,24 @@ describe("resolveInitialServerAuthGateState", () => {
     expect(testApi.calls.browserSession).toEqual([{ credential: "desktop-bootstrap-token" }]);
   });
 
+  it("silently bootstraps local Jarvis browser sessions for loopback auth", async () => {
+    const nextSession = sequence(
+      unauthenticatedSession(LOCAL_JARVIS_AUTH),
+      authenticatedSession(LOCAL_JARVIS_AUTH),
+    );
+    const testApi = await installAuthApi({
+      session: nextSession,
+      localJarvisBrowserSession: () => Effect.succeed(browserSession(["orchestration:read"])),
+    });
+
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({ status: "authenticated" });
+    expect(testApi.calls.session).toBe(2);
+    expect(testApi.calls.browserSession).toEqual([]);
+    expect(testApi.calls.localJarvisBrowserSession).toBe(1);
+  });
+
   it("uses https urls when the primary environment uses wss", async () => {
     await installAuthApi({ session: () => unauthenticatedSession(LOOPBACK_AUTH) });
     vi.stubEnv("VITE_HTTP_URL", "https://remote.example.com");
@@ -214,6 +244,25 @@ describe("resolveInitialServerAuthGateState", () => {
     });
     expect(resolvePrimaryEnvironmentHttpUrl("/api/auth/session")).toBe(
       "http://127.0.0.1:5735/api/auth/session",
+    );
+  });
+
+  it("uses the vite proxy for configured local HTTPS dev auth requests", async () => {
+    await installAuthApi({ session: () => unauthenticatedSession(LOOPBACK_AUTH) });
+    vi.stubEnv("VITE_DEV_SERVER_URL", "https://cockpit.local/");
+    vi.stubEnv("VITE_HTTP_URL", "http://localhost:13773");
+    vi.stubEnv("VITE_WS_URL", "ws://localhost:13773");
+    installTestBrowser("https://cockpit.local/");
+
+    const { resolveInitialServerAuthGateState, resolvePrimaryEnvironmentHttpUrl } =
+      await import("./environments/primary");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
+      status: "requires-auth",
+      auth: LOOPBACK_AUTH,
+    });
+    expect(resolvePrimaryEnvironmentHttpUrl("/api/auth/session")).toBe(
+      "https://cockpit.local/api/auth/session",
     );
   });
 

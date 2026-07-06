@@ -5,6 +5,7 @@ import {
   isJarvisCockpitEnvironment,
   isJarvisCockpitMode,
   isJarvisProjectId,
+  isJarvisStartProjectId,
   isJarvisThreadId,
   jarvisCockpitEnvironmentIds,
 } from "./jarvisCockpit";
@@ -55,6 +56,8 @@ describe("jarvisCockpit", () => {
 
   it("identifies Jarvis-projected ids", () => {
     expect(isJarvisProjectId("jarvis-run_run_123")).toBe(true);
+    expect(isJarvisStartProjectId("jarvis-start")).toBe(true);
+    expect(isJarvisProjectId("jarvis-start")).toBe(false);
     expect(isJarvisProjectId("project-1")).toBe(false);
     expect(isJarvisThreadId("jarvis-session_sess_123")).toBe(true);
     expect(isJarvisThreadId("thread-1")).toBe(false);

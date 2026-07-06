@@ -367,10 +367,7 @@ function titleForSession(session: JarvisWorkerSession, run: JarvisRun | undefine
   return normalizeJarvisPublicLabel(session.title) ?? run?.title ?? session.session_ref;
 }
 
-function branchForSession(
-  session: JarvisWorkerSession,
-  run: JarvisRun | undefined,
-): string | null {
+function branchForSession(session: JarvisWorkerSession, run: JarvisRun | undefined): string | null {
   return normalizeJarvisPublicLabel(session.branch) ?? normalizeJarvisPublicLabel(run?.branch);
 }
 

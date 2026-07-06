@@ -362,6 +362,12 @@ export class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     }),
   )
   .add(
+    HttpApiEndpoint.post("localJarvisBrowserSession", "/api/auth/local-jarvis-browser-session", {
+      success: AuthBrowserSessionResult,
+      error: EnvironmentSessionCreationErrors,
+    }),
+  )
+  .add(
     HttpApiEndpoint.post("token", "/oauth/token", {
       headers: OptionalDpopProofHeaders,
       payload: AuthTokenExchangeRequest,

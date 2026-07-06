@@ -36,15 +36,15 @@ export function resolveSidebarSurfaceCopy(input: {
 }): SidebarSurfaceCopy {
   if (input.isJarvisCockpitMode) {
     return {
-      topLevelLabel: "Runs",
-      topLevelSortLabel: "Sort runs",
+      topLevelLabel: "Projects",
+      topLevelSortLabel: "Sort projects",
       childLabel: "sessions",
       childSortLabel: "Sort sessions",
       visibleChildLabel: "Visible sessions",
-      emptyTopLevelLabel: "No runs yet",
+      emptyTopLevelLabel: "No projects yet",
       emptyChildLabel: "No sessions yet",
-      groupedTopLevelCountLabel: (count) => `${count} runs`,
-      createChildActionLabel: (topLevelName) => `Start session for ${topLevelName}`,
+      groupedTopLevelCountLabel: (count) => `${count} projects`,
+      createChildActionLabel: (topLevelName) => `Start session in ${topLevelName}`,
       createChildTooltipLabel: (shortcutLabel) =>
         shortcutLabel ? `New session (${shortcutLabel})` : "New session",
       createChildErrorTitle: "Could not start session",

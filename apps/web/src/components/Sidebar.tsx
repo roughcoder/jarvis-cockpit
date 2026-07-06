@@ -120,7 +120,7 @@ import { useEnvironmentQuery } from "../state/query";
 import { threadEnvironment, useEnvironmentThread } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { isJarvisCockpitEnvironment } from "../jarvisCockpit";
+import { isJarvisCockpitEnvironment, isJarvisStartProjectId } from "../jarvisCockpit";
 import {
   buildThreadRouteParams,
   resolveThreadRouteRef,
@@ -474,6 +474,10 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && !isThreadRunning;
+  const archiveActionClassName =
+    isActive || isSelected
+      ? "pointer-events-auto opacity-100"
+      : "pointer-events-none opacity-0 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100";
   const threadMetaClassName = isConfirmingArchive
     ? "pointer-events-none opacity-0"
     : !isThreadRunning
@@ -793,7 +797,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                 data-thread-selection-safe
                 data-testid={`thread-archive-confirm-${thread.id}`}
                 aria-label={`Confirm archive ${thread.title}`}
-                className="absolute top-1/2 right-1 inline-flex h-5 -translate-y-1/2 cursor-pointer items-center rounded-md bg-destructive/12 px-2 text-[10px] font-medium text-destructive transition-colors hover:bg-destructive/18 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-destructive/40"
+                className="absolute top-1/2 right-1 z-20 inline-flex h-5 -translate-y-1/2 cursor-pointer items-center rounded-md bg-destructive/12 px-2 text-[10px] font-medium text-destructive transition-colors hover:bg-destructive/18 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-destructive/40"
                 onPointerDown={stopPropagationOnPointerDown}
                 onClick={handleConfirmArchiveClick}
               >
@@ -801,7 +805,9 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               </button>
             ) : !isThreadRunning ? (
               appSettingsConfirmThreadArchive ? (
-                <div className="pointer-events-none absolute top-1/2 right-0.5 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100">
+                <div
+                  className={`absolute top-1/2 right-0.5 z-20 -translate-y-1/2 transition-opacity duration-150 ${archiveActionClassName}`}
+                >
                   <button
                     type="button"
                     data-thread-selection-safe
@@ -818,7 +824,9 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                 <Tooltip>
                   <TooltipTrigger
                     render={
-                      <div className="pointer-events-none absolute top-1/2 right-0.5 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100">
+                      <div
+                        className={`absolute top-1/2 right-0.5 z-20 -translate-y-1/2 transition-opacity duration-150 ${archiveActionClassName}`}
+                      >
                         <button
                           type="button"
                           data-thread-selection-safe
@@ -1481,9 +1489,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (isJarvisCockpitMode) {
         const confirmed = await api.dialogs.confirm(
           [
-            `Archive run "${member.title}"?`,
+            `Archive project "${member.title}"?`,
             ...(member.environmentLabel ? [`Environment: ${member.environmentLabel}`] : []),
-            "This removes the run from the active sidebar.",
+            "This removes the project from the active sidebar.",
           ].join("\n"),
         );
         if (!confirmed) {
@@ -1493,8 +1501,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         const result = await removeProject(member);
         if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
-          const message = error instanceof Error ? error.message : "Unknown error archiving run.";
-          console.error("Failed to archive run", {
+          const message =
+            error instanceof Error ? error.message : "Unknown error archiving project.";
+          console.error("Failed to archive project", {
             projectId: member.id,
             environmentId: member.environmentId,
             ...safeErrorLogAttributes(error),
@@ -3232,6 +3241,9 @@ export default function Sidebar() {
   const platform = navigator.platform;
   const shortcutModifiers = useShortcutModifierState();
   const { environments } = useEnvironments();
+  const isJarvisCockpitMode = environments.some((environment) =>
+    isJarvisCockpitEnvironment(environment.serverConfig ?? undefined),
+  );
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const environmentLabelById = useMemo(
     () =>
@@ -3282,16 +3294,22 @@ export default function Sidebar() {
   );
 
   const sidebarProjects = useMemo<SidebarProjectSnapshot[]>(() => {
-    return buildSidebarProjectSnapshots({
+    const snapshots = buildSidebarProjectSnapshots({
       projects: orderedProjects,
       settings: projectGroupingSettings,
       primaryEnvironmentId,
       resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
       isDesktopLocalEnvironment: (environmentId) => desktopLocalEnvironmentIds.has(environmentId),
     });
+    return isJarvisCockpitMode
+      ? snapshots.filter((project) =>
+          project.memberProjects.every((member) => !isJarvisStartProjectId(member.id)),
+        )
+      : snapshots;
   }, [
     environmentLabelById,
     desktopLocalEnvironmentIds,
+    isJarvisCockpitMode,
     orderedProjects,
     projectGroupingSettings,
     primaryEnvironmentId,
@@ -3826,7 +3844,7 @@ export default function Sidebar() {
             suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
             suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
             attachProjectListAutoAnimateRef={attachProjectListAutoAnimateRef}
-            projectsLength={projects.length}
+            projectsLength={sortedProjects.length}
           />
 
           <SidebarSeparator />

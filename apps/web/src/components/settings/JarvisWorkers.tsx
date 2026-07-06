@@ -34,7 +34,9 @@ function startableRepositoryCount(worker: JarvisWorkerProfile): number {
   return workerRepositories(worker).filter((repository) => repository.can_start_work).length;
 }
 
-function workerRepositories(worker: JarvisWorkerProfile): NonNullable<JarvisWorkerProfile["repositories"]> {
+function workerRepositories(
+  worker: JarvisWorkerProfile,
+): NonNullable<JarvisWorkerProfile["repositories"]> {
   return worker.repositories ?? [];
 }
 
@@ -164,8 +166,7 @@ export function JarvisWorkersPanel() {
   const result = snapshotQuery.data;
   const workers = result?.snapshot?.workers ?? [];
   const sortedWorkers = useMemo(
-    () =>
-      [...workers].sort((left, right) => left.display_name.localeCompare(right.display_name)),
+    () => [...workers].sort((left, right) => left.display_name.localeCompare(right.display_name)),
     [workers],
   );
   const totalActiveSessions = workers.reduce(

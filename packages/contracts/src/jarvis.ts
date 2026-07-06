@@ -6,6 +6,9 @@ import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchema
 const JsonObject = Schema.Record(Schema.String, Schema.Json);
 export type JsonObject = typeof JsonObject.Type;
 
+export const JarvisWriteMetadata = JsonObject;
+export type JarvisWriteMetadata = typeof JarvisWriteMetadata.Type;
+
 const makeJarvisId = <Brand extends string>(brand: Brand) =>
   TrimmedNonEmptyString.pipe(Schema.brand(brand));
 
@@ -23,6 +26,12 @@ export type JarvisSessionEventId = typeof JarvisSessionEventId.Type;
 
 export const JarvisWorkerId = makeJarvisId("JarvisWorkerId");
 export type JarvisWorkerId = typeof JarvisWorkerId.Type;
+
+export const JarvisProjectId = makeJarvisId("JarvisProjectId");
+export type JarvisProjectId = typeof JarvisProjectId.Type;
+
+export const JarvisProjectThreadId = makeJarvisId("JarvisProjectThreadId");
+export type JarvisProjectThreadId = typeof JarvisProjectThreadId.Type;
 
 export const JarvisArtifactId = makeJarvisId("JarvisArtifactId");
 export type JarvisArtifactId = typeof JarvisArtifactId.Type;
@@ -215,6 +224,242 @@ export const JarvisCockpitCatalog = Schema.Struct({
   generated_at: Schema.optional(IsoDateTime),
 });
 export type JarvisCockpitCatalog = typeof JarvisCockpitCatalog.Type;
+
+export const JarvisProjectRepository = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  remote: TrimmedNonEmptyString,
+  default: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
+export type JarvisProjectRepository = typeof JarvisProjectRepository.Type;
+
+export const JarvisProjectLinks = Schema.Struct({
+  jira: OptionalPossiblyEmptyPublicString,
+  urls: Schema.Array(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+});
+export type JarvisProjectLinks = typeof JarvisProjectLinks.Type;
+
+export const JarvisProject = Schema.Struct({
+  id: JarvisProjectId,
+  name: TrimmedNonEmptyString,
+  peer_id: TrimmedNonEmptyString,
+  aliases: Schema.Array(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  owner: OptionalPossiblyEmptyPublicString,
+  members: Schema.Array(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  visibility: OptionalPossiblyEmptyPublicString,
+  status: OptionalPossiblyEmptyPublicString,
+  repos: Schema.Array(JarvisProjectRepository).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  links: Schema.optionalKey(JarvisProjectLinks).pipe(
+    Schema.withDecodingDefault(Effect.succeed({ urls: [] })),
+  ),
+  files_root: OptionalPossiblyEmptyPublicString,
+});
+export type JarvisProject = typeof JarvisProject.Type;
+
+export const JarvisProjectCreateInput = Schema.Struct({
+  id: Schema.optional(JarvisProjectId),
+  name: TrimmedNonEmptyString,
+  peer_id: Schema.optional(TrimmedNonEmptyString),
+  aliases: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  owner: OptionalPossiblyEmptyPublicString,
+  members: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  visibility: OptionalPossiblyEmptyPublicString,
+  status: OptionalPossiblyEmptyPublicString,
+  repos: Schema.optional(Schema.Array(JarvisProjectRepository)),
+  links: Schema.optional(JarvisProjectLinks),
+  files_root: OptionalPossiblyEmptyPublicString,
+  metadata: Schema.optionalKey(JarvisWriteMetadata).pipe(
+    Schema.withDecodingDefault(Effect.succeed({ surface: "jarvis-cockpit" })),
+  ),
+});
+export type JarvisProjectCreateInput = typeof JarvisProjectCreateInput.Type;
+
+export const JarvisProjectUpdateInput = Schema.Struct({
+  name: Schema.optional(TrimmedNonEmptyString),
+  peer_id: Schema.optional(TrimmedNonEmptyString),
+  aliases: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  owner: OptionalPossiblyEmptyPublicString,
+  members: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  visibility: OptionalPossiblyEmptyPublicString,
+  status: OptionalPossiblyEmptyPublicString,
+  repos: Schema.optional(Schema.Array(JarvisProjectRepository)),
+  links: Schema.optional(JarvisProjectLinks),
+  files_root: OptionalPossiblyEmptyPublicString,
+  metadata: Schema.optionalKey(JarvisWriteMetadata).pipe(
+    Schema.withDecodingDefault(Effect.succeed({ surface: "jarvis-cockpit" })),
+  ),
+});
+export type JarvisProjectUpdateInput = typeof JarvisProjectUpdateInput.Type;
+
+export const JarvisArchiveInputBase = Schema.Struct({
+  reason: Schema.optional(TrimmedNonEmptyString),
+  metadata: Schema.optionalKey(JarvisWriteMetadata).pipe(
+    Schema.withDecodingDefault(Effect.succeed({ surface: "jarvis-cockpit" })),
+  ),
+});
+
+export const JarvisProjectArchiveInput = JarvisArchiveInputBase;
+export type JarvisProjectArchiveInput = typeof JarvisProjectArchiveInput.Type;
+
+export const JarvisProjectListResponse = Schema.Struct({
+  api_version: Schema.Literal("v1"),
+  schema_version: Schema.Number,
+  projects: Schema.Array(JarvisProject),
+});
+export type JarvisProjectListResponse = typeof JarvisProjectListResponse.Type;
+
+export const JarvisProjectDetailResponse = Schema.Struct({
+  api_version: Schema.Literal("v1"),
+  schema_version: Schema.Number,
+  project: JarvisProject,
+});
+export type JarvisProjectDetailResponse = typeof JarvisProjectDetailResponse.Type;
+
+export const JarvisProjectConclusion = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  content: TrimmedNonEmptyString,
+  artifact_type: TrimmedNonEmptyString,
+  recorded_by: OptionalPossiblyEmptyPublicString,
+  observed_at: Schema.optional(Schema.NullOr(IsoDateTime)),
+});
+export type JarvisProjectConclusion = typeof JarvisProjectConclusion.Type;
+
+export const JarvisProjectMemoryResponse = Schema.Struct({
+  api_version: Schema.Literal("v1"),
+  schema_version: Schema.Number,
+  project_id: JarvisProjectId,
+  peer_id: TrimmedNonEmptyString,
+  representation: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  conclusions: Schema.Array(JarvisProjectConclusion).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+});
+export type JarvisProjectMemoryResponse = typeof JarvisProjectMemoryResponse.Type;
+
+export const JarvisProjectMemoryCurationInput = Schema.Struct({
+  content: TrimmedNonEmptyString,
+  observed_at: Schema.optional(TrimmedNonEmptyString),
+  status: Schema.optional(TrimmedNonEmptyString),
+  idempotency_key: Schema.optional(TrimmedNonEmptyString),
+  metadata: Schema.optionalKey(JarvisWriteMetadata).pipe(
+    Schema.withDecodingDefault(Effect.succeed({ surface: "jarvis-cockpit" })),
+  ),
+});
+export type JarvisProjectMemoryCurationInput = typeof JarvisProjectMemoryCurationInput.Type;
+
+export const JarvisProjectMemoryForgetInput = Schema.Struct({
+  query: TrimmedNonEmptyString,
+  confirm: Schema.optional(Schema.Boolean),
+  conclusion_ids: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  idempotency_key: Schema.optional(TrimmedNonEmptyString),
+  metadata: Schema.optionalKey(JarvisWriteMetadata).pipe(
+    Schema.withDecodingDefault(Effect.succeed({ surface: "jarvis-cockpit" })),
+  ),
+});
+export type JarvisProjectMemoryForgetInput = typeof JarvisProjectMemoryForgetInput.Type;
+
+export const JarvisProjectMemoryCorrectInput = Schema.Struct({
+  query: TrimmedNonEmptyString,
+  replacement: TrimmedNonEmptyString,
+  confirm: Schema.optional(Schema.Boolean),
+  conclusion_ids: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  idempotency_key: Schema.optional(TrimmedNonEmptyString),
+  metadata: Schema.optionalKey(JarvisWriteMetadata).pipe(
+    Schema.withDecodingDefault(Effect.succeed({ surface: "jarvis-cockpit" })),
+  ),
+});
+export type JarvisProjectMemoryCorrectInput = typeof JarvisProjectMemoryCorrectInput.Type;
+
+export const JarvisProjectMemoryWriteResponse = JsonObject;
+export type JarvisProjectMemoryWriteResponse = typeof JarvisProjectMemoryWriteResponse.Type;
+
+export const JarvisProjectFile = Schema.Struct({
+  doc_id: TrimmedNonEmptyString,
+  title: OptionalPossiblyEmptyPublicString,
+  session_id: OptionalPossiblyEmptyPublicString,
+  original_path: OptionalPossiblyEmptyPublicString,
+  content_hash: OptionalPossiblyEmptyPublicString,
+  artifact_type: OptionalPossiblyEmptyPublicString,
+  uploaded_by: OptionalPossiblyEmptyPublicString,
+  observed_at: Schema.optional(Schema.NullOr(IsoDateTime)),
+  retracted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  ingestion: Schema.optionalKey(JsonObject).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  metadata: Schema.optionalKey(JsonObject).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+});
+export type JarvisProjectFile = typeof JarvisProjectFile.Type;
+
+export const JarvisProjectFilesResponse = Schema.Struct({
+  api_version: Schema.Literal("v1"),
+  schema_version: Schema.Number,
+  project_id: JarvisProjectId,
+  files: Schema.Array(JarvisProjectFile).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+});
+export type JarvisProjectFilesResponse = typeof JarvisProjectFilesResponse.Type;
+
+export const JarvisProjectFileUploadInput = Schema.Struct({
+  filename: TrimmedNonEmptyString,
+  content_base64: TrimmedNonEmptyString,
+  title: Schema.optional(TrimmedNonEmptyString),
+  artifact_type: Schema.optional(TrimmedNonEmptyString),
+  mime_type: Schema.optional(TrimmedNonEmptyString),
+  idempotency_key: Schema.optional(TrimmedNonEmptyString),
+  metadata: Schema.optionalKey(JarvisWriteMetadata).pipe(
+    Schema.withDecodingDefault(Effect.succeed({ surface: "jarvis-cockpit" })),
+  ),
+});
+export type JarvisProjectFileUploadInput = typeof JarvisProjectFileUploadInput.Type;
+
+export const JarvisProjectFileRetractInput = JarvisArchiveInputBase;
+export type JarvisProjectFileRetractInput = typeof JarvisProjectFileRetractInput.Type;
+
+export const JarvisProjectFileUploadResponse = JsonObject;
+export type JarvisProjectFileUploadResponse = typeof JarvisProjectFileUploadResponse.Type;
+
+export const JarvisProjectThread = Schema.Struct({
+  thread_id: JarvisProjectThreadId,
+  project_id: JarvisProjectId,
+  session_id: TrimmedNonEmptyString,
+  title: TrimmedNonEmptyString,
+  created_at: IsoDateTime,
+  updated_at: IsoDateTime,
+  created_by: OptionalPossiblyEmptyPublicString,
+});
+export type JarvisProjectThread = typeof JarvisProjectThread.Type;
+
+export const JarvisProjectThreadsResponse = Schema.Struct({
+  api_version: Schema.Literal("v1"),
+  schema_version: Schema.Number,
+  project_id: JarvisProjectId,
+  threads: Schema.Array(JarvisProjectThread),
+});
+export type JarvisProjectThreadsResponse = typeof JarvisProjectThreadsResponse.Type;
+
+export const JarvisProjectCreateThreadInput = Schema.Struct({
+  title: Schema.optional(TrimmedNonEmptyString),
+  idempotency_key: Schema.optional(TrimmedNonEmptyString),
+  metadata: Schema.optionalKey(JarvisWriteMetadata).pipe(
+    Schema.withDecodingDefault(Effect.succeed({ surface: "jarvis-cockpit" })),
+  ),
+});
+export type JarvisProjectCreateThreadInput = typeof JarvisProjectCreateThreadInput.Type;
+
+export const JarvisProjectThreadArchiveInput = JarvisArchiveInputBase;
+export type JarvisProjectThreadArchiveInput = typeof JarvisProjectThreadArchiveInput.Type;
+
+export const JarvisProjectThreadTurnInput = Schema.Struct({
+  text: TrimmedNonEmptyString,
+  idempotency_key: Schema.optional(TrimmedNonEmptyString),
+  metadata: Schema.optionalKey(JarvisWriteMetadata).pipe(
+    Schema.withDecodingDefault(Effect.succeed({ surface: "jarvis-cockpit" })),
+  ),
+});
+export type JarvisProjectThreadTurnInput = typeof JarvisProjectThreadTurnInput.Type;
+
+export const JarvisProjectThreadTurnResult = Schema.Struct({
+  ok: Schema.Boolean,
+  text: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  events: Schema.Array(JsonObject).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+});
+export type JarvisProjectThreadTurnResult = typeof JarvisProjectThreadTurnResult.Type;
 
 export const JarvisWorkerEngine = Schema.Struct({
   engine: JarvisEngineId,
@@ -450,6 +695,80 @@ export const JarvisCockpitSnapshotResult = Schema.Struct({
 });
 export type JarvisCockpitSnapshotResult = typeof JarvisCockpitSnapshotResult.Type;
 
+const JarvisReadError = Schema.Struct({
+  message: TrimmedNonEmptyString,
+});
+
+export const JarvisProjectsResult = Schema.Struct({
+  ok: Schema.Boolean,
+  projects: Schema.optionalKey(Schema.Array(JarvisProject)),
+  error: Schema.optionalKey(JarvisReadError),
+});
+export type JarvisProjectsResult = typeof JarvisProjectsResult.Type;
+
+export const JarvisProjectResult = Schema.Struct({
+  ok: Schema.Boolean,
+  project: Schema.optionalKey(JarvisProject),
+  error: Schema.optionalKey(JarvisReadError),
+});
+export type JarvisProjectResult = typeof JarvisProjectResult.Type;
+
+export const JarvisProjectDeleteResult = Schema.Struct({
+  ok: Schema.Boolean,
+  result: Schema.optionalKey(JsonObject),
+  error: Schema.optionalKey(JarvisReadError),
+});
+export type JarvisProjectDeleteResult = typeof JarvisProjectDeleteResult.Type;
+
+export const JarvisProjectMemoryResult = Schema.Struct({
+  ok: Schema.Boolean,
+  memory: Schema.optionalKey(JarvisProjectMemoryResponse),
+  error: Schema.optionalKey(JarvisReadError),
+});
+export type JarvisProjectMemoryResult = typeof JarvisProjectMemoryResult.Type;
+
+export const JarvisProjectMemoryWriteResult = Schema.Struct({
+  ok: Schema.Boolean,
+  result: Schema.optionalKey(JarvisProjectMemoryWriteResponse),
+  error: Schema.optionalKey(JarvisReadError),
+});
+export type JarvisProjectMemoryWriteResult = typeof JarvisProjectMemoryWriteResult.Type;
+
+export const JarvisProjectFilesResult = Schema.Struct({
+  ok: Schema.Boolean,
+  files: Schema.optionalKey(Schema.Array(JarvisProjectFile)),
+  error: Schema.optionalKey(JarvisReadError),
+});
+export type JarvisProjectFilesResult = typeof JarvisProjectFilesResult.Type;
+
+export const JarvisProjectFileUploadResult = Schema.Struct({
+  ok: Schema.Boolean,
+  result: Schema.optionalKey(JarvisProjectFileUploadResponse),
+  error: Schema.optionalKey(JarvisReadError),
+});
+export type JarvisProjectFileUploadResult = typeof JarvisProjectFileUploadResult.Type;
+
+export const JarvisProjectThreadsResult = Schema.Struct({
+  ok: Schema.Boolean,
+  threads: Schema.optionalKey(Schema.Array(JarvisProjectThread)),
+  error: Schema.optionalKey(JarvisReadError),
+});
+export type JarvisProjectThreadsResult = typeof JarvisProjectThreadsResult.Type;
+
+export const JarvisProjectThreadResult = Schema.Struct({
+  ok: Schema.Boolean,
+  thread: Schema.optionalKey(JarvisProjectThread),
+  error: Schema.optionalKey(JarvisReadError),
+});
+export type JarvisProjectThreadResult = typeof JarvisProjectThreadResult.Type;
+
+export const JarvisProjectThreadTurnRpcResult = Schema.Struct({
+  ok: Schema.Boolean,
+  result: Schema.optionalKey(JarvisProjectThreadTurnResult),
+  error: Schema.optionalKey(JarvisReadError),
+});
+export type JarvisProjectThreadTurnRpcResult = typeof JarvisProjectThreadTurnRpcResult.Type;
+
 export const JarvisSessionDetailResponse = Schema.Struct({
   session: JarvisWorkerSession,
   raw: Schema.optionalKey(JsonObject).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
@@ -472,9 +791,6 @@ export const JarvisArtifactsPage = Schema.Struct({
   has_more: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type JarvisArtifactsPage = typeof JarvisArtifactsPage.Type;
-
-export const JarvisWriteMetadata = JsonObject;
-export type JarvisWriteMetadata = typeof JarvisWriteMetadata.Type;
 
 export const JarvisStartWorkInput = Schema.Struct({
   phrase: Schema.optional(TrimmedNonEmptyString),
@@ -522,9 +838,7 @@ export const JarvisStartWorkValidation = Schema.Struct({
   missing_authority: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
-  reasons: Schema.Array(TrimmedNonEmptyString).pipe(
-    Schema.withDecodingDefault(Effect.succeed([])),
-  ),
+  reasons: Schema.Array(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   notes: Schema.Array(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type JarvisStartWorkValidation = typeof JarvisStartWorkValidation.Type;

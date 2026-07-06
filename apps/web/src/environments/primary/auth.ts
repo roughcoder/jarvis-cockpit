@@ -25,6 +25,7 @@ import { runPrimaryHttp } from "../../lib/runtime";
 const PrimaryEnvironmentRequestOperation = Schema.Literals([
   "fetch-session-state",
   "exchange-bootstrap-credential",
+  "create-local-jarvis-browser-session",
   "fetch-environment-descriptor",
   "create-pairing-credential",
   "list-pairing-links",
@@ -253,6 +254,23 @@ async function exchangeBootstrapCredential(credential: string): Promise<AuthBrow
   });
 }
 
+async function createLocalJarvisBrowserSession(): Promise<AuthBrowserSessionResult> {
+  return retryTransientBootstrap(async () => {
+    try {
+      return await runPrimaryHttp(
+        PrimaryEnvironmentHttpClient.pipe(
+          Effect.flatMap((client) => client.auth.localJarvisBrowserSession({})),
+        ),
+      );
+    } catch (error) {
+      throw PrimaryEnvironmentRequestError.fromCause({
+        operation: "create-local-jarvis-browser-session",
+        cause: error,
+      });
+    }
+  });
+}
+
 async function waitForAuthenticatedSessionAfterBootstrap(): Promise<AuthSessionState> {
   const startedAt = Date.now();
 
@@ -323,6 +341,25 @@ async function bootstrapServerAuth(): Promise<ServerAuthGateState> {
   }
 
   if (!bootstrapCredential) {
+    if (
+      currentSession.auth.policy === "loopback-browser" &&
+      currentSession.auth.bootstrapMethods.includes("local-jarvis-browser")
+    ) {
+      try {
+        const localSession = await createLocalJarvisBrowserSession();
+        if (localSession.authenticated !== true) {
+          throw new Error(
+            "Local Jarvis browser bootstrap did not return an authenticated session.",
+          );
+        }
+        await waitForAuthenticatedSessionAfterBootstrap();
+        return { status: "authenticated" };
+      } catch {
+        // Non-Jarvis or remote loopback-compatible servers fall back to the
+        // explicit pairing screen.
+      }
+    }
+
     return {
       status: "requires-auth",
       auth: currentSession.auth,

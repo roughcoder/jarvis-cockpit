@@ -368,6 +368,24 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverUpdateSettings, AuthOrchestrationOperateScope],
   [WS_METHODS.serverCheckJarvisBrain, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetJarvisSnapshot, AuthOrchestrationReadScope],
+  [WS_METHODS.serverGetJarvisProjects, AuthOrchestrationReadScope],
+  [WS_METHODS.serverGetJarvisProject, AuthOrchestrationReadScope],
+  [WS_METHODS.serverGetJarvisProjectMemory, AuthOrchestrationReadScope],
+  [WS_METHODS.serverGetJarvisProjectFiles, AuthOrchestrationReadScope],
+  [WS_METHODS.serverGetJarvisProjectThreads, AuthOrchestrationReadScope],
+  [WS_METHODS.serverCreateJarvisProject, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverUpdateJarvisProject, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverArchiveJarvisProject, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverDeleteJarvisProject, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverRecordJarvisProjectFinding, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverRecordJarvisProjectDecision, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverForgetJarvisProjectMemory, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverCorrectJarvisProjectMemory, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverUploadJarvisProjectFile, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverRetractJarvisProjectFile, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverCreateJarvisProjectThread, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverArchiveJarvisProjectThread, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverSendJarvisProjectThreadTurn, AuthOrchestrationOperateScope],
   [WS_METHODS.serverDiscoverSourceControl, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetTraceDiagnostics, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetProcessDiagnostics, AuthOrchestrationReadScope],
@@ -1435,6 +1453,449 @@ const makeWsRpcLayer = (
                       error instanceof Error && error.message.trim().length > 0
                         ? error.message
                         : "Jarvis cockpit snapshot request failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverGetJarvisProjects]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetJarvisProjects,
+            jarvisClient
+              .getProjects(
+                input.includeArchived === undefined
+                  ? undefined
+                  : { includeArchived: input.includeArchived },
+              )
+              .pipe(
+                Effect.map((projects) => ({
+                  ok: true,
+                  projects,
+                })),
+                Effect.catch((error) =>
+                  Effect.succeed({
+                    ok: false,
+                    error: {
+                      message:
+                        error instanceof Error && error.message.trim().length > 0
+                          ? error.message
+                          : "Jarvis projects request failed.",
+                    },
+                  }),
+                ),
+              ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverGetJarvisProject]: ({ projectId }) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetJarvisProject,
+            jarvisClient.getProject(projectId).pipe(
+              Effect.map((project) => ({
+                ok: true,
+                project,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project request failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverGetJarvisProjectMemory]: ({ projectId }) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetJarvisProjectMemory,
+            jarvisClient.getProjectMemory(projectId).pipe(
+              Effect.map((memory) => ({
+                ok: true,
+                memory,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project memory request failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverGetJarvisProjectFiles]: ({ projectId, includeRetracted }) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetJarvisProjectFiles,
+            jarvisClient
+              .getProjectFiles(
+                projectId,
+                includeRetracted === undefined ? undefined : { includeRetracted },
+              )
+              .pipe(
+                Effect.map((files) => ({
+                  ok: true,
+                  files,
+                })),
+                Effect.catch((error) =>
+                  Effect.succeed({
+                    ok: false,
+                    error: {
+                      message:
+                        error instanceof Error && error.message.trim().length > 0
+                          ? error.message
+                          : "Jarvis project files request failed.",
+                    },
+                  }),
+                ),
+              ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverGetJarvisProjectThreads]: ({ projectId }) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetJarvisProjectThreads,
+            jarvisClient.getProjectThreads(projectId).pipe(
+              Effect.map((threads) => ({
+                ok: true,
+                threads,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project conversations request failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverCreateJarvisProject]: ({ input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverCreateJarvisProject,
+            jarvisClient.createProject(input).pipe(
+              Effect.map((project) => ({
+                ok: true,
+                project,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project creation failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverUpdateJarvisProject]: ({ projectId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverUpdateJarvisProject,
+            jarvisClient.updateProject(projectId, input).pipe(
+              Effect.map((project) => ({
+                ok: true,
+                project,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project update failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverArchiveJarvisProject]: ({ projectId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverArchiveJarvisProject,
+            jarvisClient.archiveProject(projectId, input).pipe(
+              Effect.map((project) => ({
+                ok: true,
+                project,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project archive failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverDeleteJarvisProject]: ({ projectId }) =>
+          observeRpcEffect(
+            WS_METHODS.serverDeleteJarvisProject,
+            jarvisClient.deleteProject(projectId).pipe(
+              Effect.map((result) => ({
+                ok: true,
+                result,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project delete failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverRecordJarvisProjectFinding]: ({ projectId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverRecordJarvisProjectFinding,
+            jarvisClient.recordProjectFinding(projectId, input).pipe(
+              Effect.map((result) => ({
+                ok: true,
+                result,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project finding write failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverRecordJarvisProjectDecision]: ({ projectId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverRecordJarvisProjectDecision,
+            jarvisClient.recordProjectDecision(projectId, input).pipe(
+              Effect.map((result) => ({
+                ok: true,
+                result,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project decision write failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverForgetJarvisProjectMemory]: ({ projectId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverForgetJarvisProjectMemory,
+            jarvisClient.forgetProjectMemory(projectId, input).pipe(
+              Effect.map((result) => ({
+                ok: true,
+                result,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project memory forget failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverCorrectJarvisProjectMemory]: ({ projectId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverCorrectJarvisProjectMemory,
+            jarvisClient.correctProjectMemory(projectId, input).pipe(
+              Effect.map((result) => ({
+                ok: true,
+                result,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project memory correction failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverUploadJarvisProjectFile]: ({ projectId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverUploadJarvisProjectFile,
+            jarvisClient.uploadProjectFile(projectId, input).pipe(
+              Effect.map((result) => ({
+                ok: true,
+                result,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project file upload failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverRetractJarvisProjectFile]: ({ projectId, docId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverRetractJarvisProjectFile,
+            jarvisClient.retractProjectFile(projectId, docId, input).pipe(
+              Effect.map((result) => ({
+                ok: true,
+                result,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project file retract failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverCreateJarvisProjectThread]: ({ projectId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverCreateJarvisProjectThread,
+            jarvisClient.createProjectThread(projectId, input).pipe(
+              Effect.map((thread) => ({
+                ok: true,
+                thread,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project conversation creation failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverArchiveJarvisProjectThread]: ({ projectId, threadId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverArchiveJarvisProjectThread,
+            jarvisClient.archiveProjectThread(projectId, threadId, input).pipe(
+              Effect.map((thread) => ({
+                ok: true,
+                thread,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project conversation archive failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverSendJarvisProjectThreadTurn]: ({ projectId, threadId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverSendJarvisProjectThreadTurn,
+            jarvisClient.sendProjectThreadTurn(projectId, threadId, input).pipe(
+              Effect.map((result) => ({
+                ok: true,
+                result,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project conversation turn failed.",
                   },
                 }),
               ),

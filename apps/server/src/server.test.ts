@@ -5642,7 +5642,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         );
       }
       assert.equal(
-        snapshotEvent.snapshot.projects[0]?.id,
+        snapshotEvent.snapshot.projects.find(
+          (project) => project.id === ProjectId.make("jarvis-run_run_fixture_dashboard"),
+        )?.id,
         ProjectId.make("jarvis-run_run_fixture_dashboard"),
       );
       assert.equal(
@@ -5715,7 +5717,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const body = yield* responseJsonEffect<OrchestrationReadModel>(response);
 
       assert.equal(response.status, 200);
-      assert.equal(body.projects[0]?.id, ProjectId.make("jarvis-run_run_fixture_dashboard"));
+      assert.equal(
+        body.projects.find(
+          (project) => project.id === ProjectId.make("jarvis-run_run_fixture_dashboard"),
+        )?.id,
+        ProjectId.make("jarvis-run_run_fixture_dashboard"),
+      );
       assert.equal(
         body.threads[0]?.id,
         ThreadId.make("jarvis-session_sessref_macbook-worker_sess_fixture_codex"),
