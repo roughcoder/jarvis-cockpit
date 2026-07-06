@@ -4,19 +4,31 @@ import { Button } from "./ui/button";
 import { isElectron } from "../env";
 import { isJarvisCockpitEnvironment, isJarvisStartProjectId } from "../jarvisCockpit";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
-import { useProjects } from "../state/entities";
+import { useProjects, useThreadShells } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { useEnvironmentQuery } from "../state/query";
 import { cn } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { useNavigate } from "@tanstack/react-router";
 import { Spinner } from "./ui/spinner";
+import { FolderPlusIcon, MessageSquareIcon, PlugZapIcon, RocketIcon } from "lucide-react";
+import { useOpenAddProjectCommandPalette } from "../commandPaletteContext";
+import { buildThreadRouteParams } from "../threadRoutes";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  findLatestProjectConversation,
+  resolveNoActiveThreadState,
+  type NoActiveThreadActionDescriptor,
+} from "./NoActiveThreadState.logic";
 
 export function NoActiveThreadState() {
   const navigate = useNavigate();
+  const openStartWork = useOpenAddProjectCommandPalette();
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const projects = useProjects();
+  const threads = useThreadShells();
   const jarvisEnvironmentIds = new Set(
     environments
       .filter((environment) => isJarvisCockpitEnvironment(environment.serverConfig ?? undefined))
@@ -49,31 +61,58 @@ export function NoActiveThreadState() {
   );
   const visibleJarvisProjects = registryProjects ?? projectedJarvisProjects;
   const hasVisibleJarvisProjects = visibleJarvisProjects.length > 0;
-  const headerLabel = isJarvisCockpitMode ? "No active project" : "No active thread";
-  const title = isJarvisCockpitMode
-    ? registryFailed
-      ? "Reconnect Jarvis Brain"
-      : registryPending
-        ? "Checking Jarvis Brain"
-        : hasVisibleJarvisProjects
-          ? "Pick a Jarvis project"
-          : "Create your first Jarvis project"
-    : "Pick a thread to continue";
-  const description = isJarvisCockpitMode
-    ? registryFailed
-      ? "Cockpit cannot create projects or start worker conversations until the Jarvis project registry is reachable."
-      : registryPending
-        ? "Checking whether the Jarvis brain already has projects."
-        : hasVisibleJarvisProjects
-          ? "Select a Jarvis project from the sidebar or use Start work to create a conversation."
-          : "Jarvis cockpit needs a project before live worker conversations can start."
-    : "Select an existing thread or create a new one to get started.";
+  const latestProjectConversation = findLatestProjectConversation({
+    projects: projectedJarvisProjects,
+    conversations: threads,
+  });
+  const state = resolveNoActiveThreadState({
+    isJarvisCockpitMode,
+    registryFailed,
+    registryPending,
+    fixtureMode,
+    visibleProjectCount: visibleJarvisProjects.length,
+    latestProjectConversation,
+  });
   const showJarvisActions = isJarvisCockpitMode;
-  const canCreateProject =
-    isJarvisCockpitMode &&
-    !registryFailed &&
-    registryProjects !== null &&
-    !hasVisibleJarvisProjects;
+  const actionIcon = (action: NoActiveThreadActionDescriptor) => {
+    switch (action.kind) {
+      case "open-project-conversation":
+        return <MessageSquareIcon className="size-3.5" />;
+      case "start-project-work":
+        return <RocketIcon className="size-3.5" />;
+      case "create-first-project":
+        return <FolderPlusIcon className="size-3.5" />;
+      case "reconnect-brain":
+        return <PlugZapIcon className="size-3.5" />;
+    }
+  };
+  const runAction = (action: NoActiveThreadActionDescriptor) => {
+    switch (action.kind) {
+      case "open-project-conversation":
+        if (latestProjectConversation === null) {
+          return;
+        }
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(
+            scopeThreadRef(
+              latestProjectConversation.environmentId as EnvironmentId,
+              latestProjectConversation.threadId as ThreadId,
+            ),
+          ),
+        });
+        return;
+      case "start-project-work":
+        openStartWork();
+        return;
+      case "create-first-project":
+        void navigate({ to: "/settings/projects" });
+        return;
+      case "reconnect-brain":
+        void navigate({ to: "/settings/jarvis" });
+        return;
+    }
+  };
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
@@ -86,12 +125,12 @@ export function NoActiveThreadState() {
         >
           {isElectron ? (
             <span className="text-xs text-muted-foreground/50 wco:pr-[var(--workspace-native-controls-inset)]">
-              {headerLabel}
+              {state.headerLabel}
             </span>
           ) : (
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium text-foreground md:text-muted-foreground/60">
-                {headerLabel}
+                {state.headerLabel}
               </span>
             </div>
           )}
@@ -100,39 +139,37 @@ export function NoActiveThreadState() {
         <Empty className="flex-1">
           <div className="w-full max-w-lg px-8 py-12">
             <EmptyHeader className="max-w-none">
-              <EmptyTitle className="text-foreground text-xl">{title}</EmptyTitle>
+              <EmptyTitle className="text-foreground text-xl">{state.title}</EmptyTitle>
               <EmptyDescription className="mt-2 text-sm text-muted-foreground/78">
-                {description}
+                {state.description}
               </EmptyDescription>
             </EmptyHeader>
             {showJarvisActions ? (
               <div className="mt-6 flex flex-col items-center gap-3">
-                {registryPending ? (
+                {state.statusLabel ? (
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <Spinner className="size-3.5" />
-                    Checking project registry
+                    {state.statusLabel}
                   </div>
                 ) : null}
-                {fixtureMode && !registryFailed ? (
+                {state.fixtureBanner ? (
                   <div className="rounded-lg border border-amber-500/35 bg-amber-500/8 px-3 py-2 text-xs font-medium text-amber-900 dark:text-amber-100">
-                    Fixture mode: no live workers. Start work simulates dispatch.
+                    {state.fixtureBanner}
                   </div>
                 ) : null}
                 <div className="flex flex-wrap justify-center gap-2">
-                  {canCreateProject ? (
-                    <Button size="sm" onClick={() => void navigate({ to: "/settings/projects" })}>
-                      Create Jarvis project
-                    </Button>
-                  ) : null}
-                  {registryFailed ? (
+                  {state.actions.map((action) => (
                     <Button
+                      key={action.kind}
                       size="sm"
-                      variant="outline"
-                      onClick={() => void navigate({ to: "/settings/jarvis" })}
+                      variant={action.variant}
+                      className="gap-1.5"
+                      onClick={() => runAction(action)}
                     >
-                      Reconnect brain
+                      {actionIcon(action)}
+                      {action.label}
                     </Button>
-                  ) : null}
+                  ))}
                 </div>
               </div>
             ) : null}
