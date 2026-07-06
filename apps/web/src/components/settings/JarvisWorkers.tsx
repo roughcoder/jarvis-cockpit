@@ -35,10 +35,12 @@ import { toastManager } from "../ui/toast";
 import {
   buildWorkerTestJobStartTurnInput,
   NOT_REPORTED,
+  resolveWorkerTestJobStatus,
   workerIdentityAccessSummary,
   workerReadinessRows,
   workerWarmCheckouts,
   type WorkerReadinessStatus,
+  type WorkerTestJobStatus,
 } from "./JarvisWorkers.logic";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 
@@ -136,6 +138,36 @@ function WorkerReadinessRows({ worker }: { readonly worker: JarvisWorkerProfile 
   );
 }
 
+function WorkerTestJobStatusRow({
+  status,
+}: {
+  readonly status: WorkerTestJobStatus | null | undefined;
+}) {
+  const presentation = resolveWorkerTestJobStatus(status);
+  return (
+    <div className="w-full max-w-72 rounded-md border bg-background/50 px-2 py-1.5 text-left">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+          Last test job
+        </span>
+        <Badge variant={presentation.variant} size="sm">
+          {presentation.label}
+        </Badge>
+      </div>
+      <div className="text-[11px] text-muted-foreground">
+        {presentation.timestamp ? (
+          <span title={absoluteTime(presentation.timestamp)}>
+            {formatRelativeTimeLabel(presentation.timestamp)}
+          </span>
+        ) : (
+          NOT_REPORTED
+        )}
+      </div>
+      <div className="mt-0.5 break-words text-[11px] text-foreground/80">{presentation.detail}</div>
+    </div>
+  );
+}
+
 function WarmCheckouts({ worker }: { readonly worker: JarvisWorkerProfile }) {
   const checkouts = workerWarmCheckouts(worker);
   const [query, setQuery] = useState("");
@@ -206,12 +238,14 @@ function WorkerRow({
   onSendTestJob,
   pendingTestJob,
   sessions,
+  testJobStatus,
   worker,
 }: {
   readonly worker: JarvisWorkerProfile;
   readonly sessions: ReadonlyArray<JarvisWorkerSession>;
   readonly fixtureMode: boolean;
   readonly pendingTestJob: boolean;
+  readonly testJobStatus: WorkerTestJobStatus | null | undefined;
   readonly onSendTestJob: (worker: JarvisWorkerProfile) => void;
 }) {
   const engines = worker.engines.length > 0 ? worker.engines : [];
@@ -291,6 +325,7 @@ function WorkerRow({
               Fixture mode simulates this dispatch; no live worker is contacted.
             </p>
           ) : null}
+          <WorkerTestJobStatusRow status={testJobStatus} />
         </div>
       </div>
 
@@ -433,7 +468,9 @@ export function JarvisWorkersPanel() {
   const primaryEnvironment = usePrimaryEnvironment();
   const fixtureMode = useAtomValue(primaryServerConfigAtom)?.jarvisBrain?.fixtureMode === true;
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
-  const [pendingTestWorkerId, setPendingTestWorkerId] = useState<string | null>(null);
+  const [testJobStatuses, setTestJobStatuses] = useState<
+    Partial<Record<string, WorkerTestJobStatus>>
+  >({});
   const snapshotQuery = useEnvironmentQuery(
     primaryEnvironment
       ? serverEnvironment.jarvisSnapshot({
@@ -478,8 +515,25 @@ export function JarvisWorkersPanel() {
 
   const sendTestJob = useCallback(
     (worker: JarvisWorkerProfile) => {
-      if (!primaryEnvironment || pendingTestWorkerId !== null) return;
-      setPendingTestWorkerId(worker.worker_id);
+      const requestedAt = new Date().toISOString();
+      setTestJobStatuses((current) => ({
+        ...current,
+        [worker.worker_id]: {
+          state: "pending",
+          updatedAt: requestedAt,
+        },
+      }));
+      if (!primaryEnvironment) {
+        setTestJobStatuses((current) => ({
+          ...current,
+          [worker.worker_id]: {
+            state: "failed",
+            updatedAt: new Date().toISOString(),
+            error: "No primary environment is available for Jarvis dispatch.",
+          },
+        }));
+        return;
+      }
       void (async () => {
         const result = await startThreadTurn({
           environmentId: primaryEnvironment.environmentId,
@@ -487,10 +541,20 @@ export function JarvisWorkersPanel() {
             worker,
             threadId: newThreadId(),
             messageId: newMessageId(),
+            createdAt: requestedAt,
           }),
         });
-        setPendingTestWorkerId(null);
         if (result._tag === "Success") {
+          setTestJobStatuses((current) => ({
+            ...current,
+            [worker.worker_id]: {
+              state: "dispatched",
+              updatedAt: new Date().toISOString(),
+              ...(result.value.promotedThreadId
+                ? { promotedThreadId: result.value.promotedThreadId }
+                : {}),
+            },
+          }));
           toastManager.add({
             type: "success",
             title: fixtureMode ? "Fixture test job simulated" : "Worker test job sent",
@@ -501,6 +565,14 @@ export function JarvisWorkersPanel() {
         }
         if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
+          setTestJobStatuses((current) => ({
+            ...current,
+            [worker.worker_id]: {
+              state: "failed",
+              updatedAt: new Date().toISOString(),
+              error: error instanceof Error ? error.message : "Jarvis did not accept the test job.",
+            },
+          }));
           toastManager.add({
             type: "error",
             title: "Worker test job failed",
@@ -510,7 +582,7 @@ export function JarvisWorkersPanel() {
         }
       })();
     },
-    [fixtureMode, pendingTestWorkerId, primaryEnvironment, snapshotQuery, startThreadTurn],
+    [fixtureMode, primaryEnvironment, snapshotQuery, startThreadTurn],
   );
 
   return (
@@ -585,7 +657,8 @@ export function JarvisWorkersPanel() {
             worker={worker}
             sessions={sessionsByWorker.get(worker.worker_id) ?? []}
             fixtureMode={fixtureMode}
-            pendingTestJob={pendingTestWorkerId === worker.worker_id}
+            pendingTestJob={testJobStatuses[worker.worker_id]?.state === "pending"}
+            testJobStatus={testJobStatuses[worker.worker_id]}
             onSendTestJob={sendTestJob}
           />
         ))}

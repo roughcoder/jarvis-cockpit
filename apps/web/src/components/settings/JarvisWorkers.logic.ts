@@ -1,9 +1,12 @@
 import type { StartThreadTurnInput } from "@t3tools/client-runtime/operations";
 import {
+  DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   type JarvisWorkerProfile,
   type MessageId,
+  ProjectId,
+  ProviderInstanceId,
   type ThreadId,
 } from "@t3tools/contracts";
 
@@ -36,7 +39,24 @@ export interface WorkerIdentityAccessSummary {
   readonly worktreeInventory: string;
 }
 
+export type WorkerTestJobState = "pending" | "dispatched" | "failed";
+
+export interface WorkerTestJobStatus {
+  readonly state: WorkerTestJobState;
+  readonly updatedAt: string;
+  readonly promotedThreadId?: string;
+  readonly error?: string;
+}
+
+export interface WorkerTestJobStatusPresentation {
+  readonly label: string;
+  readonly detail: string;
+  readonly variant: "success" | "warning" | "error" | "outline";
+  readonly timestamp: string | null;
+}
+
 export const NOT_REPORTED = "Not reported";
+export const WORKER_TEST_JOB_PROJECT_ID = ProjectId.make("jarvis-start");
 
 export const WORKER_TEST_JOB_OBJECTIVE =
   "Run a trivial Jarvis Cockpit worker readiness test. Report that the worker accepted the job, then stop without modifying files.";
@@ -173,10 +193,11 @@ export function buildWorkerTestJobStartTurnInput(input: {
   readonly worker: JarvisWorkerProfile;
   readonly threadId: ThreadId;
   readonly messageId: MessageId;
-  readonly createdAt?: string;
+  readonly createdAt: string;
 }): StartThreadTurnInput {
   const repo = selectWorkerTestJobRepo(input.worker);
   const engine = selectWorkerTestJobEngine(input.worker);
+  const title = `Worker readiness test: ${input.worker.display_name}`;
   return {
     threadId: input.threadId,
     message: {
@@ -185,15 +206,65 @@ export function buildWorkerTestJobStartTurnInput(input: {
       text: WORKER_TEST_JOB_OBJECTIVE,
       attachments: [],
     },
-    titleSeed: `Worker readiness test: ${input.worker.display_name}`,
+    titleSeed: title,
     runtimeMode: DEFAULT_RUNTIME_MODE,
     interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
     bootstrap: {
+      createThread: {
+        projectId: WORKER_TEST_JOB_PROJECT_ID,
+        title,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: DEFAULT_MODEL,
+        },
+        runtimeMode: DEFAULT_RUNTIME_MODE,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        branch: null,
+        worktreePath: null,
+        createdAt: input.createdAt,
+      },
       jarvisWorkerId: input.worker.worker_id,
       ...(engine ? { jarvisEngine: engine } : {}),
       ...(repo ? { jarvisRepo: repo } : {}),
     },
-    ...(input.createdAt ? { createdAt: input.createdAt } : {}),
+    createdAt: input.createdAt,
+  };
+}
+
+export function resolveWorkerTestJobStatus(
+  status: WorkerTestJobStatus | null | undefined,
+): WorkerTestJobStatusPresentation {
+  if (!status) {
+    return {
+      label: "Not sent",
+      detail: "No worker readiness test has been sent from this card.",
+      variant: "outline",
+      timestamp: null,
+    };
+  }
+  if (status.state === "pending") {
+    return {
+      label: "Pending",
+      detail: "Dispatch RPC is in flight.",
+      variant: "warning",
+      timestamp: status.updatedAt,
+    };
+  }
+  if (status.state === "dispatched") {
+    return {
+      label: "Dispatched",
+      detail: status.promotedThreadId
+        ? `Jarvis accepted the test job as ${status.promotedThreadId}.`
+        : "Jarvis accepted the test job.",
+      variant: "success",
+      timestamp: status.updatedAt,
+    };
+  }
+  return {
+    label: "Failed",
+    detail: status.error?.trim() || "Jarvis did not accept the test job.",
+    variant: "error",
+    timestamp: status.updatedAt,
   };
 }
 
