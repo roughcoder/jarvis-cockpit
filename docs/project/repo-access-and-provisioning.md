@@ -12,7 +12,7 @@ The as-built model treats "repos on a worker's disk" as the capability boundary:
 report startable repos, and start-work compatibility blocks on repo presence
 (`workerCanStartRepo`). That conflates **provisioning state** with **authorization**. Repos
 are associated at the project level (by users, MCPs, chats), and the real question when
-dispatching is whether the work *can get* the repo — not whether it already has it.
+dispatching is whether the work _can get_ the repo — not whether it already has it.
 
 ## Model
 
@@ -27,11 +27,11 @@ Every dispatch involves two identities, and they must not be merged:
 
 Three planes, kept separate:
 
-| Plane | Question | Owner |
-|---|---|---|
-| Access | Can worker W's git identity read repo R (or is R public)? | Worker-held credentials |
-| Project | Which repos does this project operate on? Which is default? | Jarvis project registry |
-| Execution | Can W materialize R: git, disk, network, capacity? | Worker runtime |
+| Plane     | Question                                                    | Owner                   |
+| --------- | ----------------------------------------------------------- | ----------------------- |
+| Access    | Can worker W's git identity read repo R (or is R public)?   | Worker-held credentials |
+| Project   | Which repos does this project operate on? Which is default? | Jarvis project registry |
+| Execution | Can W materialize R: git, disk, network, capacity?          | Worker runtime          |
 
 **Repo presence on disk is a warm cache.** It affects first-run latency (clone vs reuse),
 never eligibility.

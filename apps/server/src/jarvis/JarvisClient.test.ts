@@ -11,6 +11,7 @@ import {
   makeJarvisClient,
   makeJarvisWorkerSessionClient,
   resolveJarvisBrainConnection,
+  snapshotWithValidSessions,
 } from "./JarvisClient.ts";
 
 const now = "2026-07-01T12:00:00+00:00";
@@ -1411,5 +1412,28 @@ it.effect("Jarvis health checks fall back to the legacy token when OAuth minting
 
     assert.strictEqual(result.ok, true);
     assert.strictEqual(requests[0]?.authorization, "Bearer legacy-token");
+  }),
+);
+
+it.effect("snapshotWithValidSessions drops only individually-invalid session rows", () =>
+  Effect.gen(function* () {
+    const malformed = { ...session, run_id: "" };
+    const sanitized = yield* snapshotWithValidSessions({
+      ...snapshot,
+      sessions: [session, malformed],
+    });
+    assert.isNotNull(sanitized);
+    assert.strictEqual(sanitized?.dropped, 1);
+    const kept = (sanitized?.candidate as { sessions: ReadonlyArray<unknown> }).sessions;
+    assert.strictEqual(kept.length, 1);
+    assert.strictEqual(kept[0], session);
+  }),
+);
+
+it.effect("snapshotWithValidSessions leaves fully-valid snapshots untouched", () =>
+  Effect.gen(function* () {
+    assert.isNull(yield* snapshotWithValidSessions(snapshot));
+    assert.isNull(yield* snapshotWithValidSessions(null));
+    assert.isNull(yield* snapshotWithValidSessions({ ...snapshot, sessions: "nope" }));
   }),
 );

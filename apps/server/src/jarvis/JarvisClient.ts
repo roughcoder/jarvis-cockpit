@@ -59,6 +59,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { ServerConfig } from "../config.ts";
@@ -356,6 +357,62 @@ const mapDecodeError = (operation: string) => (cause: unknown) =>
     cause,
   });
 
+const decodeSessionCandidate = Schema.decodeUnknownEffect(JarvisWorkerSession);
+
+/**
+ * One malformed session row must not poison the whole snapshot (fleet view,
+ * worker cards, and thread polling all depend on it). When the full decode
+ * fails, retry with only the individually-valid session rows and log what was
+ * dropped; fail with the original error if that still does not decode.
+ */
+export const snapshotWithValidSessions = (candidate: unknown) =>
+  Effect.gen(function* () {
+    if (typeof candidate !== "object" || candidate === null) {
+      return null;
+    }
+    const record = candidate as { readonly sessions?: unknown };
+    if (!Array.isArray(record.sessions)) {
+      return null;
+    }
+    const kept: unknown[] = [];
+    for (const item of record.sessions) {
+      const decoded = yield* decodeSessionCandidate(item).pipe(Effect.option);
+      if (Option.isSome(decoded)) {
+        kept.push(item);
+      }
+    }
+    if (kept.length === record.sessions.length) {
+      return null;
+    }
+    return {
+      candidate: { ...record, sessions: kept },
+      dropped: record.sessions.length - kept.length,
+    };
+  });
+
+const decodeSnapshotDroppingMalformedSessions = (
+  decode: (input: unknown) => Effect.Effect<JarvisRunsSnapshot, JarvisClientError>,
+) =>
+(candidate: unknown) =>
+  decode(candidate).pipe(
+    Effect.catch((error: JarvisClientError) =>
+      snapshotWithValidSessions(candidate).pipe(
+        Effect.flatMap((sanitized) =>
+          sanitized === null
+            ? Effect.fail(error)
+            : decode(sanitized.candidate).pipe(
+                Effect.tap(() =>
+                  Effect.logWarning(
+                    `Dropped ${sanitized.dropped} malformed session row(s) from Jarvis cockpit snapshot`,
+                  ),
+                ),
+                Effect.mapError(() => error),
+              ),
+        ),
+      ),
+    ),
+  );
+
 const decodeFor =
   <A>(operation: string, decoder: (input: unknown) => Effect.Effect<A, Schema.SchemaError>) =>
   (input: unknown): Effect.Effect<A, JarvisClientError> =>
@@ -570,7 +627,9 @@ export function makeJarvisCockpitClient(input: {
       ),
     getSnapshot: () =>
       requestJson("cockpit.snapshot", "/v1/cockpit/snapshot?sync=probe").pipe(
-        Effect.flatMap(decodeFor("cockpit.snapshot", decodeSnapshot)),
+        Effect.flatMap(
+          decodeSnapshotDroppingMalformedSessions(decodeFor("cockpit.snapshot", decodeSnapshot)),
+        ),
       ),
     getProjects: (options) =>
       requestJson(
