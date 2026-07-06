@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArchiveIcon,
   BrainIcon,
@@ -33,7 +33,17 @@ import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
+import { Switch } from "../ui/switch";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../ui/alert-dialog";
 import { Badge } from "../ui/badge";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
@@ -42,6 +52,11 @@ import {
   formatCommandFailure,
   formatProjectConversationFailure,
   formatProjectWriteFailure,
+  projectRepositoryValidationSummary,
+  repoNameFromRemote,
+  repositoryDraftsFromProjectRepos,
+  validateProjectRepositoryDrafts,
+  type ProjectRepositoryDraft,
 } from "./JarvisProjects.logic";
 
 function defaultRepo(project: JarvisProject | null): string | null {
@@ -66,47 +81,6 @@ function slugForProjectName(name: string): string {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "") || "project"
   );
-}
-
-function repoNameFromRemote(remote: string): string {
-  return (
-    remote
-      .split("/")
-      .at(-1)
-      ?.replace(/\.git$/, "") || "repo"
-  );
-}
-
-function projectRepoText(project: JarvisProject | null): string {
-  return (
-    project?.repos
-      .map((repo) => `${repo.name} ${repo.remote}${repo.default ? " default" : ""}`)
-      .join("\n") ?? ""
-  );
-}
-
-function parseProjectRepos(input: string): JarvisProject["repos"] {
-  const lines = input
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-  const hasExplicitDefault = lines.some((line) => {
-    const flags = new Set(line.split(/\s+/).slice(2));
-    return flags.has("default") || flags.has("*");
-  });
-  return lines.map((line, index) => {
-    const parts = line.split(/\s+/);
-    const first = parts[0] ?? "";
-    const second = parts[1];
-    const flags = new Set(parts.slice(2));
-    const remote = second ?? first;
-    const name = second ? first : repoNameFromRemote(remote);
-    return {
-      name,
-      remote,
-      default: flags.has("default") || flags.has("*") || (!hasExplicitDefault && index === 0),
-    };
-  });
 }
 
 function parseConclusionIds(input: string): ReadonlyArray<string> | undefined {
@@ -142,8 +116,71 @@ function jsonResultSummary(result: JsonObject | undefined): string | undefined {
 const JARVIS_PROJECT_TEMPLATE = {
   id: "jarvis",
   name: "Jarvis",
-  reposText: "runtime roughcoder/jarvis default\ncockpit roughcoder/jarvis-cockpit",
+  repos: [
+    { name: "runtime", remote: "roughcoder/jarvis", default: true },
+    { name: "cockpit", remote: "roughcoder/jarvis-cockpit", default: false },
+  ],
 } as const;
+
+type PendingDestructiveAction =
+  | {
+      readonly kind: "archive-project";
+      readonly projectId: JarvisProject["id"];
+      readonly projectName: string;
+    }
+  | {
+      readonly kind: "delete-project";
+      readonly projectId: JarvisProject["id"];
+      readonly projectName: string;
+    }
+  | {
+      readonly kind: "retract-file";
+      readonly projectId: JarvisProject["id"];
+      readonly file: JarvisProjectFile;
+    };
+
+type ProjectRepositoryDraftRow = ProjectRepositoryDraft & {
+  readonly rowId: string;
+};
+
+function destructiveActionTitle(action: PendingDestructiveAction | null): string {
+  switch (action?.kind) {
+    case "archive-project":
+      return `Archive ${action.projectName}?`;
+    case "delete-project":
+      return `Delete ${action.projectName}?`;
+    case "retract-file":
+      return `Retract ${action.file.title || action.file.doc_id}?`;
+    default:
+      return "Confirm action";
+  }
+}
+
+function destructiveActionDescription(action: PendingDestructiveAction | null): string {
+  switch (action?.kind) {
+    case "archive-project":
+      return "Jarvis will archive this project through the project API. Cockpit will keep it visible if the write fails.";
+    case "delete-project":
+      return "Jarvis will delete this project through the project API. This is destructive and Cockpit will not hide anything unless Jarvis confirms success.";
+    case "retract-file":
+      return "Jarvis will retract this project file. Cockpit will keep the file visible if the retract write fails.";
+    default:
+      return "";
+  }
+}
+
+function destructiveActionButtonLabel(action: PendingDestructiveAction | null): string {
+  switch (action?.kind) {
+    case "archive-project":
+      return "Archive project";
+    case "delete-project":
+      return "Delete project";
+    case "retract-file":
+      return "Retract file";
+    default:
+      return "Confirm";
+  }
+}
 
 export function JarvisProjectsPanel() {
   const primaryEnvironment = usePrimaryEnvironment();
@@ -200,7 +237,9 @@ export function JarvisProjectsPanel() {
     threads.find((thread) => thread.thread_id === selectedThreadId) ?? threads[0] ?? null;
   const [projectName, setProjectName] = useState("");
   const [projectIdInput, setProjectIdInput] = useState("");
-  const [projectReposInput, setProjectReposInput] = useState("");
+  const [projectRepoDrafts, setProjectRepoDrafts] = useState<
+    ReadonlyArray<ProjectRepositoryDraftRow>
+  >([]);
   const [memoryContent, setMemoryContent] = useState("");
   const [memoryQueryText, setMemoryQueryText] = useState("");
   const [memoryReplacement, setMemoryReplacement] = useState("");
@@ -212,6 +251,20 @@ export function JarvisProjectsPanel() {
   const [newThreadTitle, setNewThreadTitle] = useState("");
   const [turnText, setTurnText] = useState("");
   const [latestReply, setLatestReply] = useState<string | null>(null);
+  const [pendingDestructiveAction, setPendingDestructiveAction] =
+    useState<PendingDestructiveAction | null>(null);
+  const nextProjectRepoDraftRowId = useRef(0);
+  const makeProjectRepositoryDraftRow = useCallback(
+    (draft: ProjectRepositoryDraft): ProjectRepositoryDraftRow => ({
+      ...draft,
+      rowId: `project-repo-${nextProjectRepoDraftRowId.current++}`,
+    }),
+    [],
+  );
+  const projectRepositoryValidation = useMemo(
+    () => validateProjectRepositoryDrafts(projectRepoDrafts),
+    [projectRepoDrafts],
+  );
   const createProject = useAtomCommand(serverEnvironment.createJarvisProject, {
     reportFailure: false,
   });
@@ -259,13 +312,15 @@ export function JarvisProjectsPanel() {
     if (!selectedProject) {
       setProjectName("");
       setProjectIdInput("");
-      setProjectReposInput("");
+      setProjectRepoDrafts([]);
       return;
     }
     setProjectName(selectedProject.name);
     setProjectIdInput(selectedProject.id);
-    setProjectReposInput(projectRepoText(selectedProject));
-  }, [isCreatingProject, selectedProject]);
+    setProjectRepoDrafts(
+      repositoryDraftsFromProjectRepos(selectedProject.repos).map(makeProjectRepositoryDraftRow),
+    );
+  }, [isCreatingProject, makeProjectRepositoryDraftRow, selectedProject]);
 
   useEffect(() => {
     if (
@@ -277,9 +332,15 @@ export function JarvisProjectsPanel() {
       setIsCreatingProject(true);
       setProjectName(JARVIS_PROJECT_TEMPLATE.name);
       setProjectIdInput(JARVIS_PROJECT_TEMPLATE.id);
-      setProjectReposInput(JARVIS_PROJECT_TEMPLATE.reposText);
+      setProjectRepoDrafts(JARVIS_PROJECT_TEMPLATE.repos.map(makeProjectRepositoryDraftRow));
     }
-  }, [isCreatingProject, projects.length, projectsQuery.data?.ok, selectedProjectId]);
+  }, [
+    isCreatingProject,
+    makeProjectRepositoryDraftRow,
+    projects.length,
+    projectsQuery.data?.ok,
+    selectedProjectId,
+  ]);
 
   const handleNewProjectDraft = () => {
     setIsCreatingProject(true);
@@ -288,13 +349,61 @@ export function JarvisProjectsPanel() {
     setLatestReply(null);
     setProjectName("");
     setProjectIdInput("");
-    setProjectReposInput("");
+    setProjectRepoDrafts([makeProjectRepositoryDraftRow({ name: "", remote: "", default: true })]);
+  };
+
+  const handleAddRepository = () => {
+    setProjectRepoDrafts((drafts) => [
+      ...drafts,
+      makeProjectRepositoryDraftRow({ name: "", remote: "", default: drafts.length === 0 }),
+    ]);
+  };
+
+  const handleRemoveRepository = (indexToRemove: number) => {
+    setProjectRepoDrafts((drafts) => {
+      const removedDefault = drafts[indexToRemove]?.default === true;
+      const next = drafts.filter((_, index) => index !== indexToRemove);
+      if (next.length === 0 || !removedDefault || next.some((repo) => repo.default)) {
+        return next;
+      }
+      return next.map((repo, index) => (index === 0 ? { ...repo, default: true } : repo));
+    });
+  };
+
+  const handleRepositoryDraftChange = (
+    indexToUpdate: number,
+    patch: Partial<ProjectRepositoryDraft>,
+  ) => {
+    setProjectRepoDrafts((drafts) =>
+      drafts.map((repo, index) => (index === indexToUpdate ? { ...repo, ...patch } : repo)),
+    );
+  };
+
+  const handleRepositoryRemoteBlur = (indexToUpdate: number) => {
+    setProjectRepoDrafts((drafts) =>
+      drafts.map((repo, index) => {
+        if (index !== indexToUpdate || repo.name.trim().length > 0) {
+          return repo;
+        }
+        const inferredName = repoNameFromRemote(repo.remote.trim());
+        return { ...repo, name: inferredName };
+      }),
+    );
+  };
+
+  const handleRepositoryDefaultChange = (indexToUpdate: number, checked: boolean) => {
+    setProjectRepoDrafts((drafts) =>
+      drafts.map((repo, index) => ({
+        ...repo,
+        default: checked ? index === indexToUpdate : index === indexToUpdate ? false : repo.default,
+      })),
+    );
   };
 
   const handleCreateProject = async (draft?: {
     readonly id: string;
     readonly name: string;
-    readonly reposText: string;
+    readonly repos: ReadonlyArray<ProjectRepositoryDraft>;
   }) => {
     if (!environmentId) return;
     const name = (draft?.name ?? projectName).trim();
@@ -303,14 +412,24 @@ export function JarvisProjectsPanel() {
       return;
     }
     const id = (draft?.id ?? projectIdInput).trim() || slugForProjectName(name);
-    const reposText = draft?.reposText ?? projectReposInput;
+    const repoValidation = draft
+      ? validateProjectRepositoryDrafts(draft.repos)
+      : projectRepositoryValidation;
+    if (!repoValidation.ok) {
+      toastManager.add({
+        type: "error",
+        title: "Project repositories need attention",
+        description: projectRepositoryValidationSummary(repoValidation),
+      });
+      return;
+    }
     const result = await createProject({
       environmentId,
       input: {
         input: {
           id: JarvisProjectId.make(id),
           name,
-          repos: parseProjectRepos(reposText),
+          repos: repoValidation.repos,
         },
       },
     });
@@ -347,13 +466,21 @@ export function JarvisProjectsPanel() {
       toastManager.add({ type: "error", title: "Project name is required" });
       return;
     }
+    if (!projectRepositoryValidation.ok) {
+      toastManager.add({
+        type: "error",
+        title: "Project repositories need attention",
+        description: projectRepositoryValidationSummary(projectRepositoryValidation),
+      });
+      return;
+    }
     const result = await updateProject({
       environmentId,
       input: {
         projectId: selectedProject.id,
         input: {
           name,
-          repos: parseProjectRepos(projectReposInput),
+          repos: projectRepositoryValidation.repos,
         },
       },
     });
@@ -382,12 +509,12 @@ export function JarvisProjectsPanel() {
     });
   };
 
-  const handleArchiveProject = async () => {
-    if (!environmentId || !selectedProject) return;
+  const handleArchiveProject = async (project: Pick<JarvisProject, "id" | "name">) => {
+    if (!environmentId) return;
     const result = await archiveProject({
       environmentId,
       input: {
-        projectId: selectedProject.id,
+        projectId: project.id,
         input: { reason: "Archived from Jarvis Cockpit" },
       },
     });
@@ -418,12 +545,12 @@ export function JarvisProjectsPanel() {
     });
   };
 
-  const handleDeleteProject = async () => {
-    if (!environmentId || !selectedProject) return;
+  const handleDeleteProject = async (project: Pick<JarvisProject, "id" | "name">) => {
+    if (!environmentId) return;
     const result = await deleteProject({
       environmentId,
       input: {
-        projectId: selectedProject.id,
+        projectId: project.id,
       },
     });
     if (result._tag === "Failure") {
@@ -444,7 +571,7 @@ export function JarvisProjectsPanel() {
       toastManager.add({
         type: "success",
         title: "Project deleted",
-        description: selectedProject.name,
+        description: project.name,
       });
       return;
     }
@@ -638,12 +765,15 @@ export function JarvisProjectsPanel() {
     });
   };
 
-  const handleRetractProjectFile = async (file: JarvisProjectFile) => {
-    if (!environmentId || !selectedId) return;
+  const handleRetractProjectFile = async (
+    projectId: JarvisProject["id"],
+    file: JarvisProjectFile,
+  ) => {
+    if (!environmentId) return;
     const result = await retractProjectFile({
       environmentId,
       input: {
-        projectId: selectedId,
+        projectId,
         docId: file.doc_id,
         input: { reason: "Retracted from Jarvis Cockpit" },
       },
@@ -672,6 +802,23 @@ export function JarvisProjectsPanel() {
       title: "Could not retract project file",
       description: formatCommandFailure(result.value.error?.message),
     });
+  };
+
+  const handleConfirmDestructiveAction = async () => {
+    const action = pendingDestructiveAction;
+    if (!action) return;
+    setPendingDestructiveAction(null);
+    switch (action.kind) {
+      case "archive-project":
+        await handleArchiveProject({ id: action.projectId, name: action.projectName });
+        return;
+      case "delete-project":
+        await handleDeleteProject({ id: action.projectId, name: action.projectName });
+        return;
+      case "retract-file":
+        await handleRetractProjectFile(action.projectId, action.file);
+        return;
+    }
   };
 
   const handleCreateThread = async () => {
@@ -779,6 +926,13 @@ export function JarvisProjectsPanel() {
     });
   };
 
+  const repositoryValidationErrors = projectRepositoryValidation.ok
+    ? []
+    : projectRepositoryValidation.errors;
+  const projectRepositoriesValid = projectRepositoryValidation.ok;
+  const projectNameValid = projectName.trim().length > 0;
+  const canWriteProject = environmentId !== null && projectNameValid && projectRepositoriesValid;
+
   return (
     <SettingsPageContainer className="max-w-5xl">
       <SettingsSection
@@ -875,7 +1029,11 @@ export function JarvisProjectsPanel() {
               <Button size="sm" variant="outline" onClick={handleNewProjectDraft}>
                 New
               </Button>
-              <Button size="sm" onClick={() => void handleCreateProject()}>
+              <Button
+                size="sm"
+                onClick={() => void handleCreateProject()}
+                disabled={!canWriteProject}
+              >
                 <PlusIcon className="size-4" />
                 Create
               </Button>
@@ -883,14 +1041,21 @@ export function JarvisProjectsPanel() {
                 size="sm"
                 variant="outline"
                 onClick={() => void handleUpdateProject()}
-                disabled={!selectedProject}
+                disabled={!selectedProject || !canWriteProject}
               >
                 Update
               </Button>
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => void handleArchiveProject()}
+                onClick={() => {
+                  if (!selectedProject) return;
+                  setPendingDestructiveAction({
+                    kind: "archive-project",
+                    projectId: selectedProject.id,
+                    projectName: selectedProject.name,
+                  });
+                }}
                 disabled={!selectedProject}
               >
                 <ArchiveIcon className="size-4" />
@@ -899,7 +1064,14 @@ export function JarvisProjectsPanel() {
               <Button
                 size="sm"
                 variant="destructive"
-                onClick={() => void handleDeleteProject()}
+                onClick={() => {
+                  if (!selectedProject) return;
+                  setPendingDestructiveAction({
+                    kind: "delete-project",
+                    projectId: selectedProject.id,
+                    projectName: selectedProject.name,
+                  });
+                }}
                 disabled={!selectedProject}
               >
                 <Trash2Icon className="size-4" />
@@ -922,13 +1094,96 @@ export function JarvisProjectsPanel() {
               aria-label="Project id"
               disabled={!isCreatingProject && Boolean(selectedProject)}
             />
-            <Textarea
-              value={projectReposInput}
-              onChange={(event) => setProjectReposInput(event.target.value)}
-              placeholder={"cockpit roughcoder/jarvis-cockpit default\nruntime roughcoder/jarvis"}
-              aria-label="Project repositories"
-              className="min-h-24 sm:col-span-2"
-            />
+            <div className="space-y-3 sm:col-span-2">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-medium text-foreground">Repositories</div>
+                <Button size="xs" variant="outline" onClick={handleAddRepository}>
+                  <PlusIcon className="size-3" />
+                  Add row
+                </Button>
+              </div>
+              {!projectRepositoryValidation.ok ? (
+                <Alert variant="error">
+                  <TriangleAlertIcon />
+                  <AlertTitle>Repository validation failed</AlertTitle>
+                  <AlertDescription>
+                    {projectRepositoryValidationSummary(projectRepositoryValidation)}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+              <div className="space-y-2">
+                {projectRepoDrafts.map((repo, index) => {
+                  const rowErrors = repositoryValidationErrors.filter(
+                    (error) => error.rowIndex === index,
+                  );
+                  const nameError = rowErrors.find((error) => error.field === "name")?.message;
+                  const remoteError = rowErrors.find((error) => error.field === "remote")?.message;
+                  return (
+                    <div
+                      key={repo.rowId}
+                      className="rounded-lg border border-border/70 bg-muted/20 p-3"
+                    >
+                      <div className="grid gap-3 md:grid-cols-[minmax(8rem,0.75fr)_minmax(12rem,1.25fr)_auto_auto] md:items-start">
+                        <label className="space-y-1.5">
+                          <span className="text-xs font-medium text-muted-foreground">Name</span>
+                          <Input
+                            value={repo.name}
+                            onChange={(event) =>
+                              handleRepositoryDraftChange(index, {
+                                name: event.currentTarget.value,
+                              })
+                            }
+                            placeholder="runtime"
+                            aria-label={`Repository ${index + 1} name`}
+                            aria-invalid={Boolean(nameError)}
+                          />
+                          {nameError ? (
+                            <span className="block text-xs text-destructive">{nameError}</span>
+                          ) : null}
+                        </label>
+                        <label className="space-y-1.5">
+                          <span className="text-xs font-medium text-muted-foreground">Remote</span>
+                          <Input
+                            value={repo.remote}
+                            onBlur={() => handleRepositoryRemoteBlur(index)}
+                            onChange={(event) =>
+                              handleRepositoryDraftChange(index, {
+                                remote: event.currentTarget.value,
+                              })
+                            }
+                            placeholder="roughcoder/jarvis"
+                            aria-label={`Repository ${index + 1} remote`}
+                            aria-invalid={Boolean(remoteError)}
+                          />
+                          {remoteError ? (
+                            <span className="block text-xs text-destructive">{remoteError}</span>
+                          ) : null}
+                        </label>
+                        <label className="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-background/70 px-3 py-2 md:mt-5">
+                          <span className="text-sm text-foreground">Default</span>
+                          <Switch
+                            checked={repo.default}
+                            onCheckedChange={(checked) =>
+                              handleRepositoryDefaultChange(index, checked)
+                            }
+                            aria-label={`Repository ${index + 1} default`}
+                          />
+                        </label>
+                        <Button
+                          size="icon-sm"
+                          variant="destructive-outline"
+                          onClick={() => handleRemoveRepository(index)}
+                          aria-label={`Remove repository ${index + 1}`}
+                          className="md:mt-5"
+                        >
+                          <Trash2Icon className="size-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </SettingsRow>
       </SettingsSection>
@@ -1181,8 +1436,15 @@ export function JarvisProjectsPanel() {
                 <Button
                   size="xs"
                   variant="outline"
-                  onClick={() => void handleRetractProjectFile(file)}
-                  disabled={file.retracted}
+                  onClick={() => {
+                    if (!selectedId) return;
+                    setPendingDestructiveAction({
+                      kind: "retract-file",
+                      projectId: selectedId,
+                      file,
+                    });
+                  }}
+                  disabled={file.retracted || !selectedId}
                 >
                   <Trash2Icon className="size-3" />
                   Retract
@@ -1288,6 +1550,29 @@ export function JarvisProjectsPanel() {
           </div>
         </SettingsRow>
       </SettingsSection>
+      <AlertDialog
+        open={pendingDestructiveAction !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingDestructiveAction(null);
+          }
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{destructiveActionTitle(pendingDestructiveAction)}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {destructiveActionDescription(pendingDestructiveAction)}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <Button variant="destructive" onClick={() => void handleConfirmDestructiveAction()}>
+              {destructiveActionButtonLabel(pendingDestructiveAction)}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
     </SettingsPageContainer>
   );
 }
