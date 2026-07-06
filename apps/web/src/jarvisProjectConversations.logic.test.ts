@@ -6,11 +6,14 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  archivedProjectConversationSummary,
   buildProjectConversationRouteParams,
   defaultProjectRepo,
   extractProjectConversationReply,
   formatProjectConversationFailure,
+  isProjectConversationArchived,
   latestProjectConversation,
+  projectConversationHistoryMessages,
   reduceProjectConversationSendState,
   resolveProjectConversationRouteParams,
   resolveProjectConversationRouteRenderState,
@@ -115,6 +118,22 @@ describe("project conversation selection", () => {
     expect(latestProjectConversation([older, newer])?.thread_id).toBe("newer");
   });
 
+  it("resolves archived state from Jarvis thread archive fields", () => {
+    const active = thread("active", "2026-07-01T10:00:00.000Z");
+    const archived = {
+      ...thread("archived", "2026-07-02T10:00:00.000Z"),
+      archived_at: "2026-07-03T10:00:00.000Z",
+      archived_by: "neil",
+      archive_reason: "superseded",
+    };
+
+    expect(isProjectConversationArchived(active)).toBe(false);
+    expect(isProjectConversationArchived(archived)).toBe(true);
+    expect(archivedProjectConversationSummary(archived)).toBe(
+      "Archived 2026-07-03T10:00:00.000Z by neil - superseded",
+    );
+  });
+
   it("selects default repo and hides retracted project files from context", () => {
     expect(
       defaultProjectRepo({
@@ -186,6 +205,33 @@ describe("project conversation send state", () => {
   });
 });
 
+describe("project conversation history", () => {
+  it("renders history in observed order with user and assistant roles", () => {
+    const messages = projectConversationHistoryMessages({
+      messages: [
+        {
+          role: "assistant",
+          peer_id: "jarvis",
+          content: "Second",
+          observed_at: "2026-07-01T10:02:00.000Z",
+        },
+        {
+          role: "user",
+          peer_id: "neil",
+          content: "First",
+          observed_at: "2026-07-01T10:01:00.000Z",
+        },
+      ],
+    });
+
+    expect(messages.map((message) => [message.role, message.content])).toEqual([
+      ["user", "First"],
+      ["assistant", "Second"],
+    ]);
+    expect(messages.every((message) => message.source === "history")).toBe(true);
+  });
+});
+
 describe("project conversation failures", () => {
   it("preserves Jarvis status and API error messages for send failures", () => {
     expect(
@@ -205,5 +251,29 @@ describe("project conversation failures", () => {
         "Jarvis request projects.threads.archive failed with HTTP 404.",
       ),
     ).toContain("does not expose project conversation archive yet");
+  });
+
+  it("surfaces detail route gaps as honest no-history fallback", () => {
+    expect(
+      formatProjectConversationFailure(
+        "detail",
+        "Jarvis request projects.threads.get failed with HTTP 404.",
+      ),
+    ).toContain("does not expose project conversation history yet");
+  });
+
+  it("preserves archive and unarchive Jarvis failures without mutating local state", () => {
+    expect(
+      formatProjectConversationFailure(
+        "archive",
+        "Jarvis request projects.threads.archive failed with HTTP 500: write failed.",
+      ),
+    ).toBe("Jarvis request projects.threads.archive failed with HTTP 500: write failed.");
+    expect(
+      formatProjectConversationFailure(
+        "unarchive",
+        "Jarvis request projects.threads.unarchive failed with HTTP 409: already active.",
+      ),
+    ).toBe("Jarvis request projects.threads.unarchive failed with HTTP 409: already active.");
   });
 });

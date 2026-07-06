@@ -343,20 +343,36 @@ it.effect("fixture client archives project conversations", () =>
     const beforeArchive = yield* client.getProjectThreads(project.id);
     const archived = yield* client.archiveProjectThread(project.id, thread.thread_id);
     const afterArchive = yield* client.getProjectThreads(project.id);
+    const withArchived = yield* client.getProjectThreads(project.id, { includeArchived: true });
+    const detail = yield* client.getProjectThread(project.id, thread.thread_id);
+    const unarchived = yield* client.unarchiveProjectThread(project.id, thread.thread_id);
+    const afterUnarchive = yield* client.getProjectThreads(project.id);
 
     assert.strictEqual(
       beforeArchive.some((candidate) => candidate.thread_id === thread.thread_id),
       true,
     );
     assert.strictEqual(archived.thread_id, thread.thread_id);
+    assert.strictEqual(archived.archived_at, now);
     assert.strictEqual(
       afterArchive.some((candidate) => candidate.thread_id === thread.thread_id),
       false,
     );
+    assert.strictEqual(
+      withArchived.some((candidate) => candidate.thread_id === thread.thread_id),
+      true,
+    );
+    assert.strictEqual(detail.thread_id, thread.thread_id);
+    assert.deepStrictEqual(detail.messages, []);
+    assert.strictEqual(unarchived.archived_at, "");
+    assert.strictEqual(
+      afterUnarchive.some((candidate) => candidate.thread_id === thread.thread_id),
+      true,
+    );
   }),
 );
 
-it.effect("cockpit client accepts project conversation archive response shapes", () =>
+it.effect("cockpit client accepts project conversation detail and archive response shapes", () =>
   Effect.gen(function* () {
     const thread = {
       thread_id: "thread_1",
@@ -366,14 +382,43 @@ it.effect("cockpit client accepts project conversation archive response shapes",
       created_at: now,
       updated_at: now,
       created_by: "fixture",
+      archived_at: "",
+      archived_by: "",
+      archive_reason: "",
+    };
+    const detail = {
+      api_version: "v1",
+      schema_version: 1,
+      project_id: "jarvis",
+      thread: {
+        ...thread,
+        messages: [
+          {
+            role: "user",
+            peer_id: "neil",
+            content: "Hello",
+            observed_at: now,
+          },
+          {
+            role: "assistant",
+            peer_id: "jarvis",
+            content: "Hi",
+            observed_at: now,
+          },
+        ],
+      },
     };
     const responses = [
+      { api_version: "v1", schema_version: 1, project_id: "jarvis", threads: [thread] },
+      detail,
       { thread },
       thread,
       { api_version: "v1", schema_version: 1, threads: [thread] },
+      { thread: { ...thread, archived_at: "" } },
     ];
     const requests: Array<{
       readonly url: string;
+      readonly method: string;
       readonly body: { readonly metadata?: unknown };
     }> = [];
     const client = makeJarvisCockpitClient({
@@ -382,28 +427,38 @@ it.effect("cockpit client accepts project conversation archive response shapes",
       fetch: async (url, init) => {
         requests.push({
           url: String(url),
+          method: init?.method ?? "GET",
           body: init?.body ? JSON.parse(String(init.body)) : {},
         });
         return jsonResponse(responses.shift());
       },
     });
 
+    const listed = yield* client.getProjectThreads("jarvis", { includeArchived: true });
+    const opened = yield* client.getProjectThread("jarvis", "thread_1");
     const envelope = yield* client.archiveProjectThread("jarvis", "thread_1");
     const bare = yield* client.archiveProjectThread("jarvis", "thread_1");
     const list = yield* client.archiveProjectThread("jarvis", "thread_1");
+    const unarchived = yield* client.unarchiveProjectThread("jarvis", "thread_1");
 
+    assert.strictEqual(listed[0]?.thread_id, "thread_1");
+    assert.strictEqual(opened.messages[0]?.content, "Hello");
     assert.strictEqual(envelope.thread_id, "thread_1");
     assert.strictEqual(bare.thread_id, "thread_1");
     assert.strictEqual(list.thread_id, "thread_1");
+    assert.strictEqual(unarchived.thread_id, "thread_1");
     assert.deepStrictEqual(
-      requests.map((request) => request.url),
+      requests.map((request) => [request.method, request.url]),
       [
-        "http://jarvis.local:8787/v1/projects/jarvis/threads/thread_1/archive",
-        "http://jarvis.local:8787/v1/projects/jarvis/threads/thread_1/archive",
-        "http://jarvis.local:8787/v1/projects/jarvis/threads/thread_1/archive",
+        ["GET", "http://jarvis.local:8787/v1/projects/jarvis/threads?include_archived=true"],
+        ["GET", "http://jarvis.local:8787/v1/projects/jarvis/threads/thread_1"],
+        ["POST", "http://jarvis.local:8787/v1/projects/jarvis/threads/thread_1/archive"],
+        ["POST", "http://jarvis.local:8787/v1/projects/jarvis/threads/thread_1/archive"],
+        ["POST", "http://jarvis.local:8787/v1/projects/jarvis/threads/thread_1/archive"],
+        ["POST", "http://jarvis.local:8787/v1/projects/jarvis/threads/thread_1/unarchive"],
       ],
     );
-    assert.deepStrictEqual(requests[0]?.body.metadata, { surface: "jarvis-cockpit" });
+    assert.deepStrictEqual(requests[2]?.body.metadata, { surface: "jarvis-cockpit" });
   }),
 );
 

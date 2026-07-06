@@ -157,6 +157,7 @@ import {
   JarvisProjectsResult,
   JarvisProjectThreadsResult,
   JarvisProjectThreadArchiveInput,
+  JarvisProjectThreadDetailResult,
   JarvisProjectThreadResult,
   JarvisProjectThreadTurnInput,
   JarvisProjectThreadTurnRpcResult,
@@ -249,6 +250,7 @@ export const WS_METHODS = {
   serverGetJarvisProjectMemory: "server.getJarvisProjectMemory",
   serverGetJarvisProjectFiles: "server.getJarvisProjectFiles",
   serverGetJarvisProjectThreads: "server.getJarvisProjectThreads",
+  serverGetJarvisProjectThread: "server.getJarvisProjectThread",
   serverValidateJarvisWork: "server.validateJarvisWork",
   serverCreateJarvisProject: "server.createJarvisProject",
   serverUpdateJarvisProject: "server.updateJarvisProject",
@@ -262,6 +264,7 @@ export const WS_METHODS = {
   serverRetractJarvisProjectFile: "server.retractJarvisProjectFile",
   serverCreateJarvisProjectThread: "server.createJarvisProjectThread",
   serverArchiveJarvisProjectThread: "server.archiveJarvisProjectThread",
+  serverUnarchiveJarvisProjectThread: "server.unarchiveJarvisProjectThread",
   serverSendJarvisProjectThreadTurn: "server.sendJarvisProjectThreadTurn",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
@@ -395,11 +398,21 @@ export const WsServerGetJarvisProjectThreadsRpc = Rpc.make(
   {
     payload: Schema.Struct({
       projectId: Schema.String,
+      includeArchived: Schema.optional(Schema.Boolean),
     }),
     success: JarvisProjectThreadsResult,
     error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
   },
 );
+
+export const WsServerGetJarvisProjectThreadRpc = Rpc.make(WS_METHODS.serverGetJarvisProjectThread, {
+  payload: Schema.Struct({
+    projectId: Schema.String,
+    threadId: Schema.String,
+  }),
+  success: JarvisProjectThreadDetailResult,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
 
 export const WsServerValidateJarvisWorkRpc = Rpc.make(WS_METHODS.serverValidateJarvisWork, {
   payload: Schema.Struct({
@@ -535,6 +548,18 @@ export const WsServerArchiveJarvisProjectThreadRpc = Rpc.make(
       projectId: Schema.String,
       threadId: Schema.String,
       input: Schema.optional(JarvisProjectThreadArchiveInput),
+    }),
+    success: JarvisProjectThreadResult,
+    error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerUnarchiveJarvisProjectThreadRpc = Rpc.make(
+  WS_METHODS.serverUnarchiveJarvisProjectThread,
+  {
+    payload: Schema.Struct({
+      projectId: Schema.String,
+      threadId: Schema.String,
     }),
     success: JarvisProjectThreadResult,
     error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
@@ -967,6 +992,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetJarvisProjectMemoryRpc,
   WsServerGetJarvisProjectFilesRpc,
   WsServerGetJarvisProjectThreadsRpc,
+  WsServerGetJarvisProjectThreadRpc,
   WsServerValidateJarvisWorkRpc,
   WsServerCreateJarvisProjectRpc,
   WsServerUpdateJarvisProjectRpc,
@@ -980,6 +1006,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRetractJarvisProjectFileRpc,
   WsServerCreateJarvisProjectThreadRpc,
   WsServerArchiveJarvisProjectThreadRpc,
+  WsServerUnarchiveJarvisProjectThreadRpc,
   WsServerSendJarvisProjectThreadTurnRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,

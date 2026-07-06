@@ -28,6 +28,8 @@ import {
   JarvisProjectMemoryResponse,
   JarvisProjectThread,
   JarvisProjectThreadArchiveInput,
+  JarvisProjectThreadDetail,
+  JarvisProjectThreadDetailResponse,
   JarvisProjectThreadId,
   JarvisProjectThreadsResponse,
   JarvisProjectThreadTurnInput,
@@ -115,7 +117,12 @@ export interface JarvisClient {
   ) => Effect.Effect<ReadonlyArray<JarvisProjectFile>, JarvisClientError>;
   readonly getProjectThreads: (
     projectId: string,
+    options?: { readonly includeArchived?: boolean },
   ) => Effect.Effect<ReadonlyArray<JarvisProjectThread>, JarvisClientError>;
+  readonly getProjectThread: (
+    projectId: string,
+    threadId: string,
+  ) => Effect.Effect<JarvisProjectThreadDetail, JarvisClientError>;
   readonly createProject: (
     input: JarvisProjectCreateInput,
   ) => Effect.Effect<JarvisProject, JarvisClientError>;
@@ -161,6 +168,10 @@ export interface JarvisClient {
     projectId: string,
     threadId: string,
     input?: JarvisProjectThreadArchiveInput,
+  ) => Effect.Effect<JarvisProjectThread, JarvisClientError>;
+  readonly unarchiveProjectThread: (
+    projectId: string,
+    threadId: string,
   ) => Effect.Effect<JarvisProjectThread, JarvisClientError>;
   readonly sendProjectThreadTurn: (
     projectId: string,
@@ -333,6 +344,9 @@ const decodeProjectDetailResponse = Schema.decodeUnknownEffect(JarvisProjectDeta
 const decodeProjectMemoryResponse = Schema.decodeUnknownEffect(JarvisProjectMemoryResponse);
 const decodeProjectFilesResponse = Schema.decodeUnknownEffect(JarvisProjectFilesResponse);
 const decodeProjectThreadsResponse = Schema.decodeUnknownEffect(JarvisProjectThreadsResponse);
+const decodeProjectThreadDetailResponse = Schema.decodeUnknownEffect(
+  JarvisProjectThreadDetailResponse,
+);
 const decodeProjectThread = Schema.decodeUnknownEffect(JarvisProjectThread);
 const decodeProjectThreadTurnResult = Schema.decodeUnknownEffect(JarvisProjectThreadTurnResult);
 const decodeProjectThreadResponse = (operation: string, body: unknown) =>
@@ -463,6 +477,22 @@ function projectThreadPayloadFromResponse(
     });
   }
   return body;
+}
+
+function projectThreadKey(projectId: string, threadId: string): string {
+  return `${projectId}/${threadId}`;
+}
+
+function findProjectThread(
+  threadsByProject: ReadonlyMap<string, ReadonlyArray<JarvisProjectThread>>,
+  projectId: string,
+  threadId: string,
+): JarvisProjectThread | undefined {
+  return threadsByProject.get(projectId)?.find((candidate) => candidate.thread_id === threadId);
+}
+
+function isProjectThreadArchived(thread: Pick<JarvisProjectThread, "archived_at">): boolean {
+  return typeof thread.archived_at === "string" && thread.archived_at.trim().length > 0;
 }
 
 function resolveRequestAuth(
@@ -666,10 +696,23 @@ export function makeJarvisCockpitClient(input: {
         Effect.flatMap(decodeFor("projects.files", decodeProjectFilesResponse)),
         Effect.map((response) => response.files),
       ),
-    getProjectThreads: (projectId) =>
-      requestJson("projects.threads", `/v1/projects/${encodeURIComponent(projectId)}/threads`).pipe(
+    getProjectThreads: (projectId, options) =>
+      requestJson(
+        "projects.threads",
+        appendQuery(`/v1/projects/${encodeURIComponent(projectId)}/threads`, {
+          include_archived: options?.includeArchived ? "true" : undefined,
+        }),
+      ).pipe(
         Effect.flatMap(decodeFor("projects.threads", decodeProjectThreadsResponse)),
         Effect.map((response) => response.threads),
+      ),
+    getProjectThread: (projectId, threadId) =>
+      requestJson(
+        "projects.threads.get",
+        `/v1/projects/${encodeURIComponent(projectId)}/threads/${encodeURIComponent(threadId)}`,
+      ).pipe(
+        Effect.flatMap(decodeFor("projects.threads.get", decodeProjectThreadDetailResponse)),
+        Effect.map((response) => response.thread),
       ),
     createProject: (projectInput) =>
       postJson("projects.create", "/v1/projects", withoutWriteMetadata(projectInput)).pipe(
@@ -750,6 +793,14 @@ export function makeJarvisCockpitClient(input: {
         withSurfaceMetadata(archiveInput),
       ).pipe(
         Effect.flatMap((body) => decodeProjectThreadResponse("projects.threads.archive", body)),
+      ),
+    unarchiveProjectThread: (projectId, threadId) =>
+      postJson(
+        "projects.threads.unarchive",
+        `/v1/projects/${encodeURIComponent(projectId)}/threads/${encodeURIComponent(threadId)}/unarchive`,
+        withSurfaceMetadata({}),
+      ).pipe(
+        Effect.flatMap((body) => decodeProjectThreadResponse("projects.threads.unarchive", body)),
       ),
     sendProjectThreadTurn: (projectId, threadId, turnInput) =>
       requestText(
@@ -974,8 +1025,12 @@ export function makeJarvisClient(config: {
         withClient("projects.memory", (client) => client.getProjectMemory(projectId)),
       getProjectFiles: (projectId, options) =>
         withClient("projects.files", (client) => client.getProjectFiles(projectId, options)),
-      getProjectThreads: (projectId) =>
-        withClient("projects.threads", (client) => client.getProjectThreads(projectId)),
+      getProjectThreads: (projectId, options) =>
+        withClient("projects.threads", (client) => client.getProjectThreads(projectId, options)),
+      getProjectThread: (projectId, threadId) =>
+        withClient("projects.threads.get", (client) =>
+          client.getProjectThread(projectId, threadId),
+        ),
       createProject: (input) =>
         withClient("projects.create", (client) => client.createProject(input)),
       updateProject: (projectId, input) =>
@@ -1013,6 +1068,10 @@ export function makeJarvisClient(config: {
       archiveProjectThread: (projectId, threadId, input) =>
         withClient("projects.threads.archive", (client) =>
           client.archiveProjectThread(projectId, threadId, input),
+        ),
+      unarchiveProjectThread: (projectId, threadId) =>
+        withClient("projects.threads.unarchive", (client) =>
+          client.unarchiveProjectThread(projectId, threadId),
         ),
       sendProjectThreadTurn: (projectId, threadId, input) =>
         withClient("projects.threads.turn", (client) =>
@@ -1190,6 +1249,7 @@ function makeMissingConfigurationClient(message: string): JarvisClient {
     getProjectMemory: () => fail("jarvis.client.configure"),
     getProjectFiles: () => fail("jarvis.client.configure"),
     getProjectThreads: () => fail("jarvis.client.configure"),
+    getProjectThread: () => fail("jarvis.client.configure"),
     createProject: () => fail("jarvis.client.configure"),
     updateProject: () => fail("jarvis.client.configure"),
     archiveProject: () => fail("jarvis.client.configure"),
@@ -1202,6 +1262,7 @@ function makeMissingConfigurationClient(message: string): JarvisClient {
     retractProjectFile: () => fail("jarvis.client.configure"),
     createProjectThread: () => fail("jarvis.client.configure"),
     archiveProjectThread: () => fail("jarvis.client.configure"),
+    unarchiveProjectThread: () => fail("jarvis.client.configure"),
     sendProjectThreadTurn: () => fail("jarvis.client.configure"),
     getSession: () => fail("jarvis.client.configure"),
     getSessionEvents: () => fail("jarvis.client.configure"),
@@ -1338,6 +1399,25 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       ],
     ],
     [jarvisProjectId, []],
+  ]);
+  const projectThreadMessages = new Map<string, JarvisProjectThreadDetail["messages"]>([
+    [
+      `${cockpitProjectId}/thread_fixture_cockpit_plan`,
+      [
+        {
+          role: "user",
+          peer_id: "neil",
+          content: "What should Cockpit make primary?",
+          observed_at: now,
+        },
+        {
+          role: "assistant",
+          peer_id: "jarvis",
+          content: "Make Jarvis projects the main operating surface.",
+          observed_at: now,
+        },
+      ],
+    ],
   ]);
   const projectFiles = new Map<string, JarvisProjectFile[]>([
     [
@@ -2130,8 +2210,28 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
           (file) => options?.includeRetracted || !file.retracted,
         ),
       ),
-    getProjectThreads: (candidateProjectId) =>
-      Effect.succeed(projectThreads.get(candidateProjectId) ?? []),
+    getProjectThreads: (candidateProjectId, options) =>
+      Effect.succeed(
+        (projectThreads.get(candidateProjectId) ?? []).filter(
+          (thread) => options?.includeArchived || !isProjectThreadArchived(thread),
+        ),
+      ),
+    getProjectThread: (candidateProjectId, threadId) => {
+      const thread = findProjectThread(projectThreads, candidateProjectId, threadId);
+      if (thread === undefined) {
+        return Effect.fail(
+          new JarvisClientError({
+            operation: "fixture.projects.threads.get",
+            status: 404,
+            message: `No fixture project thread ${candidateProjectId}/${threadId}.`,
+          }),
+        );
+      }
+      return Effect.succeed({
+        ...thread,
+        messages: projectThreadMessages.get(projectThreadKey(candidateProjectId, threadId)) ?? [],
+      });
+    },
     createProject: (input) => {
       const project = fixtureProjectFromCreateInput(input);
       if (findProject(project.id) !== undefined) {
@@ -2353,12 +2453,11 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
         thread,
         ...(projectThreads.get(candidateProjectId) ?? []),
       ]);
+      projectThreadMessages.set(projectThreadKey(candidateProjectId, thread.thread_id), []);
       return Effect.succeed(thread);
     },
     archiveProjectThread: (candidateProjectId, threadId) => {
-      const thread = projectThreads
-        .get(candidateProjectId)
-        ?.find((candidate) => candidate.thread_id === threadId);
+      const thread = findProjectThread(projectThreads, candidateProjectId, threadId);
       if (thread === undefined) {
         return Effect.fail(
           new JarvisClientError({
@@ -2368,19 +2467,51 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
           }),
         );
       }
+      if (isProjectThreadArchived(thread)) {
+        return Effect.succeed(thread);
+      }
+      const archived = {
+        ...thread,
+        archived_at: now,
+        archived_by: "fixture",
+        archive_reason: "",
+      };
       projectThreads.set(
         candidateProjectId,
-        (projectThreads.get(candidateProjectId) ?? []).filter(
-          (candidate) => candidate.thread_id !== threadId,
+        (projectThreads.get(candidateProjectId) ?? []).map((candidate) =>
+          candidate.thread_id === threadId ? archived : candidate,
         ),
       );
-      return Effect.succeed(thread);
+      return Effect.succeed(archived);
+    },
+    unarchiveProjectThread: (candidateProjectId, threadId) => {
+      const thread = findProjectThread(projectThreads, candidateProjectId, threadId);
+      if (thread === undefined) {
+        return Effect.fail(
+          new JarvisClientError({
+            operation: "fixture.projects.threads.unarchive",
+            status: 404,
+            message: `No fixture project thread ${candidateProjectId}/${threadId}.`,
+          }),
+        );
+      }
+      const unarchived = {
+        ...thread,
+        archived_at: "",
+        archived_by: "",
+        archive_reason: "",
+      };
+      projectThreads.set(
+        candidateProjectId,
+        (projectThreads.get(candidateProjectId) ?? []).map((candidate) =>
+          candidate.thread_id === threadId ? unarchived : candidate,
+        ),
+      );
+      return Effect.succeed(unarchived);
     },
     sendProjectThreadTurn: (candidateProjectId, threadId, input) => {
       const project = findProject(candidateProjectId);
-      const thread = projectThreads
-        .get(candidateProjectId)
-        ?.find((candidate) => candidate.thread_id === threadId);
+      const thread = findProjectThread(projectThreads, candidateProjectId, threadId);
       if (project === undefined || thread === undefined) {
         return Effect.fail(
           new JarvisClientError({
@@ -2390,7 +2521,22 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
           }),
         );
       }
+      if (isProjectThreadArchived(thread)) {
+        return Effect.fail(
+          new JarvisClientError({
+            operation: "fixture.projects.threads.turn",
+            status: 409,
+            message: "thread is archived",
+          }),
+        );
+      }
       const text = `Fixture Jarvis recorded a Codex project conversation for ${project.name}: ${input.text}`;
+      const key = projectThreadKey(candidateProjectId, threadId);
+      projectThreadMessages.set(key, [
+        ...(projectThreadMessages.get(key) ?? []),
+        { role: "user", peer_id: "fixture", content: input.text, observed_at: now },
+        { role: "assistant", peer_id: "jarvis", content: text, observed_at: now },
+      ]);
       return Effect.succeed({
         ok: true,
         text,
