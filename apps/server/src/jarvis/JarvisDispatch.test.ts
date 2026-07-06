@@ -60,9 +60,12 @@ function jarvisHttpError(input: {
     status: input.status,
     message: `${input.operation} failed`,
     responseBody: JSON.stringify({
-      code: input.code,
-      message: input.message,
-      recoverable: input.recoverable ?? false,
+      ok: false,
+      error: {
+        code: input.code,
+        message: input.message,
+        recoverable: input.recoverable ?? false,
+      },
     }),
   });
 }

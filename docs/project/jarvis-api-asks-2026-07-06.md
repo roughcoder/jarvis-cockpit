@@ -43,8 +43,13 @@ turn normally, so the `interrupted` state also looks mislabelled.
 - If a new session_ref is created, the write's reconciliation packet carries it.
 - `interrupted` is never the state of a session that completed normally.
 
-(Cockpit is meanwhile shipping client-side resume-and-retry as a workaround; option A/B
-makes that path unnecessary rather than load-bearing.)
+**Update (same evening):** the cockpit shipped client-side resume-and-retry
+(`sessions.turn` 409 → `work/resume` → retry on the returned `session_ref`). Live result:
+`work/resume` itself returns
+`409 "Run run_1783362862_5f17cce9 has no resumable worker session"`. So Jarvis labels the
+session `recoverable: true` but provides no recovery path — the contradiction is the bug.
+Until sessions stay turn-ready (A) or `/turns` auto-resumes (B), multi-step chat cannot
+work no matter what the client does.
 
 ## 2. Push channel for cockpit events (BLOCKING for responsiveness at scale)
 
