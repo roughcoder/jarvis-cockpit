@@ -8,9 +8,10 @@ import {
 } from "./startWork.logic";
 
 describe("buildStartWorkSources", () => {
-  it("lists the five Jarvis work sources in order", () => {
+  it("lists the six Jarvis work sources in order", () => {
     const sources = buildStartWorkSources({ hasAnchorProject: true, hasResumableThread: true });
     expect(sources.map((source) => source.id)).toEqual([
+      "create-project",
       "describe-work",
       "github-issue",
       "linear-ticket",
@@ -31,9 +32,10 @@ describe("buildStartWorkSources", () => {
     expect(haystack).not.toContain("branch");
   });
 
-  it("enables describe work and continue run when Jarvis runs exist", () => {
+  it("enables describe work and continue work when Jarvis projects exist", () => {
     const sources = buildStartWorkSources({ hasAnchorProject: true, hasResumableThread: true });
     const byId = new Map(sources.map((source) => [source.id, source]));
+    expect(byId.get("create-project")?.enabled).toBe(true);
     expect(byId.get("describe-work")?.enabled).toBe(true);
     expect(byId.get("continue-run")?.enabled).toBe(true);
   });

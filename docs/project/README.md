@@ -28,6 +28,9 @@ second durable project model.
 - [Onboarding pivot](./jarvis-cockpit-onboarding-pivot-plan.md): product and
   implementation plan for replacing upstream local-project onboarding with a
   Jarvis-first `Start work` flow.
+- [Jarvis-first cockpit plan](./jarvis-first-cockpit-plan.md): next-phase
+  product and implementation plan for making projects, project conversations,
+  worker dispatch, MCP, and diagnostics first-class Jarvis surfaces.
 
 ## Contract Reference
 

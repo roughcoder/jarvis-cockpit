@@ -5,6 +5,7 @@ import {
   type ModelSelection,
   ProjectId,
   ProviderInstanceId,
+  type ServerAuthDescriptor,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Console from "effect/Console";
@@ -249,6 +250,9 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
   } as const;
 });
 
+const supportsLocalJarvisBrowserBootstrap = (auth: ServerAuthDescriptor) =>
+  auth.bootstrapMethods.includes("local-jarvis-browser");
+
 const resolveStartupBrowserTarget = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -258,11 +262,16 @@ const resolveStartupBrowserTarget = Effect.gen(function* () {
       ? `http://${formatHostForUrl(serverConfig.host)}:${serverConfig.port}`
       : localUrl;
   const baseTarget = serverConfig.devUrl?.toString() ?? bindUrl;
-  return yield* Effect.succeed(serverConfig.mode === "desktop" ? baseTarget : undefined).pipe(
-    Effect.flatMap((target) =>
-      target ? Effect.succeed(target) : serverAuth.issueStartupPairingUrl(baseTarget),
-    ),
-  );
+  if (serverConfig.mode === "desktop") {
+    return baseTarget;
+  }
+
+  const auth = yield* serverAuth.getDescriptor();
+  if (supportsLocalJarvisBrowserBootstrap(auth)) {
+    return baseTarget;
+  }
+
+  return yield* serverAuth.issueStartupPairingUrl(baseTarget);
 });
 
 const maybeOpenBrowser = (target: string) =>
@@ -296,6 +305,7 @@ export const make = Effect.gen(function* () {
   const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const crypto = yield* Crypto.Crypto;
 
   const commandGate = yield* makeCommandGate;
@@ -458,9 +468,16 @@ export const make = Effect.gen(function* () {
         yield* Effect.logDebug("startup phase: browser open check");
         const startupBrowserTarget = yield* resolveStartupBrowserTarget;
         if (serverConfig.mode !== "desktop") {
-          yield* Effect.logInfo(
-            "Authentication required. Open T3 Code using the pairing URL.",
-          ).pipe(Effect.annotateLogs({ pairingUrl: startupBrowserTarget }));
+          const auth = yield* serverAuth.getDescriptor();
+          if (supportsLocalJarvisBrowserBootstrap(auth)) {
+            yield* Effect.logInfo(
+              "Local Jarvis browser bootstrap enabled. Open T3 Code directly.",
+            ).pipe(Effect.annotateLogs({ url: startupBrowserTarget }));
+          } else {
+            yield* Effect.logInfo(
+              "Authentication required. Open T3 Code using the pairing URL.",
+            ).pipe(Effect.annotateLogs({ pairingUrl: startupBrowserTarget }));
+          }
         }
         yield* runStartupPhase("browser.open", maybeOpenBrowser(startupBrowserTarget));
       }

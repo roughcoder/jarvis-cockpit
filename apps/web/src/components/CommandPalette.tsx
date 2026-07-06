@@ -83,7 +83,7 @@ import {
 } from "../lib/projectPaths";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { getLatestThreadForProject, sortThreads } from "../lib/threadSort";
-import { isJarvisCockpitEnvironment } from "../jarvisCockpit";
+import { isJarvisCockpitEnvironment, isJarvisStartProjectId } from "../jarvisCockpit";
 import {
   buildStartWorkSources,
   START_WORK_SEARCH_TERMS,
@@ -508,7 +508,11 @@ function OpenCommandPaletteDialog(props: {
   const isJarvisCockpitMode = jarvisCockpitEnvironmentIds.size > 0;
   const jarvisAnchorProject = useMemo(
     () =>
-      projects.find((project) => jarvisCockpitEnvironmentIds.has(project.environmentId)) ?? null,
+      projects.find(
+        (project) =>
+          jarvisCockpitEnvironmentIds.has(project.environmentId) &&
+          isJarvisStartProjectId(project.id),
+      ) ?? null,
     [jarvisCockpitEnvironmentIds, projects],
   );
   const latestJarvisThread = useMemo(() => {
@@ -933,6 +937,8 @@ function OpenCommandPaletteDialog(props: {
   const buildStartWorkGroups = useCallback((): CommandPaletteView["groups"] => {
     const iconForSource = (id: StartWorkSourceId): ReactNode => {
       switch (id) {
+        case "create-project":
+          return <FolderPlusIcon className={ITEM_ICON_CLASS} />;
         case "describe-work":
           return <MessageSquareIcon className={ITEM_ICON_CLASS} />;
         case "github-issue":
@@ -960,6 +966,10 @@ function OpenCommandPaletteDialog(props: {
         if (!source.enabled) {
           return;
         }
+        if (source.id === "create-project") {
+          await navigate({ to: "/settings/projects" });
+          return;
+        }
         if (source.id === "describe-work") {
           if (jarvisAnchorProject === null) {
             toastManager.add(
@@ -972,12 +982,15 @@ function OpenCommandPaletteDialog(props: {
             );
             return;
           }
-          await handleNewThread(scopeProjectRef(jarvisAnchorProject.environmentId, jarvisAnchorProject.id), {
-            envMode: "local",
-            startFromOrigin: false,
-            branch: null,
-            worktreePath: null,
-          });
+          await handleNewThread(
+            scopeProjectRef(jarvisAnchorProject.environmentId, jarvisAnchorProject.id),
+            {
+              envMode: "local",
+              startFromOrigin: false,
+              branch: null,
+              worktreePath: null,
+            },
+          );
           return;
         }
         if (source.id === "continue-run" && latestJarvisThread !== null) {

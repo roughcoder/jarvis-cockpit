@@ -45,6 +45,7 @@ import {
   primaryServerConfigAtom,
   primaryServerConfigEventAtom,
   primaryServerWelcomeAtom,
+  serverEnvironment,
 } from "../state/server";
 import { readProject, setActiveEnvironmentId, useActiveEnvironmentId } from "../state/entities";
 import {
@@ -132,11 +133,65 @@ function RootRouteView() {
         <SlowRpcRequestToastCoordinator />
         <HostedStaticEnvironmentBootstrap />
         {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
+        {primaryEnvironmentAuthenticated ? <JarvisBrainStartupRedirect /> : null}
         {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
         {appShell}
       </AnchoredToastProvider>
     </ToastProvider>
   );
+}
+
+function JarvisBrainStartupRedirect() {
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const navigate = useNavigate();
+  const primaryEnvironment = usePrimaryEnvironment();
+  const serverConfig = useAtomValue(primaryServerConfigAtom);
+  const checkJarvisBrain = useAtomCommand(serverEnvironment.checkJarvisBrain, {
+    label: "Jarvis startup brain check",
+    reportFailure: false,
+  });
+  const checkedBrainRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (pathname !== "/") {
+      return;
+    }
+
+    const connection = serverConfig?.jarvisBrain;
+    if (
+      !serverConfig?.environment.capabilities.jarvisCockpit ||
+      !connection?.enabled ||
+      connection.fixtureMode ||
+      !primaryEnvironment
+    ) {
+      return;
+    }
+
+    const checkKey = `${primaryEnvironment.environmentId}:${connection.apiBaseUrl}`;
+    if (checkedBrainRef.current === checkKey) {
+      return;
+    }
+    checkedBrainRef.current = checkKey;
+
+    let cancelled = false;
+    void checkJarvisBrain({
+      environmentId: primaryEnvironment.environmentId,
+      input: { apiBaseUrl: connection.apiBaseUrl },
+    }).then((result) => {
+      if (cancelled) {
+        return;
+      }
+      if (result._tag !== "Success" || !result.value.ok) {
+        void navigate({ to: "/settings/jarvis", replace: true });
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [checkJarvisBrain, navigate, pathname, primaryEnvironment, serverConfig]);
+
+  return null;
 }
 
 function DocumentTitleSync() {

@@ -91,18 +91,18 @@ describe("resolveSidebarSurfaceCopy", () => {
     expect(copy.createChildTooltipLabel("Mod+N")).toBe("New thread (Mod+N)");
   });
 
-  it("uses run/session vocabulary for Jarvis cockpit mode", () => {
+  it("uses project/session vocabulary for Jarvis cockpit mode", () => {
     const copy = resolveSidebarSurfaceCopy({ isJarvisCockpitMode: true });
 
-    expect(copy.topLevelLabel).toBe("Runs");
-    expect(copy.topLevelSortLabel).toBe("Sort runs");
+    expect(copy.topLevelLabel).toBe("Projects");
+    expect(copy.topLevelSortLabel).toBe("Sort projects");
     expect(copy.childSortLabel).toBe("Sort sessions");
     expect(copy.visibleChildLabel).toBe("Visible sessions");
-    expect(copy.emptyTopLevelLabel).toBe("No runs yet");
+    expect(copy.emptyTopLevelLabel).toBe("No projects yet");
     expect(copy.emptyChildLabel).toBe("No sessions yet");
-    expect(copy.groupedTopLevelCountLabel(2)).toBe("2 runs");
+    expect(copy.groupedTopLevelCountLabel(2)).toBe("2 projects");
     expect(copy.createChildActionLabel("Build worker sessions")).toBe(
-      "Start session for Build worker sessions",
+      "Start session in Build worker sessions",
     );
     expect(copy.createChildTooltipLabel(null)).toBe("New session");
   });

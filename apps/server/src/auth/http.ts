@@ -19,6 +19,7 @@ import {
   EnvironmentScopeRequiredError,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
+  type AuthBrowserSessionResult,
 } from "@t3tools/contracts";
 import type { AuthEnvironmentScope } from "@t3tools/contracts";
 import { parseAllowedOAuthScope } from "@t3tools/shared/oauthScope";
@@ -34,6 +35,8 @@ import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
+import * as ServerConfig from "../config.ts";
+import { isLoopbackHost, isWildcardHost } from "../startupAccess.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
@@ -151,6 +154,15 @@ export function failEnvironmentInternal(reason: EnvironmentInternalErrorReason, 
   });
 }
 
+function isLocalJarvisBrowserBootstrapAllowed(config: ServerConfig.ServerConfig["Service"]) {
+  return (
+    config.mode === "web" &&
+    config.jarvisCockpitEnabled &&
+    !isWildcardHost(config.host) &&
+    isLoopbackHost(config.host)
+  );
+}
+
 export const requireEnvironmentScope = Effect.fn("environment.auth.requireScope")(function* (
   scope: AuthEnvironmentScope,
 ) {
@@ -237,6 +249,51 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             failEnvironmentAuthInvalid(EnvironmentAuth.serverAuthCredentialReason(error)),
           ),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("browser_session_issuance_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "localJarvisBrowserSession",
+        Effect.fn("environment.auth.localJarvisBrowserSession")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            const serverConfig = yield* ServerConfig.ServerConfig;
+            if (!isLocalJarvisBrowserBootstrapAllowed(serverConfig)) {
+              return yield* failEnvironmentAuthInvalid("invalid_credential");
+            }
+
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            const issued = yield* sessions.issue({
+              method: "browser-session-cookie",
+              subject: "local-jarvis-cockpit",
+              scopes: AuthStandardClientScopes,
+              client: {
+                ...deriveAuthClientMetadata({ request }),
+                label: "Local Jarvis Cockpit",
+              },
+            });
+            const sessionCookies = yield* Effect.fromResult(
+              Cookies.set(Cookies.empty, sessions.cookieName, issued.token, {
+                expires: DateTime.toDate(issued.expiresAt),
+                httpOnly: true,
+                path: "/",
+                sameSite: "lax",
+              }),
+            ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")));
+
+            yield* HttpEffect.appendPreResponseHandler((_request, response) =>
+              Effect.succeed(HttpServerResponse.mergeCookies(response, sessionCookies)),
+            );
+            yield* appendCredentialResponseHeaders;
+            return {
+              authenticated: true,
+              scopes: issued.scopes,
+              sessionMethod: issued.method,
+              expiresAt: DateTime.toUtc(issued.expiresAt),
+            } satisfies AuthBrowserSessionResult;
+          },
+          Effect.catchIf(SessionStore.isSessionCredentialInternalError, (error) =>
             failEnvironmentInternal("browser_session_issuance_failed", error),
           ),
         ),

@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import * as NodeBuffer from "node:buffer";
+import { DEFAULT_SERVER_SETTINGS, JarvisProjectId, JarvisWorkerId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import {
@@ -171,6 +172,377 @@ it.effect("fixture client synthesizes distinct runs and sessions for start work"
     assert.strictEqual(events.items[1]?.type, "turn.started");
     assert.match(String(events.items[1]?.data.prompt ?? ""), /fixture demos/);
     assert.strictEqual(events.items.at(-1)?.type, "turn.completed");
+  }),
+);
+
+it.effect("fixture client routes start work to a selected worker", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisFixtureClient();
+
+    const result = yield* client.startWork({
+      title: "Mac mini routing",
+      prompt: "Verify selected worker routing.",
+      repo: "roughcoder/jarvis-cockpit",
+      worker_id: JarvisWorkerId.make("mac-mini-worker"),
+      branch_strategy: "auto",
+    });
+    const fixtureSnapshot = yield* client.getSnapshot();
+    const macMini = fixtureSnapshot.workers.find(
+      (worker) => worker.worker_id === "mac-mini-worker",
+    );
+    const macBook = fixtureSnapshot.workers.find((worker) => worker.worker_id === "macbook-worker");
+    const generatedSessionRef = result.session?.session_ref ?? "";
+    const resultSessionWorkerId =
+      result.session && "worker_id" in result.session ? result.session.worker_id : undefined;
+    const events = yield* client.getSessionEvents(generatedSessionRef);
+    const assistantMessage = events.items.find((event) => event.type === "assistant.message");
+
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(resultSessionWorkerId, JarvisWorkerId.make("mac-mini-worker"));
+    assert.strictEqual(fixtureSnapshot.sessions[0]?.worker_id, "mac-mini-worker");
+    assert.strictEqual(macMini?.capacity.active_sessions, 1);
+    assert.strictEqual(macBook?.capacity.active_sessions, 1);
+    assert.match(String(assistantMessage?.data.text ?? ""), /mac-mini-worker/);
+  }),
+);
+
+it.effect("configured fixture clients share process-local state", () =>
+  Effect.gen(function* () {
+    const clientA = makeJarvisClient({
+      jarvisCockpitEnabled: true,
+      jarvisApiBaseUrl: undefined,
+      jarvisApiToken: undefined,
+      jarvisFixtureMode: true,
+    });
+    const clientB = makeJarvisClient({
+      jarvisCockpitEnabled: true,
+      jarvisApiBaseUrl: undefined,
+      jarvisApiToken: undefined,
+      jarvisFixtureMode: true,
+    });
+
+    const result = yield* clientA.startWork({
+      title: "Shared fixture Mac mini",
+      prompt: "Verify configured fixture state is shared.",
+      repo: "roughcoder/jarvis-cockpit",
+      worker_id: JarvisWorkerId.make("mac-mini-worker"),
+      branch_strategy: "auto",
+    });
+    const fixtureSnapshot = yield* clientB.getSnapshot();
+
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(fixtureSnapshot.sessions[0]?.session_ref, result.session?.session_ref);
+    assert.strictEqual(
+      fixtureSnapshot.sessions[0]?.worker_id,
+      JarvisWorkerId.make("mac-mini-worker"),
+    );
+  }),
+);
+
+it.effect("fixture client mutates session state for stop and archive controls", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisFixtureClient();
+
+    const started = yield* client.startWork({
+      title: "Archive Mac mini fixture",
+      prompt: "Verify stop and archive update fixture state.",
+      repo: "roughcoder/jarvis-cockpit",
+      worker_id: JarvisWorkerId.make("mac-mini-worker"),
+      branch_strategy: "auto",
+    });
+    const sessionRef = started.session?.session_ref ?? "";
+    const stopped = yield* client.stopSession(sessionRef);
+    const afterStop = yield* client.getSnapshot();
+    const archived = yield* client.archiveSession(sessionRef);
+    const afterArchive = yield* client.getSnapshot();
+
+    assert.strictEqual(stopped.ok, true);
+    assert.strictEqual(
+      afterStop.sessions.find((session) => session.session_ref === sessionRef)?.status,
+      "stopped",
+    );
+    assert.strictEqual(
+      afterStop.workers.find((worker) => worker.worker_id === "mac-mini-worker")?.capacity
+        .active_sessions,
+      0,
+    );
+    assert.strictEqual(archived.ok, true);
+    assert.strictEqual(
+      afterArchive.sessions.find((session) => session.session_ref === sessionRef)?.archived_at,
+      now,
+    );
+  }),
+);
+
+it.effect("fixture client manages projects with multiple repositories", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisFixtureClient();
+
+    const created = yield* client.createProject({
+      id: JarvisProjectId.make("dogfood-fixture"),
+      name: "Dogfood Fixture",
+      repos: [
+        { name: "cockpit", remote: "roughcoder/jarvis-cockpit", default: true },
+        { name: "runtime", remote: "roughcoder/jarvis", default: false },
+      ],
+    });
+    const updated = yield* client.updateProject(created.id, {
+      name: "Dogfood Fixture Updated",
+      repos: [
+        { name: "cockpit", remote: "roughcoder/jarvis-cockpit", default: false },
+        { name: "runtime", remote: "roughcoder/jarvis", default: true },
+        { name: "docs", remote: "roughcoder/jarvis-docs", default: false },
+      ],
+    });
+    const archived = yield* client.archiveProject(created.id);
+    const activeProjects = yield* client.getProjects();
+    const allProjects = yield* client.getProjects({ includeArchived: true });
+
+    assert.strictEqual(created.repos.length, 2);
+    assert.strictEqual(updated.name, "Dogfood Fixture Updated");
+    assert.strictEqual(updated.repos.length, 3);
+    assert.strictEqual(updated.repos.find((repo) => repo.default)?.remote, "roughcoder/jarvis");
+    assert.strictEqual(archived.status, "archived");
+    assert.strictEqual(
+      activeProjects.some((project) => project.id === created.id),
+      false,
+    );
+    assert.strictEqual(
+      allProjects.some((project) => project.id === created.id),
+      true,
+    );
+  }),
+);
+
+it.effect("fixture client archives project conversations", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisFixtureClient();
+    const project = (yield* client.getProjects()).find(
+      (candidate) => candidate.id === "jarvis-cockpit",
+    );
+    assert.ok(project);
+
+    const thread = yield* client.createProjectThread(project.id, {
+      title: "Archive me",
+    });
+    const beforeArchive = yield* client.getProjectThreads(project.id);
+    const archived = yield* client.archiveProjectThread(project.id, thread.thread_id);
+    const afterArchive = yield* client.getProjectThreads(project.id);
+
+    assert.strictEqual(
+      beforeArchive.some((candidate) => candidate.thread_id === thread.thread_id),
+      true,
+    );
+    assert.strictEqual(archived.thread_id, thread.thread_id);
+    assert.strictEqual(
+      afterArchive.some((candidate) => candidate.thread_id === thread.thread_id),
+      false,
+    );
+  }),
+);
+
+it.effect("cockpit client accepts project conversation archive response shapes", () =>
+  Effect.gen(function* () {
+    const thread = {
+      thread_id: "thread_1",
+      project_id: "jarvis",
+      session_id: "project:jarvis:orchestrator:thread_1",
+      title: "Archive me",
+      created_at: now,
+      updated_at: now,
+      created_by: "fixture",
+    };
+    const responses = [
+      { thread },
+      thread,
+      { api_version: "v1", schema_version: 1, threads: [thread] },
+    ];
+    const requests: Array<{
+      readonly url: string;
+      readonly body: { readonly metadata?: unknown };
+    }> = [];
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      token: "worker-token",
+      fetch: async (url, init) => {
+        requests.push({
+          url: String(url),
+          body: init?.body ? JSON.parse(String(init.body)) : {},
+        });
+        return jsonResponse(responses.shift());
+      },
+    });
+
+    const envelope = yield* client.archiveProjectThread("jarvis", "thread_1");
+    const bare = yield* client.archiveProjectThread("jarvis", "thread_1");
+    const list = yield* client.archiveProjectThread("jarvis", "thread_1");
+
+    assert.strictEqual(envelope.thread_id, "thread_1");
+    assert.strictEqual(bare.thread_id, "thread_1");
+    assert.strictEqual(list.thread_id, "thread_1");
+    assert.deepStrictEqual(
+      requests.map((request) => request.url),
+      [
+        "http://jarvis.local:8787/v1/projects/jarvis/threads/thread_1/archive",
+        "http://jarvis.local:8787/v1/projects/jarvis/threads/thread_1/archive",
+        "http://jarvis.local:8787/v1/projects/jarvis/threads/thread_1/archive",
+      ],
+    );
+    assert.deepStrictEqual(requests[0]?.body.metadata, { surface: "jarvis-cockpit" });
+  }),
+);
+
+it.effect("cockpit client calls project registry write endpoints", () =>
+  Effect.gen(function* () {
+    const requests: Array<{
+      url: string;
+      method: string;
+      body:
+        | {
+            readonly metadata?: { readonly surface?: string };
+          }
+        | undefined;
+    }> = [];
+    const project = {
+      id: "dogfood",
+      name: "Dogfood",
+      peer_id: "project:dogfood",
+      aliases: [],
+      owner: "fixture",
+      members: ["fixture"],
+      visibility: "household",
+      status: "active",
+      repos: [{ name: "cockpit", remote: "roughcoder/jarvis-cockpit", default: true }],
+      links: { urls: [] },
+      files_root: "jarvis-workspace/projects/dogfood/files",
+    };
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      token: "worker-token",
+      fetch: async (url, init) => {
+        requests.push({
+          url: String(url),
+          method: init?.method ?? "GET",
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        });
+        return jsonResponse({ api_version: "v1", schema_version: 1, project });
+      },
+    });
+
+    yield* client.createProject({
+      id: JarvisProjectId.make("dogfood"),
+      name: "Dogfood",
+      repos: project.repos,
+    });
+    yield* client.updateProject("dogfood", { repos: project.repos });
+    yield* client.archiveProject("dogfood");
+    yield* client.deleteProject("dogfood");
+
+    assert.deepStrictEqual(
+      requests.map((request) => [request.method, request.url]),
+      [
+        ["POST", "http://jarvis.local:8787/v1/projects"],
+        ["PATCH", "http://jarvis.local:8787/v1/projects/dogfood"],
+        ["POST", "http://jarvis.local:8787/v1/projects/dogfood/archive"],
+        ["DELETE", "http://jarvis.local:8787/v1/projects/dogfood"],
+      ],
+    );
+    const firstRequest = requests[0];
+    assert.ok(firstRequest);
+    assert.strictEqual(firstRequest.body?.metadata, undefined);
+  }),
+);
+
+it.effect("cockpit client calls project memory and file endpoints", () =>
+  Effect.gen(function* () {
+    const requests: Array<{
+      url: string;
+      method: string;
+      contentType: string | null;
+      bodyKind: "json" | "form" | "none";
+      body?: unknown;
+    }> = [];
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      token: "worker-token",
+      fetch: async (url, init) => {
+        const headers = new Headers(init?.headers);
+        let bodyKind: "json" | "form" | "none" = "none";
+        let body: unknown;
+        if (init?.body instanceof FormData) {
+          bodyKind = "form";
+          body = {
+            title: init.body.get("title"),
+            artifact_type: init.body.get("artifact_type"),
+            file: await (init.body.get("file") as Blob).text(),
+          };
+        } else if (init?.body) {
+          bodyKind = "json";
+          body = JSON.parse(String(init.body));
+        }
+        requests.push({
+          url: String(url),
+          method: init?.method ?? "GET",
+          contentType: headers.get("content-type"),
+          bodyKind,
+          body,
+        });
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith("/files") && (init?.method ?? "GET") === "GET") {
+          return jsonResponse({
+            api_version: "v1",
+            schema_version: 1,
+            project_id: "dogfood",
+            files: [{ doc_id: "spec-1", title: "Spec", retracted: false }],
+          });
+        }
+        return jsonResponse({ ok: true, result: "done", doc_id: "spec-1" });
+      },
+    });
+
+    yield* client.recordProjectFinding("dogfood", { content: "Finding" });
+    yield* client.recordProjectDecision("dogfood", { content: "Decision" });
+    yield* client.forgetProjectMemory("dogfood", { query: "old", confirm: true });
+    yield* client.correctProjectMemory("dogfood", {
+      query: "old",
+      replacement: "new",
+      confirm: true,
+    });
+    const files = yield* client.getProjectFiles("dogfood", { includeRetracted: true });
+    yield* client.uploadProjectFile("dogfood", {
+      filename: "spec.md",
+      content_base64: NodeBuffer.Buffer.from("# Spec").toString("base64"),
+      title: "Spec",
+      artifact_type: "spec",
+      mime_type: "text/markdown",
+    });
+    yield* client.retractProjectFile("dogfood", "spec-1");
+
+    assert.deepStrictEqual(
+      requests.map((request) => [request.method, request.url]),
+      [
+        ["POST", "http://jarvis.local:8787/v1/projects/dogfood/findings"],
+        ["POST", "http://jarvis.local:8787/v1/projects/dogfood/decisions"],
+        ["POST", "http://jarvis.local:8787/v1/projects/dogfood/memory/forget"],
+        ["POST", "http://jarvis.local:8787/v1/projects/dogfood/memory/correct"],
+        ["GET", "http://jarvis.local:8787/v1/projects/dogfood/files?include_retracted=true"],
+        ["POST", "http://jarvis.local:8787/v1/projects/dogfood/files"],
+        ["DELETE", "http://jarvis.local:8787/v1/projects/dogfood/files/spec-1"],
+      ],
+    );
+    assert.strictEqual(files[0]?.doc_id, "spec-1");
+    assert.strictEqual(requests[0]?.bodyKind, "json");
+    assert.strictEqual(
+      (requests[0]?.body as { metadata?: { surface?: string } } | undefined)?.metadata?.surface,
+      "jarvis-cockpit",
+    );
+    assert.strictEqual(requests[5]?.bodyKind, "form");
+    assert.strictEqual(requests[5]?.contentType, null);
+    assert.deepStrictEqual(requests[5]?.body, {
+      title: "Spec",
+      artifact_type: "spec",
+      file: "# Spec",
+    });
   }),
 );
 
@@ -796,6 +1168,24 @@ it.effect("cockpit client preserves safe HTTP error bodies", () =>
   }),
 );
 
+it.effect("cockpit client includes Jarvis missing-authority details in HTTP errors", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async () =>
+        jsonResponse(
+          { error: { code: "forbidden", message: "missing authority: project.create" } },
+          { status: 403 },
+        ),
+    });
+
+    const error = yield* client.createProject({ name: "Nope" }).pipe(Effect.flip);
+    assert.ok(error instanceof JarvisClientError);
+    assert.strictEqual(error.status, 403);
+    assert.match(error.message, /HTTP 403: missing authority: project\.create/);
+  }),
+);
+
 it.effect("cockpit client preserves HTTP status for non-JSON error bodies", () =>
   Effect.gen(function* () {
     const client = makeJarvisCockpitClient({
@@ -811,6 +1201,36 @@ it.effect("cockpit client preserves HTTP status for non-JSON error bodies", () =
     assert.ok(error instanceof JarvisClientError);
     assert.strictEqual(error.status, 503);
     assert.match(error.responseBody ?? "", /upstream unavailable/);
+  }),
+);
+
+it.effect("cockpit client normalizes empty run ids in session events", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async () =>
+        jsonResponse({
+          items: [
+            {
+              event_id: "evt_1",
+              sequence: 1,
+              session_ref: sessionRef,
+              run_id: "",
+              type: "assistant.message",
+              occurred_at: now,
+              turn_id: "",
+              message_id: "",
+              data: {},
+            },
+          ],
+          cursor: null,
+          has_more: false,
+        }),
+    });
+
+    const page = yield* client.getSessionEvents(sessionRef);
+
+    assert.strictEqual(page.items[0]?.run_id, `session:${sessionRef}`);
   }),
 );
 

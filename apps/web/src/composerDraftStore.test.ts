@@ -979,9 +979,9 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(useComposerDraftStore.getState().getDraftThread(draftId)?.promotedTo).toEqual(
       canonicalThreadRef,
     );
-    expect(useComposerDraftStore.getState().getDraftThreadByRef(canonicalThreadRef)?.promotedTo).toEqual(
-      canonicalThreadRef,
-    );
+    expect(
+      useComposerDraftStore.getState().getDraftThreadByRef(canonicalThreadRef)?.promotedTo,
+    ).toEqual(canonicalThreadRef);
     expect(draftByKey(draftId)?.prompt).toBe("promote me");
   });
 

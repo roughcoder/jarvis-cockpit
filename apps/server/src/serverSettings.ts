@@ -511,16 +511,18 @@ const make = Effect.gen(function* () {
       }
 
       if (next.jarvis.apiToken.length > 0) {
-        yield* secretStore.set(JARVIS_API_TOKEN_SECRET_NAME, textEncoder.encode(next.jarvis.apiToken)).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ServerSettingsError({
-                settingsPath,
-                operation: "write-secret",
-                cause,
-              }),
-          ),
-        );
+        yield* secretStore
+          .set(JARVIS_API_TOKEN_SECRET_NAME, textEncoder.encode(next.jarvis.apiToken))
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({
+                  settingsPath,
+                  operation: "write-secret",
+                  cause,
+                }),
+            ),
+          );
         return {
           ...next,
           jarvis: {

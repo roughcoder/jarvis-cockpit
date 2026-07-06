@@ -182,7 +182,6 @@ function resolveHttpRequestBaseUrl(primaryTarget: PrimaryEnvironmentTarget): str
   if (
     !isCurrentOriginDevServer ||
     currentUrl.origin === targetUrl.origin ||
-    !isLoopbackHostname(currentUrl.hostname) ||
     !isLoopbackHostname(targetUrl.hostname)
   ) {
     return httpBaseUrl;
@@ -228,7 +227,6 @@ function resolveDevServerPrimaryTarget(
   if (
     !isCurrentOriginDevServer ||
     currentUrl.origin === httpTargetUrl.origin ||
-    !isLoopbackHostname(currentUrl.hostname) ||
     !isLoopbackHostname(httpTargetUrl.hostname) ||
     !isLoopbackHostname(wsTargetUrl.hostname)
   ) {

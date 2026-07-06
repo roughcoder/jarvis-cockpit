@@ -28,6 +28,7 @@ export const START_WORK_SEARCH_TERMS: ReadonlyArray<string> = [
 ];
 
 export type StartWorkSourceId =
+  | "create-project"
   | "describe-work"
   | "github-issue"
   | "linear-ticket"
@@ -101,6 +102,14 @@ export function buildStartWorkSources(
 
   return [
     {
+      id: "create-project",
+      value: "action:start-work:create-project",
+      title: "Create project",
+      description: "Add the first Jarvis project and its repositories",
+      searchTerms: ["create", "project", "new project", "add project", "jarvis", "repository"],
+      enabled: true,
+    },
+    {
       id: "describe-work",
       value: "action:start-work:describe",
       title: "Describe work",
@@ -139,11 +148,11 @@ export function buildStartWorkSources(
     {
       id: "continue-run",
       value: "action:start-work:continue-run",
-      title: "Continue run",
-      description: "Reopen the latest Jarvis run timeline",
+      title: "Continue work",
+      description: "Reopen the latest Jarvis work timeline",
       searchTerms: ["continue", "resume", "run", "latest"],
       enabled: input.hasResumableThread,
-      ...(input.hasResumableThread ? {} : { disabledHint: "No Jarvis runs to continue yet." }),
+      ...(input.hasResumableThread ? {} : { disabledHint: "No Jarvis work to continue yet." }),
     },
     {
       id: "register-repository",

@@ -46,8 +46,14 @@ export type ServerAuthPolicy = typeof ServerAuthPolicy.Type;
  *   shell can pair the renderer without a login screen
  * - `one-time-token`: a short-lived pairing token, suitable for manual pairing
  *   flows such as `/pair?token=...`
+ * - `local-jarvis-browser`: local Jarvis cockpit handoff for a same-machine
+ *   browser session before brain OAuth/setup runs
  */
-export const ServerAuthBootstrapMethod = Schema.Literals(["desktop-bootstrap", "one-time-token"]);
+export const ServerAuthBootstrapMethod = Schema.Literals([
+  "desktop-bootstrap",
+  "one-time-token",
+  "local-jarvis-browser",
+]);
 export type ServerAuthBootstrapMethod = typeof ServerAuthBootstrapMethod.Type;
 
 /**
