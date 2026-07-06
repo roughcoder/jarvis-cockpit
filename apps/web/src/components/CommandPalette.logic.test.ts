@@ -4,8 +4,11 @@ import type { Thread } from "../types";
 import {
   buildThreadActionItems,
   filterCommandPaletteGroups,
+  resolveCommandPaletteActiveGroups,
+  START_WORK_COMMAND_PALETTE_GROUP_VALUE,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
+import { buildStartWorkSources } from "./startWork.logic";
 
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const PROJECT_ID = ProjectId.make("project-1");
@@ -161,5 +164,75 @@ describe("buildThreadActionItems", () => {
     });
 
     expect(items.map((item) => item.value)).toEqual(["thread:thread-active"]);
+  });
+});
+
+describe("resolveCommandPaletteActiveGroups", () => {
+  it("replaces an open start-work view with worker availability from the latest snapshot", () => {
+    const staleStartWorkGroup: CommandPaletteGroup = {
+      value: START_WORK_COMMAND_PALETTE_GROUP_VALUE,
+      label: "Start work",
+      items: [
+        {
+          kind: "action",
+          value: "action:start-work:describe",
+          searchTerms: ["describe"],
+          title: "Describe work",
+          description: "No workers reported",
+          icon: null,
+          run: async () => undefined,
+        },
+      ],
+    };
+    const liveStartWorkGroup: CommandPaletteGroup = {
+      value: START_WORK_COMMAND_PALETTE_GROUP_VALUE,
+      label: "Start work",
+      items: buildStartWorkSources({
+        hasAnchorProject: true,
+        hasResumableThread: false,
+        routing: {
+          projects: [
+            {
+              id: "project_jarvis",
+              name: "Jarvis",
+              repos: [{ name: "jarvis", remote: "roughcoder/jarvis", default: true }],
+            },
+          ],
+          workers: [
+            {
+              worker_id: "brain-mac-mini",
+              display_name: "Brain Mac mini",
+              status: "online",
+              health: "healthy",
+              engines: [{ engine: "codex", status: "available" }],
+              repositories: [{ repo: "roughcoder/jarvis", can_start_work: true, is_default: true }],
+            },
+          ],
+        },
+      }).map((source) => ({
+        kind: "action" as const,
+        value: source.value,
+        searchTerms: source.searchTerms,
+        title: source.title,
+        description: source.description,
+        icon: null,
+        run: async () => undefined,
+      })),
+    };
+
+    const groups = resolveCommandPaletteActiveGroups({
+      currentView: { addonIcon: null, groups: [staleStartWorkGroup] },
+      rootGroups: [],
+      sourceSelectionViewValue: null,
+      refreshedSourceSelectionGroups: null,
+      refreshedStartWorkGroups: [liveStartWorkGroup],
+    });
+
+    const describeWork = groups[0]?.items.find(
+      (item) => item.value === "action:start-work:describe",
+    );
+    expect(describeWork?.description).toContain("Worker: Auto: Brain Mac mini");
+    expect(describeWork?.description).toContain("Compatible");
+    expect(describeWork?.description).not.toContain("No workers reported");
   });
 });

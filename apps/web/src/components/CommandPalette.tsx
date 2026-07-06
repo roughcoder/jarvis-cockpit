@@ -114,6 +114,8 @@ import {
   getCommandPaletteMode,
   ITEM_ICON_CLASS,
   RECENT_THREAD_LIMIT,
+  resolveCommandPaletteActiveGroups,
+  START_WORK_COMMAND_PALETTE_GROUP_VALUE,
 } from "./CommandPalette.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteResults } from "./CommandPaletteResults";
@@ -142,6 +144,7 @@ import { ComposerHandleContext, useComposerHandleContext } from "../composerHand
 import type { ChatComposerHandle } from "./chat/ChatComposer";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
+const JARVIS_WORKER_SNAPSHOT_POLL_MS = 2_000;
 
 function getLocalFileManagerName(platform: string): string {
   if (isMacPlatform(platform)) {
@@ -542,6 +545,20 @@ function OpenCommandPaletteDialog(props: {
     [jarvisProjectsQuery.data?.projects],
   );
   const jarvisWorkers = jarvisSnapshotQuery.data?.snapshot?.workers ?? [];
+  const jarvisSnapshotRefreshRef = useRef(jarvisSnapshotQuery.refresh);
+  useEffect(() => {
+    jarvisSnapshotRefreshRef.current = jarvisSnapshotQuery.refresh;
+  }, [jarvisSnapshotQuery.refresh]);
+  useEffect(() => {
+    if (jarvisStartEnvironmentId === null) {
+      return;
+    }
+    jarvisSnapshotRefreshRef.current();
+    const id = window.setInterval(() => {
+      jarvisSnapshotRefreshRef.current();
+    }, JARVIS_WORKER_SNAPSHOT_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [jarvisStartEnvironmentId]);
   const jarvisAnchorProject = useMemo(
     () =>
       projects.find(
@@ -1044,7 +1061,7 @@ function OpenCommandPaletteDialog(props: {
         }
       },
     }));
-    return [{ value: "start-work-sources", label: "Start work", items }];
+    return [{ value: START_WORK_COMMAND_PALETTE_GROUP_VALUE, label: "Start work", items }];
   }, [
     handleNewThread,
     jarvisAnchorProject,
@@ -1244,15 +1261,20 @@ function OpenCommandPaletteDialog(props: {
   const rootGroups = buildRootGroups({ actionItems, recentThreadItems });
   const sourceSelectionViewValue =
     addProjectEnvironmentId === null ? null : `sources:${addProjectEnvironmentId}`;
-  const activeGroups =
-    addProjectEnvironmentId !== null &&
-    currentView !== null &&
-    currentView.groups[0]?.value === sourceSelectionViewValue
+  const refreshedSourceSelectionGroups =
+    addProjectEnvironmentId !== null && currentView?.groups[0]?.value === sourceSelectionViewValue
       ? buildAddProjectSourceGroups(
           addProjectEnvironmentId,
           buildAddProjectRemoteSourceReadiness(sourceControlDiscovery.data),
         )
-      : (currentView?.groups ?? rootGroups);
+      : null;
+  const activeGroups = resolveCommandPaletteActiveGroups({
+    currentView,
+    rootGroups,
+    sourceSelectionViewValue,
+    refreshedSourceSelectionGroups,
+    refreshedStartWorkGroups: buildStartWorkGroups(),
+  });
 
   const filteredGroups = filterCommandPaletteGroups({
     activeGroups,
