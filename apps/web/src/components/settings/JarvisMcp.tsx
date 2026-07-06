@@ -69,8 +69,18 @@ export function JarvisMcpPanel() {
         })
       : null,
   );
+  const mcpStatusQuery = useEnvironmentQuery(
+    primaryEnvironment
+      ? serverEnvironment.jarvisMcpStatus({
+          environmentId: primaryEnvironment.environmentId,
+          input: {},
+        })
+      : null,
+  );
   const snapshot = snapshotQuery.data?.snapshot ?? null;
   const projects = projectsQuery.data?.projects ?? [];
+  const mcpServe = mcpStatusQuery.data?.status?.serve ?? null;
+  const mcpOauth = mcpServe?.oauth ?? null;
   const onlineWorkers = useMemo(
     () => snapshot?.workers.filter((worker) => worker.status === "online").length ?? 0,
     [snapshot?.workers],
@@ -78,6 +88,7 @@ export function JarvisMcpPanel() {
   const refresh = () => {
     snapshotQuery.refresh();
     projectsQuery.refresh();
+    mcpStatusQuery.refresh();
   };
 
   return (
@@ -90,7 +101,8 @@ export function JarvisMcpPanel() {
             <RefreshCwIcon
               className={cn(
                 "size-3",
-                (snapshotQuery.isPending || projectsQuery.isPending) && "animate-spin",
+                (snapshotQuery.isPending || projectsQuery.isPending || mcpStatusQuery.isPending) &&
+                  "animate-spin",
               )}
             />
             Refresh
@@ -114,7 +126,8 @@ export function JarvisMcpPanel() {
           </div>
         </div>
 
-        {(snapshotQuery.isPending || projectsQuery.isPending) && !snapshotQuery.data ? (
+        {(snapshotQuery.isPending || projectsQuery.isPending || mcpStatusQuery.isPending) &&
+        !snapshotQuery.data ? (
           <div className="flex items-center gap-2 px-4 py-5 text-sm text-muted-foreground sm:px-5">
             <Spinner className="size-4" />
             Loading Jarvis MCP status
@@ -133,6 +146,18 @@ export function JarvisMcpPanel() {
           </div>
         ) : null}
 
+        {mcpStatusQuery.data?.ok === false ? (
+          <div className="px-4 py-4 sm:px-5">
+            <Alert variant="warning">
+              <TriangleAlertIcon />
+              <AlertTitle>Jarvis MCP status unavailable</AlertTitle>
+              <AlertDescription>
+                {mcpStatusQuery.data.error?.message ?? "Jarvis did not return MCP status."}
+              </AlertDescription>
+            </Alert>
+          </div>
+        ) : null}
+
         <SettingsRow
           title="Codex MCP"
           description="Cockpit issues provider-scoped credentials for the native `t3-code` MCP server when a Codex session starts."
@@ -143,28 +168,62 @@ export function JarvisMcpPanel() {
         </SettingsRow>
 
         <SettingsRow
-          title="Jarvis MCP server"
+          title="Jarvis mcp-serve"
           description="Jarvis project and memory tools are exposed by the installed `jarvis mcp-serve` runtime."
-          status="Jarvis MCP tokens and server lifecycle are runtime-owned; Cockpit does not expose a token endpoint yet."
-          control={<Badge variant="outline">Runtime managed</Badge>}
+          status={
+            mcpServe
+              ? `${mcpServe.configured ? "Server configured" : "Server not configured"} · auth mode ${mcpServe.auth_mode ?? "not reported"}`
+              : "Jarvis has not reported MCP serve status."
+          }
+          control={
+            <Badge variant={mcpServe?.configured ? "success" : "warning"}>
+              {mcpServe?.configured ? "Reported" : "Missing"}
+            </Badge>
+          }
         >
           <div className="grid gap-2 pb-3 pt-3 md:grid-cols-2">
             <div className="rounded-md border bg-background/60 px-3 py-2">
               <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                <KeyRoundIcon className="size-3" />
-                Principal tokens
+                <ShieldCheckIcon className="size-3" />
+                OAuth
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
-                Per-principal MCP tokens live in Jarvis private runtime state.
+                {mcpOauth?.configured
+                  ? `Configured for issuer ${mcpOauth.issuer ?? "not reported"}.`
+                  : "Not configured or not reported by Jarvis."}
               </p>
             </div>
             <div className="rounded-md border bg-background/60 px-3 py-2">
               <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-                <ShieldCheckIcon className="size-3" />
-                Capability gate
+                <KeyRoundIcon className="size-3" />
+                Tokens
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
-                MCP calls run under the requester's Jarvis capabilities.
+                {mcpServe?.tokens
+                  ? `${mcpServe.tokens.active} active, ${mcpServe.tokens.revoked} revoked.`
+                  : "Token counts not reported."}
+              </p>
+            </div>
+            <div className="rounded-md border bg-background/60 px-3 py-2">
+              <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                <ServerIcon className="size-3" />
+                Metadata
+              </div>
+              <p className="mt-1 break-all text-xs text-muted-foreground">
+                {mcpOauth?.metadata_url ?? "Protected-resource metadata URL not reported."}
+              </p>
+            </div>
+            <div className="rounded-md border bg-background/60 px-3 py-2">
+              <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                <SquareMousePointerIcon className="size-3" />
+                Codex wiring
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {mcpServe
+                  ? mcpServe.codex_wired
+                    ? "Jarvis reports worker Codex sessions are wired."
+                    : (mcpServe.codex_wired_reason ?? "Jarvis reports Codex wiring missing.")
+                  : "Codex wiring status not reported."}
               </p>
             </div>
           </div>

@@ -33,6 +33,7 @@ import {
   JarvisProjectThreadTurnInput,
   JarvisProjectThreadTurnResult,
   JarvisProjectUpdateInput,
+  JarvisMcpStatus,
   JarvisRequestId,
   JarvisRestoreCheckpointInput,
   JarvisRun,
@@ -99,6 +100,7 @@ export class JarvisMissingContractError extends Error {
 
 export interface JarvisClient {
   readonly getCatalog: () => Effect.Effect<JarvisCockpitCatalog, JarvisClientError>;
+  readonly getMcpStatus: () => Effect.Effect<JarvisMcpStatus, JarvisClientError>;
   readonly getSnapshot: () => Effect.Effect<JarvisRunsSnapshot, JarvisClientError>;
   readonly getProjects: (options?: {
     readonly includeArchived?: boolean;
@@ -322,6 +324,7 @@ function makeJarvisClientFromConnection(input: {
 }
 
 const decodeCatalog = Schema.decodeUnknownEffect(JarvisCockpitCatalog);
+const decodeMcpStatus = Schema.decodeUnknownEffect(JarvisMcpStatus);
 const decodeSnapshot = Schema.decodeUnknownEffect(JarvisRunsSnapshot);
 const decodeControlResult = Schema.decodeUnknownEffect(JarvisControlResult);
 const decodeStartWorkValidationResult = Schema.decodeUnknownEffect(JarvisStartWorkValidationResult);
@@ -624,6 +627,10 @@ export function makeJarvisCockpitClient(input: {
     getCatalog: () =>
       requestJson("cockpit.catalog", "/v1/cockpit/catalog").pipe(
         Effect.flatMap(decodeFor("cockpit.catalog", decodeCatalog)),
+      ),
+    getMcpStatus: () =>
+      requestJson("mcp.status", "/v1/mcp/status").pipe(
+        Effect.flatMap(decodeFor("mcp.status", decodeMcpStatus)),
       ),
     getSnapshot: () =>
       requestJson("cockpit.snapshot", "/v1/cockpit/snapshot?sync=probe").pipe(
@@ -958,6 +965,7 @@ export function makeJarvisClient(config: {
 
     return {
       getCatalog: () => withClient("cockpit.catalog", (client) => client.getCatalog()),
+      getMcpStatus: () => withClient("mcp.status", (client) => client.getMcpStatus()),
       getSnapshot: () => withClient("cockpit.snapshot", (client) => client.getSnapshot()),
       getProjects: (options) =>
         withClient("projects.list", (client) => client.getProjects(options)),
@@ -1176,6 +1184,7 @@ function makeMissingConfigurationClient(message: string): JarvisClient {
 
   return {
     getCatalog: () => fail("jarvis.client.configure"),
+    getMcpStatus: () => fail("jarvis.client.configure"),
     getSnapshot: () => fail("jarvis.client.configure"),
     getProjects: () => fail("jarvis.client.configure"),
     getProject: () => fail("jarvis.client.configure"),
@@ -2044,6 +2053,27 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
           },
         },
         generated_at: now,
+      }),
+    getMcpStatus: () =>
+      Effect.succeed({
+        api_version: "v1",
+        schema_version: 1,
+        serve: {
+          configured: true,
+          host: "localhost",
+          port: 8795,
+          auth_mode: "hybrid",
+          oauth: {
+            configured: true,
+            issuer: "http://127.0.0.1:3773",
+            resource: "http://127.0.0.1:8795",
+            metadata_url: "http://127.0.0.1:8795/.well-known/oauth-protected-resource",
+          },
+          tokens: { active: 1, revoked: 0 },
+          codex_wired: false,
+          codex_wired_reason:
+            "worker Codex sessions do not currently inject the Jarvis MCP serve endpoint",
+        },
       }),
     getSnapshot: () => Effect.succeed(fixtureSnapshot),
     getProjects: (options) =>

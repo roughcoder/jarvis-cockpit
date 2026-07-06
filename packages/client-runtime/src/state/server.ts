@@ -198,6 +198,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:jarvis-snapshot",
       tag: WS_METHODS.serverGetJarvisSnapshot,
     }),
+    jarvisMcpStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:jarvis-mcp-status",
+      tag: WS_METHODS.serverGetJarvisMcpStatus,
+    }),
     jarvisProjects: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:jarvis-projects",
       tag: WS_METHODS.serverGetJarvisProjects,

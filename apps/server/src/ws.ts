@@ -367,6 +367,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverGetSettings, AuthOrchestrationReadScope],
   [WS_METHODS.serverUpdateSettings, AuthOrchestrationOperateScope],
   [WS_METHODS.serverCheckJarvisBrain, AuthOrchestrationReadScope],
+  [WS_METHODS.serverGetJarvisMcpStatus, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetJarvisSnapshot, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetJarvisProjects, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetJarvisProject, AuthOrchestrationReadScope],
@@ -1432,6 +1433,25 @@ const makeWsRpcLayer = (
                         : "Jarvis brain health check failed.",
                   })),
                 ),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverGetJarvisMcpStatus]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetJarvisMcpStatus,
+            jarvisClient.getMcpStatus().pipe(
+              Effect.map((status) => ({ ok: true as const, status })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false as const,
+                  error: {
+                    message: error.message,
+                    status: error.status,
+                  },
+                }),
               ),
             ),
             {

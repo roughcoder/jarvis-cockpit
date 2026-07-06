@@ -52,6 +52,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     jarvisApiToken: undefined,
     jarvisFixtureMode: false,
     jarvisFixtureEmptyProjects: false,
+    jarvisMcpResourceUrl: undefined,
   } as const;
   const defaultAuthConfig = (origin = "http://127.0.0.1:4888/") =>
     ({
@@ -696,6 +697,86 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       expect(resolved.host).toBe("::");
       expect(resolved.betterAuthUrl?.toString()).toBe("http://127.0.0.1:3773/");
       expect(resolved.jarvisOAuthIssuer).toBe("http://127.0.0.1:3773/");
+    }),
+  );
+
+  it.effect("resolves explicit Jarvis MCP resource URL", () =>
+    Effect.gen(function* () {
+      const { join } = yield* Path.Path;
+      const baseDir = join(NodeOS.tmpdir(), "t3-cli-config-jarvis-mcp-resource-base");
+
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.some("web"),
+          port: Option.some(3773),
+          host: Option.some("127.0.0.1"),
+          baseDir: Option.some(baseDir),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: {
+                  JARVIS_MCP_RESOURCE_URL: "http://127.0.0.1:8795/",
+                },
+              }),
+            ),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      expect(resolved.jarvisMcpResourceUrl).toBe("http://127.0.0.1:8795");
+    }),
+  );
+
+  it.effect("uses URL-shaped Jarvis OAuth audience as MCP resource fallback", () =>
+    Effect.gen(function* () {
+      const { join } = yield* Path.Path;
+      const baseDir = join(NodeOS.tmpdir(), "t3-cli-config-jarvis-mcp-audience-base");
+
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.some("web"),
+          port: Option.some(3773),
+          host: Option.some("127.0.0.1"),
+          baseDir: Option.some(baseDir),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: {
+                  JARVIS_OAUTH_AUDIENCE: "http://127.0.0.1:8795/",
+                },
+              }),
+            ),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      expect(resolved.jarvisMcpResourceUrl).toBe("http://127.0.0.1:8795");
     }),
   );
 });

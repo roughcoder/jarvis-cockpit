@@ -69,6 +69,7 @@ const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
 const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
 
 const PROVIDER = ProviderDriverKind.make("codex");
+const JARVIS_MCP_SERVER_NAME = "jarvis";
 
 export interface CodexAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
@@ -90,6 +91,22 @@ interface CodexAdapterSessionContext {
   readonly runtime: CodexSessionRuntimeShape;
   readonly eventFiber: Fiber.Fiber<void, never>;
   stopped: boolean;
+}
+
+function jarvisMcpServerUrl(config: ServerConfig["Service"]): string | undefined {
+  const resource = config.jarvisMcpResourceUrl?.trim();
+  if (!resource) {
+    return undefined;
+  }
+  try {
+    const url = new URL(resource);
+    url.pathname = `${url.pathname.replace(/\/+$/, "")}/mcp`;
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return undefined;
+  }
 }
 
 function mapCodexRuntimeError(
@@ -1365,6 +1382,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
+  const jarvisMcpUrl = jarvisMcpServerUrl(serverConfig);
 
   const startSession: CodexAdapterShape["startSession"] = (input) =>
     Effect.scoped(
@@ -1402,17 +1420,31 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             ? { model: input.modelSelection.model }
             : {}),
           ...(serviceTier ? { serviceTier } : {}),
-          ...(mcpSession
+          ...(mcpSession || jarvisMcpUrl
             ? {
                 environment: {
                   ...(options?.environment ?? process.env),
-                  T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(/^Bearer\s+/, ""),
+                  ...(mcpSession
+                    ? {
+                        T3_MCP_BEARER_TOKEN: mcpSession.authorizationHeader.replace(
+                          /^Bearer\s+/,
+                          "",
+                        ),
+                      }
+                    : {}),
                 },
                 appServerArgs: [
-                  "-c",
-                  `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
-                  "-c",
-                  'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+                  ...(mcpSession
+                    ? [
+                        "-c",
+                        `mcp_servers.t3-code.url=${mcpSession.endpoint}`,
+                        "-c",
+                        'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"',
+                      ]
+                    : []),
+                  ...(jarvisMcpUrl
+                    ? ["-c", `mcp_servers.${JARVIS_MCP_SERVER_NAME}.url=${jarvisMcpUrl}`]
+                    : []),
                 ],
               }
             : {}),

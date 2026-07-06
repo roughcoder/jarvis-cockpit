@@ -80,6 +80,7 @@ export class ServerConfig extends Context.Service<
     readonly jarvisApiToken: string | undefined;
     readonly jarvisFixtureMode: boolean;
     readonly jarvisFixtureEmptyProjects?: boolean | undefined;
+    readonly jarvisMcpResourceUrl?: string | undefined;
     readonly betterAuthUrl?: URL | undefined;
     readonly betterAuthSecret?: string | undefined;
     readonly jarvisOAuthIssuer?: string | undefined;
@@ -191,6 +192,7 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     jarvisApiToken: undefined,
     jarvisFixtureMode: false,
     jarvisFixtureEmptyProjects: false,
+    jarvisMcpResourceUrl: undefined,
     betterAuthUrl: undefined,
     betterAuthSecret: undefined,
     jarvisOAuthIssuer: undefined,

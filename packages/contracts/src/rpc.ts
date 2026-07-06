@@ -161,6 +161,7 @@ import {
   JarvisProjectThreadTurnInput,
   JarvisProjectThreadTurnRpcResult,
   JarvisProjectUpdateInput,
+  JarvisMcpStatusResult,
   JarvisStartWorkInput,
   JarvisStartWorkValidationRpcResult,
 } from "./jarvis.ts";
@@ -241,6 +242,7 @@ export const WS_METHODS = {
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverCheckJarvisBrain: "server.checkJarvisBrain",
+  serverGetJarvisMcpStatus: "server.getJarvisMcpStatus",
   serverGetJarvisSnapshot: "server.getJarvisSnapshot",
   serverGetJarvisProjects: "server.getJarvisProjects",
   serverGetJarvisProject: "server.getJarvisProject",
@@ -346,6 +348,12 @@ export const WsServerCheckJarvisBrainRpc = Rpc.make(WS_METHODS.serverCheckJarvis
 export const WsServerGetJarvisSnapshotRpc = Rpc.make(WS_METHODS.serverGetJarvisSnapshot, {
   payload: Schema.Struct({}),
   success: JarvisCockpitSnapshotResult,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerGetJarvisMcpStatusRpc = Rpc.make(WS_METHODS.serverGetJarvisMcpStatus, {
+  payload: Schema.Struct({}),
+  success: JarvisMcpStatusResult,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
@@ -952,6 +960,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
   WsServerCheckJarvisBrainRpc,
+  WsServerGetJarvisMcpStatusRpc,
   WsServerGetJarvisSnapshotRpc,
   WsServerGetJarvisProjectsRpc,
   WsServerGetJarvisProjectRpc,

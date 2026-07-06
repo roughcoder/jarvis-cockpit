@@ -225,6 +225,76 @@ export const JarvisCockpitCatalog = Schema.Struct({
 });
 export type JarvisCockpitCatalog = typeof JarvisCockpitCatalog.Type;
 
+export const JarvisMcpServeStatus = Schema.Struct({
+  configured: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  host: OptionalPossiblyEmptyPublicString,
+  port: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  auth_mode: Schema.optional(Schema.NullOr(Schema.Literals(["legacy", "oauth", "hybrid"]))),
+  oauth: Schema.optionalKey(
+    Schema.Struct({
+      configured: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+      issuer: OptionalPossiblyEmptyPublicString,
+      resource: OptionalPossiblyEmptyPublicString,
+      metadata_url: OptionalPossiblyEmptyPublicString,
+    }),
+  ).pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({
+        configured: false,
+        issuer: null,
+        resource: null,
+        metadata_url: null,
+      }),
+    ),
+  ),
+  tokens: Schema.optionalKey(
+    Schema.Struct({
+      active: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+      revoked: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+    }),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed({ active: 0, revoked: 0 }))),
+  codex_wired: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  codex_wired_reason: OptionalPossiblyEmptyPublicString,
+});
+export type JarvisMcpServeStatus = typeof JarvisMcpServeStatus.Type;
+
+export const JarvisMcpStatus = Schema.Struct({
+  api_version: Schema.optional(Schema.Literal("v1")),
+  schema_version: Schema.optional(Schema.Number),
+  serve: Schema.optionalKey(JarvisMcpServeStatus).pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({
+        configured: false,
+        host: null,
+        port: null,
+        auth_mode: null,
+        oauth: {
+          configured: false,
+          issuer: null,
+          resource: null,
+          metadata_url: null,
+        },
+        tokens: { active: 0, revoked: 0 },
+        codex_wired: false,
+        codex_wired_reason: "Jarvis did not report MCP serve status.",
+      }),
+    ),
+  ),
+});
+export type JarvisMcpStatus = typeof JarvisMcpStatus.Type;
+
+export const JarvisMcpStatusResult = Schema.Struct({
+  ok: Schema.Boolean,
+  status: Schema.optionalKey(JarvisMcpStatus),
+  error: Schema.optionalKey(
+    Schema.Struct({
+      message: Schema.String,
+      status: Schema.optional(Schema.NullOr(Schema.Number)),
+    }),
+  ),
+});
+export type JarvisMcpStatusResult = typeof JarvisMcpStatusResult.Type;
+
 export const JarvisProjectRepository = Schema.Struct({
   name: TrimmedNonEmptyString,
   remote: TrimmedNonEmptyString,

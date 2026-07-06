@@ -142,6 +142,10 @@ const EnvServerConfig = Config.all({
   jarvisFixtureEmptyProjects: Config.boolean("JARVIS_FIXTURE_EMPTY_PROJECTS").pipe(
     Config.withDefault(false),
   ),
+  jarvisMcpResourceUrl: Config.string("JARVIS_MCP_RESOURCE_URL").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   betterAuthUrl: Config.url("BETTER_AUTH_URL").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -415,6 +419,9 @@ export const resolveServerConfig = (
       jarvisApiToken: env.jarvisApiToken,
       jarvisFixtureMode: env.jarvisFixtureMode,
       jarvisFixtureEmptyProjects: env.jarvisFixtureEmptyProjects,
+      jarvisMcpResourceUrl:
+        normalizeOptionalUrlString(env.jarvisMcpResourceUrl) ??
+        normalizeOptionalUrlString(env.jarvisOAuthAudience),
       betterAuthUrl,
       betterAuthSecret: env.betterAuthSecret,
       jarvisOAuthIssuer:
@@ -451,6 +458,18 @@ export const resolveCliAuthConfig = (
   );
 
 const DurationShorthandPattern = /^(?<value>\d+)(?<unit>ms|s|m|h|d|w)$/i;
+
+function normalizeOptionalUrlString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  try {
+    return new URL(trimmed).toString().replace(/\/$/, "");
+  } catch {
+    return undefined;
+  }
+}
 
 const parseDurationInput = (value: string): Duration.Duration | null => {
   const trimmed = value.trim();
