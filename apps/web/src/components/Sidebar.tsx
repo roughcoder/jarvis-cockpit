@@ -135,6 +135,8 @@ import {
 import {
   buildProjectConversationRouteParams,
   formatProjectConversationFailure,
+  resolveProjectConversationRouteParams,
+  type ProjectConversationRouteParams,
 } from "../jarvisProjectConversations.logic";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { formatRelativeTimeLabel } from "../timestampFormat";
@@ -206,6 +208,7 @@ import {
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
+  resolveSidebarProjectConversationActiveThreadId,
   resolveSidebarStageBadgeLabel,
   resolveSidebarSurfaceCopy,
   resolveThreadRowClassName,
@@ -929,6 +932,7 @@ interface SidebarProjectThreadListProps {
   isThreadListExpanded: boolean;
   projectCwd: string;
   activeRouteThreadKey: string | null;
+  activeProjectConversationRoute: ProjectConversationRouteParams | null;
   threadJumpLabelByKey: ReadonlyMap<string, string>;
   appSettingsConfirmThreadArchive: boolean;
   renamingThreadKey: string | null;
@@ -970,10 +974,12 @@ function SidebarJarvisProjectConversations({
   environmentId,
   projectId,
   projectName,
+  activeThreadId,
 }: {
   readonly environmentId: EnvironmentId;
   readonly projectId: string;
   readonly projectName: string;
+  readonly activeThreadId: string | null;
 }) {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -1103,22 +1109,43 @@ function SidebarJarvisProjectConversations({
         disabled={false}
       />
       {conversations.map((conversation) => (
-        <SidebarMenuSubItem
+        <SidebarProjectConversationRow
           key={conversation.thread_id}
-          className="w-full"
-          data-thread-selection-safe
-        >
-          <button
-            type="button"
-            className="flex h-6 w-full min-w-0 items-center gap-1.5 rounded-md px-2 text-left text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-            onClick={() => navigateToProjectConversation(conversation)}
-          >
-            <MessageSquareIcon className="size-3 shrink-0 text-muted-foreground/60" />
-            <span className="min-w-0 flex-1 truncate text-xs">{conversation.title}</span>
-          </button>
-        </SidebarMenuSubItem>
+          title={conversation.title}
+          isActive={activeThreadId === conversation.thread_id}
+          onClick={() => navigateToProjectConversation(conversation)}
+        />
       ))}
     </>
+  );
+}
+
+function SidebarProjectConversationRow({
+  title,
+  isActive,
+  onClick,
+}: {
+  readonly title: string;
+  readonly isActive: boolean;
+  readonly onClick: () => void;
+}) {
+  const rowButtonRender = useMemo(() => <button type="button" />, []);
+
+  return (
+    <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
+      <SidebarMenuSubButton
+        render={rowButtonRender}
+        size="sm"
+        isActive={isActive}
+        className={`${resolveThreadRowClassName({ isActive, isSelected: false })} gap-1.5`}
+        onClick={onClick}
+      >
+        <MessageSquareIcon
+          className={`size-3 shrink-0 ${isActive ? "text-foreground/72" : "text-muted-foreground/60"}`}
+        />
+        <span className="min-w-0 flex-1 truncate text-xs">{title}</span>
+      </SidebarMenuSubButton>
+    </SidebarMenuSubItem>
   );
 }
 
@@ -1129,17 +1156,22 @@ function SidebarProjectConversationCreateRow({
   readonly onCreate: () => void;
   readonly disabled: boolean;
 }) {
+  const createButtonRender = useMemo(
+    () => <button type="button" disabled={disabled} />,
+    [disabled],
+  );
+
   return (
     <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
-      <button
-        type="button"
-        className="flex h-6 w-full min-w-0 items-center gap-1.5 rounded-md px-2 text-left text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+      <SidebarMenuSubButton
+        render={createButtonRender}
+        size="sm"
+        className={`${resolveThreadRowClassName({ isActive: false, isSelected: false })} gap-1.5`}
         onClick={onCreate}
-        disabled={disabled}
       >
         <SquarePenIcon className="size-3 shrink-0 text-muted-foreground/60" />
         <span className="min-w-0 flex-1 truncate text-xs">New conversation</span>
-      </button>
+      </SidebarMenuSubButton>
     </SidebarMenuSubItem>
   );
 }
@@ -1162,6 +1194,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     isThreadListExpanded,
     projectCwd,
     activeRouteThreadKey,
+    activeProjectConversationRoute,
     threadJumpLabelByKey,
     appSettingsConfirmThreadArchive,
     renamingThreadKey,
@@ -1189,6 +1222,11 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
   } = props;
   const showMoreButtonRender = useMemo(() => <button type="button" />, []);
   const showLessButtonRender = useMemo(() => <button type="button" />, []);
+  const activeProjectConversationThreadId = resolveSidebarProjectConversationActiveThreadId({
+    route: activeProjectConversationRoute,
+    environmentId: projectEnvironmentId,
+    projectId: jarvisRegistryProjectId,
+  });
 
   return (
     <SidebarMenuSub
@@ -1200,6 +1238,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
           environmentId={projectEnvironmentId}
           projectId={jarvisRegistryProjectId}
           projectName={projectDisplayName}
+          activeThreadId={activeProjectConversationThreadId}
         />
       ) : null}
       {shouldShowThreadPanel && showEmptyThreadState ? (
@@ -1287,6 +1326,7 @@ interface SidebarProjectItemProps {
   project: SidebarProjectView;
   isThreadListExpanded: boolean;
   activeRouteThreadKey: string | null;
+  activeProjectConversationRoute: ProjectConversationRouteParams | null;
   newThreadShortcutLabel: string | null;
   handleNewThread: ReturnType<typeof useNewThreadHandler>;
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
@@ -1309,6 +1349,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     project,
     isThreadListExpanded,
     activeRouteThreadKey,
+    activeProjectConversationRoute,
     newThreadShortcutLabel,
     handleNewThread,
     archiveThread,
@@ -2620,6 +2661,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         isThreadListExpanded={isThreadListExpanded}
         projectCwd={project.workspaceRoot}
         activeRouteThreadKey={activeRouteThreadKey}
+        activeProjectConversationRoute={activeProjectConversationRoute}
         threadJumpLabelByKey={threadJumpLabelByKey}
         appSettingsConfirmThreadArchive={appSettingsConfirmThreadArchive}
         renamingThreadKey={renamingThreadKey}
@@ -3190,6 +3232,10 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
   props: SidebarProjectsContentProps,
 ) {
   const { environments: sidebarEnvironments } = useEnvironments();
+  const routeProjectConversationRef = useParams({
+    strict: false,
+    select: (params) => resolveProjectConversationRouteParams(params),
+  });
   const isJarvisCockpitMode = sidebarEnvironments.some((environment) =>
     isJarvisCockpitEnvironment(environment.serverConfig ?? undefined),
   );
@@ -3398,6 +3444,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         activeRouteThreadKey={
                           activeRouteProjectKey === project.projectKey ? routeThreadKey : null
                         }
+                        activeProjectConversationRoute={routeProjectConversationRef}
                         newThreadShortcutLabel={newThreadShortcutLabel}
                         handleNewThread={handleNewThread}
                         archiveThread={archiveThread}
@@ -3432,6 +3479,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 activeRouteThreadKey={
                   activeRouteProjectKey === project.projectKey ? routeThreadKey : null
                 }
+                activeProjectConversationRoute={routeProjectConversationRef}
                 newThreadShortcutLabel={newThreadShortcutLabel}
                 handleNewThread={handleNewThread}
                 archiveThread={archiveThread}
@@ -3472,6 +3520,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                   activeRouteThreadKey={
                     activeRouteProjectKey === project.projectKey ? routeThreadKey : null
                   }
+                  activeProjectConversationRoute={routeProjectConversationRef}
                   newThreadShortcutLabel={newThreadShortcutLabel}
                   handleNewThread={handleNewThread}
                   archiveThread={archiveThread}

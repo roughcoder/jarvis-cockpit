@@ -13,6 +13,7 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
+  resolveSidebarProjectConversationActiveThreadId,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
   resolveSidebarStageBadgeLabel,
@@ -109,6 +110,38 @@ describe("resolveSidebarSurfaceCopy", () => {
       "Start work in Build worker sessions",
     );
     expect(copy.createChildTooltipLabel(null)).toBe("Start work");
+  });
+});
+
+describe("resolveSidebarProjectConversationActiveThreadId", () => {
+  it("selects only the project conversation row matching the active Jarvis route", () => {
+    const route = {
+      environmentId: "env-1",
+      projectId: "jarvis",
+      threadId: "thread_123",
+    };
+
+    expect(
+      resolveSidebarProjectConversationActiveThreadId({
+        route,
+        environmentId: "env-1",
+        projectId: "jarvis",
+      }),
+    ).toBe("thread_123");
+    expect(
+      resolveSidebarProjectConversationActiveThreadId({
+        route,
+        environmentId: "env-1",
+        projectId: "cockpit",
+      }),
+    ).toBeNull();
+    expect(
+      resolveSidebarProjectConversationActiveThreadId({
+        route: null,
+        environmentId: "env-1",
+        projectId: "jarvis",
+      }),
+    ).toBeNull();
   });
 });
 
