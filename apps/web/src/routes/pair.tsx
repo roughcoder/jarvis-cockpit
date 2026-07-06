@@ -2,6 +2,7 @@ import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 
 import {
   HostedPairingRouteSurface,
+  JarvisBootstrapFailedSurface,
   PairingPendingSurface,
   PairingRouteSurface,
 } from "../components/auth/PairingRouteSurface";
@@ -36,6 +37,10 @@ function PairRouteView() {
 
   if (authGateState.status === "hosted-pairing") {
     return <HostedPairingRouteSurface />;
+  }
+
+  if (authGateState.status === "jarvis-bootstrap-failed") {
+    return <JarvisBootstrapFailedSurface errorMessage={authGateState.errorMessage} />;
   }
 
   return (

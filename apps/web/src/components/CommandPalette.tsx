@@ -120,7 +120,7 @@ import { CommandPaletteResults } from "./CommandPaletteResults";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
-import { primaryServerKeybindingsAtom } from "../state/server";
+import { primaryServerConfigAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { resolveShortcutCommand } from "../keybindings";
 import {
   Command,
@@ -485,6 +485,7 @@ function OpenCommandPaletteDialog(props: {
   const projects = useProjects();
   const threads = useThreadShells();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const primaryServerConfig = useAtomValue(primaryServerConfigAtom);
   const [viewStack, setViewStack] = useState<CommandPaletteView[]>([]);
   const currentView = viewStack.at(-1) ?? null;
   const [browseGeneration, setBrowseGeneration] = useState(0);
@@ -506,6 +507,7 @@ function OpenCommandPaletteDialog(props: {
     return ids;
   }, [environments]);
   const isJarvisCockpitMode = jarvisCockpitEnvironmentIds.size > 0;
+  const jarvisFixtureMode = primaryServerConfig?.jarvisBrain?.fixtureMode === true;
   const jarvisAnchorProject = useMemo(
     () =>
       projects.find(
@@ -954,6 +956,7 @@ function OpenCommandPaletteDialog(props: {
     const items: CommandPaletteActionItem[] = buildStartWorkSources({
       hasAnchorProject: jarvisAnchorProject !== null,
       hasResumableThread: latestJarvisThread !== null,
+      fixtureMode: jarvisFixtureMode,
     }).map((source) => ({
       kind: "action",
       value: source.value,
@@ -1004,7 +1007,7 @@ function OpenCommandPaletteDialog(props: {
       },
     }));
     return [{ value: "start-work-sources", label: "Start work", items }];
-  }, [handleNewThread, jarvisAnchorProject, latestJarvisThread, navigate]);
+  }, [handleNewThread, jarvisAnchorProject, jarvisFixtureMode, latestJarvisThread, navigate]);
 
   const openStartWorkFlow = useCallback(() => {
     pushPaletteView({

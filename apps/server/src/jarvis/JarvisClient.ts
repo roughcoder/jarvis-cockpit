@@ -232,6 +232,7 @@ type JarvisConnectionConfig = Pick<
   ServerConfig["Service"],
   "jarvisCockpitEnabled" | "jarvisApiBaseUrl" | "jarvisApiToken" | "jarvisFixtureMode"
 > &
+  Partial<Pick<ServerConfig["Service"], "jarvisFixtureEmptyProjects">> &
   Partial<
     Pick<
       ServerConfig["Service"],
@@ -299,7 +300,9 @@ function makeJarvisClientFromConnection(input: {
   readonly oauthAccessToken?: JarvisAccessTokenProvider;
 }): JarvisClient {
   if (input.config.jarvisFixtureMode) {
-    return makeSharedJarvisFixtureClient();
+    return makeSharedJarvisFixtureClient(
+      input.config.jarvisFixtureEmptyProjects === true ? { emptyProjects: true } : undefined,
+    );
   }
   if (!input.config.jarvisCockpitEnabled) {
     return makeMissingConfigurationClient("Jarvis cockpit mode is disabled.");
@@ -849,11 +852,14 @@ export function makeJarvisClient(config: {
   readonly jarvisApiBaseUrl: URL | undefined;
   readonly jarvisApiToken: string | undefined;
   readonly jarvisFixtureMode: boolean;
+  readonly jarvisFixtureEmptyProjects?: boolean | undefined;
   readonly getSettings?: Effect.Effect<ServerSettings, ServerSettingsError>;
   readonly oauthAccessToken?: JarvisAccessTokenProvider;
 }): JarvisClient {
   if (config.jarvisFixtureMode) {
-    return makeSharedJarvisFixtureClient();
+    return makeSharedJarvisFixtureClient({
+      emptyProjects: config.jarvisFixtureEmptyProjects === true,
+    });
   }
   if (config.getSettings !== undefined) {
     const getSettings = config.getSettings;
@@ -1148,7 +1154,12 @@ function makeMissingConfigurationClient(message: string): JarvisClient {
   };
 }
 
-export function makeJarvisFixtureClient(): JarvisClient {
+export interface JarvisFixtureClientOptions {
+  readonly emptyProjects?: boolean;
+}
+
+export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): JarvisClient {
+  const emptyProjects = options?.emptyProjects === true;
   const now = "2026-07-01T12:00:00+00:00";
   const sessionRef = JarvisSessionRef.make("sessref_macbook-worker_sess_fixture_codex");
   const runId = JarvisRunId.make("run_fixture_dashboard");
@@ -1211,37 +1222,39 @@ export function makeJarvisFixtureClient(): JarvisClient {
   };
   const jarvisProjectId = JarvisProjectId.make("jarvis");
   const cockpitProjectId = JarvisProjectId.make("jarvis-cockpit");
-  let projects: ReadonlyArray<JarvisProject> = [
-    {
-      id: cockpitProjectId,
-      name: "Jarvis Cockpit",
-      peer_id: "project:jarvis-cockpit",
-      aliases: ["cockpit", "t3 cockpit"],
-      owner: "neil",
-      members: ["neil"],
-      visibility: "household",
-      status: "active",
-      repos: [
-        { name: "cockpit", remote: "roughcoder/jarvis-cockpit", default: true },
-        { name: "runtime", remote: "roughcoder/jarvis", default: false },
-      ],
-      links: { jira: "", urls: [] },
-      files_root: "jarvis-workspace/projects/jarvis-cockpit/files",
-    },
-    {
-      id: jarvisProjectId,
-      name: "Jarvis Runtime",
-      peer_id: "project:jarvis",
-      aliases: ["jarvis"],
-      owner: "neil",
-      members: ["neil"],
-      visibility: "household",
-      status: "active",
-      repos: [{ name: "runtime", remote: "roughcoder/jarvis", default: true }],
-      links: { jira: "", urls: [] },
-      files_root: "jarvis-workspace/projects/jarvis/files",
-    },
-  ];
+  let projects: ReadonlyArray<JarvisProject> = emptyProjects
+    ? []
+    : [
+        {
+          id: cockpitProjectId,
+          name: "Jarvis Cockpit",
+          peer_id: "project:jarvis-cockpit",
+          aliases: ["cockpit", "t3 cockpit"],
+          owner: "neil",
+          members: ["neil"],
+          visibility: "household",
+          status: "active",
+          repos: [
+            { name: "cockpit", remote: "roughcoder/jarvis-cockpit", default: true },
+            { name: "runtime", remote: "roughcoder/jarvis", default: false },
+          ],
+          links: { jira: "", urls: [] },
+          files_root: "jarvis-workspace/projects/jarvis-cockpit/files",
+        },
+        {
+          id: jarvisProjectId,
+          name: "Jarvis Runtime",
+          peer_id: "project:jarvis",
+          aliases: ["jarvis"],
+          owner: "neil",
+          members: ["neil"],
+          visibility: "household",
+          status: "active",
+          repos: [{ name: "runtime", remote: "roughcoder/jarvis", default: true }],
+          links: { jira: "", urls: [] },
+          files_root: "jarvis-workspace/projects/jarvis/files",
+        },
+      ];
   const projectThreads = new Map<string, JarvisProjectThread[]>([
     [
       cockpitProjectId,
@@ -1323,8 +1336,8 @@ export function makeJarvisFixtureClient(): JarvisClient {
       synced_at: now,
       errors: [],
     },
-    runs: [run],
-    sessions: [session],
+    runs: emptyProjects ? [] : [run],
+    sessions: emptyProjects ? [] : [session],
     workers: [
       {
         worker_id: "macbook-worker" as JarvisWorkerSession["worker_id"],
@@ -1351,7 +1364,7 @@ export function makeJarvisFixtureClient(): JarvisClient {
         ],
         capacity: {
           max_sessions: 4,
-          active_sessions: 1,
+          active_sessions: emptyProjects ? 0 : 1,
           queued_sessions: 0,
         },
         repositories: [
@@ -1419,52 +1432,54 @@ export function makeJarvisFixtureClient(): JarvisClient {
         public_metadata: {},
       },
     ],
-    artifacts: [
-      {
-        artifact_id: "artifact_fixture_branch" as JarvisRun["primary_artifact_ids"][number],
-        run_id: run.run_id,
-        session_ref: session.session_ref,
-        kind: "branch",
-        provider: "github",
-        external_id: null,
-        is_primary: false,
-        visibility: "public",
-        title: "jarvis/fixture-agentic-cockpit",
-        status: "ready",
-        summary: "Fixture branch for mocked cockpit mode",
-        url: "https://github.com/roughcoder/jarvis/tree/jarvis/fixture-agentic-cockpit",
-        branch: "jarvis/fixture-agentic-cockpit",
-        commit_sha: null,
-        command: null,
-        started_at: null,
-        completed_at: null,
-        created_at: now,
-        updated_at: now,
-        metadata: {},
-      },
-      {
-        artifact_id: "artifact_fixture_pr" as JarvisRun["primary_artifact_ids"][number],
-        run_id: run.run_id,
-        session_ref: session.session_ref,
-        kind: "pull_request",
-        provider: "github",
-        external_id: "1",
-        is_primary: true,
-        visibility: "public",
-        title: "PR #1",
-        status: "draft",
-        summary: "Fixture PR evidence for the cockpit dashboard",
-        url: "https://github.com/roughcoder/jarvis-cockpit/pull/1",
-        branch: "jarvis/fixture-agentic-cockpit",
-        commit_sha: null,
-        command: null,
-        started_at: null,
-        completed_at: null,
-        created_at: now,
-        updated_at: now,
-        metadata: {},
-      },
-    ],
+    artifacts: emptyProjects
+      ? []
+      : [
+          {
+            artifact_id: "artifact_fixture_branch" as JarvisRun["primary_artifact_ids"][number],
+            run_id: run.run_id,
+            session_ref: session.session_ref,
+            kind: "branch",
+            provider: "github",
+            external_id: null,
+            is_primary: false,
+            visibility: "public",
+            title: "jarvis/fixture-agentic-cockpit",
+            status: "ready",
+            summary: "Fixture branch for mocked cockpit mode",
+            url: "https://github.com/roughcoder/jarvis/tree/jarvis/fixture-agentic-cockpit",
+            branch: "jarvis/fixture-agentic-cockpit",
+            commit_sha: null,
+            command: null,
+            started_at: null,
+            completed_at: null,
+            created_at: now,
+            updated_at: now,
+            metadata: {},
+          },
+          {
+            artifact_id: "artifact_fixture_pr" as JarvisRun["primary_artifact_ids"][number],
+            run_id: run.run_id,
+            session_ref: session.session_ref,
+            kind: "pull_request",
+            provider: "github",
+            external_id: "1",
+            is_primary: true,
+            visibility: "public",
+            title: "PR #1",
+            status: "draft",
+            summary: "Fixture PR evidence for the cockpit dashboard",
+            url: "https://github.com/roughcoder/jarvis-cockpit/pull/1",
+            branch: "jarvis/fixture-agentic-cockpit",
+            commit_sha: null,
+            command: null,
+            started_at: null,
+            completed_at: null,
+            created_at: now,
+            updated_at: now,
+            metadata: {},
+          },
+        ],
     requests: [],
     checkpoints: [],
   };
@@ -2497,11 +2512,18 @@ export function makeJarvisFixtureClient(): JarvisClient {
   };
 }
 
-let sharedJarvisFixtureClient: JarvisClient | undefined;
+let sharedJarvisFixtureClients: Map<string, JarvisClient> | undefined;
 
-function makeSharedJarvisFixtureClient(): JarvisClient {
-  sharedJarvisFixtureClient ??= makeJarvisFixtureClient();
-  return sharedJarvisFixtureClient;
+function makeSharedJarvisFixtureClient(options?: JarvisFixtureClientOptions): JarvisClient {
+  const key = options?.emptyProjects === true ? "empty-projects" : "default";
+  sharedJarvisFixtureClients ??= new Map();
+  const existing = sharedJarvisFixtureClients.get(key);
+  if (existing) {
+    return existing;
+  }
+  const client = makeJarvisFixtureClient(options);
+  sharedJarvisFixtureClients.set(key, client);
+  return client;
 }
 
 function parseProjectThreadTurnResponse(

@@ -51,6 +51,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     jarvisApiBaseUrl: undefined,
     jarvisApiToken: undefined,
     jarvisFixtureMode: false,
+    jarvisFixtureEmptyProjects: false,
   } as const;
   const defaultAuthConfig = (origin = "http://127.0.0.1:4888/") =>
     ({
@@ -112,6 +113,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
                   JARVIS_API_BASE_URL: "http://127.0.0.1:9876",
                   JARVIS_API_TOKEN: "jarvis-secret-token",
                   JARVIS_FIXTURE_MODE: "true",
+                  JARVIS_FIXTURE_EMPTY_PROJECTS: "true",
                 },
               }),
             ),
@@ -128,6 +130,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         jarvisApiBaseUrl: new URL("http://127.0.0.1:9876"),
         jarvisApiToken: "jarvis-secret-token",
         jarvisFixtureMode: true,
+        jarvisFixtureEmptyProjects: true,
         mode: "desktop",
         port: 4001,
         cwd: process.cwd(),

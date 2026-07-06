@@ -14,6 +14,46 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { useAtomCommand } from "../../state/use-atom-command";
 
+export function JarvisBootstrapFailedSurface({ errorMessage }: { readonly errorMessage: string }) {
+  return (
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:px-6">
+      <div className="pointer-events-none absolute inset-0 opacity-80">
+        <div className="absolute inset-x-0 top-0 h-44 bg-[radial-gradient(44rem_16rem_at_top,color-mix(in_srgb,var(--color-amber-500)_14%,transparent),transparent)]" />
+        <div className="absolute inset-y-0 left-0 w-72 bg-[radial-gradient(28rem_18rem_at_left,color-mix(in_srgb,var(--color-sky-500)_10%,transparent),transparent)]" />
+        <div className="absolute inset-0 bg-[linear-gradient(145deg,color-mix(in_srgb,var(--background)_90%,var(--color-black))_0%,var(--background)_55%)]" />
+      </div>
+
+      <section className="relative w-full max-w-xl rounded-2xl border border-border/80 bg-card/90 p-6 shadow-2xl shadow-black/20 backdrop-blur-md sm:p-8">
+        <p className="text-[11px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
+          {APP_DISPLAY_NAME}
+        </p>
+        <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
+          Reconnect Jarvis Brain
+        </h1>
+        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+          Cockpit uses Jarvis OAuth for this local browser session. The session bootstrap failed, so
+          live workers and projects are unavailable until the brain connection is restored.
+        </p>
+
+        <div className="mt-6 rounded-lg border border-destructive/30 bg-destructive/6 px-3 py-2 text-sm text-destructive">
+          {errorMessage}
+        </div>
+
+        <div className="mt-6 flex flex-wrap gap-2">
+          <Button size="sm" onClick={() => window.location.reload()}>
+            Reload app
+          </Button>
+        </div>
+
+        <div className="mt-6 rounded-lg border border-border/70 bg-background/55 px-3 py-3 text-xs leading-relaxed text-muted-foreground">
+          No pairing token is needed for Jarvis cockpit mode. Check the brain URL, OAuth mapping,
+          and server logs, then reload.
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export function PairingPendingSurface() {
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:px-6">

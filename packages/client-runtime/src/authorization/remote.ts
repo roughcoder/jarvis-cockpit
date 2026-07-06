@@ -147,6 +147,19 @@ export const issueRemoteWebSocketTicket = Effect.fn(
   );
 });
 
+export const issueBrowserSessionWebSocketTicket = Effect.fn(
+  "clientRuntime.authorization.issueBrowserSessionWebSocketTicket",
+)(function* (input: { readonly httpBaseUrl: string; readonly timeoutMs?: number }) {
+  const client = yield* makeEnvironmentHttpApiClient(input.httpBaseUrl);
+  return yield* executeEnvironmentHttpRequest(
+    environmentEndpointUrl(input.httpBaseUrl, "/api/auth/websocket-ticket"),
+    input.timeoutMs ?? DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
+    client.auth.webSocketTicket({
+      headers: {},
+    }),
+  );
+});
+
 export const issueRemoteDpopWebSocketTicket = Effect.fn(
   "clientRuntime.authorization.issueRemoteDpopWebSocketTicket",
 )(function* (input: {
@@ -179,6 +192,26 @@ export const resolveRemoteWebSocketConnectionUrl = Effect.fn(
   const issued = yield* issueRemoteWebSocketTicket({
     httpBaseUrl: input.httpBaseUrl,
     bearerToken: input.bearerToken,
+    ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
+  });
+
+  const url = new URL(input.wsBaseUrl);
+  if (url.pathname === "" || url.pathname === "/") {
+    url.pathname = "/ws";
+  }
+  url.searchParams.set("wsTicket", issued.ticket);
+  return url.toString();
+});
+
+export const resolveBrowserSessionWebSocketConnectionUrl = Effect.fn(
+  "clientRuntime.authorization.resolveBrowserSessionWebSocketConnectionUrl",
+)(function* (input: {
+  readonly wsBaseUrl: string;
+  readonly httpBaseUrl: string;
+  readonly timeoutMs?: number;
+}) {
+  const issued = yield* issueBrowserSessionWebSocketTicket({
+    httpBaseUrl: input.httpBaseUrl,
     ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
   });
 

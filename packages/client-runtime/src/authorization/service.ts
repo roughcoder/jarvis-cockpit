@@ -3,6 +3,7 @@ import type { RelayManagedEndpoint } from "@t3tools/contracts/relay";
 import {
   exchangeRemoteDpopAccessToken,
   type RemoteEnvironmentAuthError,
+  resolveBrowserSessionWebSocketConnectionUrl,
   resolveRemoteDpopWebSocketConnectionUrl,
   resolveRemoteWebSocketConnectionUrl,
 } from "./remote.ts";
@@ -35,7 +36,7 @@ export interface AuthorizedRemoteEnvironment {
   readonly label: string;
   readonly httpBaseUrl: string;
   readonly socketUrl: string;
-  readonly httpAuthorization: PreparedHttpAuthorization;
+  readonly httpAuthorization: PreparedHttpAuthorization | null;
 }
 
 export class RemoteEnvironmentAuthorization extends Context.Service<
@@ -46,6 +47,11 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
       readonly httpBaseUrl: string;
       readonly wsBaseUrl: string;
       readonly bearerToken: string;
+    }) => Effect.Effect<AuthorizedRemoteEnvironment, ConnectionAttemptError>;
+    readonly authorizeBrowserSession: (input: {
+      readonly expectedEnvironmentId: EnvironmentId;
+      readonly httpBaseUrl: string;
+      readonly wsBaseUrl: string;
     }) => Effect.Effect<AuthorizedRemoteEnvironment, ConnectionAttemptError>;
     readonly authorizeDpop: (input: {
       readonly expectedEnvironmentId: EnvironmentId;
@@ -137,6 +143,40 @@ export const make = Effect.gen(function* () {
       };
     },
   );
+
+  const authorizeBrowserSession = Effect.fn(
+    "clientRuntime.connection.remote.authorizeBrowserSession",
+  )(function* (input: {
+    readonly expectedEnvironmentId: Parameters<
+      RemoteEnvironmentAuthorization["Service"]["authorizeBrowserSession"]
+    >[0]["expectedEnvironmentId"];
+    readonly httpBaseUrl: string;
+    readonly wsBaseUrl: string;
+  }) {
+    const descriptor = yield* fetchDescriptor(input.httpBaseUrl).pipe(
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+    );
+    if (descriptor.environmentId !== input.expectedEnvironmentId) {
+      return yield* environmentMismatchError({
+        expected: input.expectedEnvironmentId,
+        actual: descriptor.environmentId,
+      });
+    }
+    const socketUrl = yield* resolveBrowserSessionWebSocketConnectionUrl({
+      wsBaseUrl: input.wsBaseUrl,
+      httpBaseUrl: input.httpBaseUrl,
+    }).pipe(
+      Effect.mapError(mapRemoteEnvironmentError),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+    );
+    return {
+      environmentId: descriptor.environmentId,
+      label: descriptor.label,
+      httpBaseUrl: input.httpBaseUrl,
+      socketUrl,
+      httpAuthorization: null,
+    };
+  });
 
   const createDpopSocketUrl = Effect.fn("clientRuntime.connection.remote.createDpopSocketUrl")(
     function* (token: TokenStore.RemoteDpopAccessToken) {
@@ -294,6 +334,7 @@ export const make = Effect.gen(function* () {
 
   return RemoteEnvironmentAuthorization.of({
     authorizeBearer,
+    authorizeBrowserSession,
     authorizeDpop: (input) =>
       authorizeDpop(input).pipe(Effect.withSpan("environment.authorization")),
   });

@@ -66,6 +66,36 @@ function tokenLabel(connection: JarvisBrainConnection | null): string {
   return connection.apiTokenSource === "environment" ? "Token from env" : "Stored token";
 }
 
+function authModeLabel(connection: JarvisBrainConnection | null): string {
+  if (connection?.fixtureMode) return "Fixture";
+  if (connection?.oauthTokenConfigured) return "OAuth";
+  if (connection?.apiTokenConfigured) return "Recovery token";
+  return "Unauthenticated";
+}
+
+function authModeDescription(connection: JarvisBrainConnection | null): string {
+  if (connection?.fixtureMode) {
+    return "Fixture data is active. No live workers are contacted.";
+  }
+  if (connection?.oauthTokenConfigured) {
+    return "Jarvis OAuth is configured server-side and is preferred for live brain calls.";
+  }
+  if (connection?.apiTokenConfigured) {
+    return "A manual recovery token is configured as the fallback authority.";
+  }
+  return "No OAuth mapping or recovery token is configured for this brain.";
+}
+
+function failureMessage(value: unknown): string {
+  if (value instanceof Error && value.message.trim().length > 0) {
+    return value.message;
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value;
+  }
+  return "No failure reported.";
+}
+
 type StatusBadgeVariant = "success" | "warning" | "error" | "outline";
 
 const ACTIVE_RUN_STATUSES = new Set<JarvisRun["status"]>([
@@ -303,6 +333,39 @@ export function JarvisSettingsPanel() {
       : "Disabled";
   const snapshotResult = snapshotQuery.data;
   const snapshot = snapshotResult?.snapshot ?? null;
+  const lastSuccessfulSnapshotAt = snapshot?.sync.synced_at ?? snapshot?.generated_at ?? null;
+  const lastFailure = (() => {
+    if (snapshotQuery.error !== null && !snapshot) {
+      return {
+        className: "Network/RPC",
+        message: failureMessage(snapshotQuery.error),
+      };
+    }
+    if (snapshotResult?.ok === false) {
+      return {
+        className: "Jarvis API",
+        message: snapshotResult.error?.message ?? "Jarvis did not return a cockpit snapshot.",
+      };
+    }
+    if (checkError !== null) {
+      return {
+        className: "Brain check",
+        message: checkError,
+      };
+    }
+    if (checkResult?.ok === false) {
+      return {
+        className: `Brain check${checkResult.status ? ` HTTP ${checkResult.status}` : ""}`,
+        message: checkResult.message,
+      };
+    }
+    return null;
+  })();
+  const showBrainDisconnected =
+    connection?.enabled === true &&
+    connection.fixtureMode !== true &&
+    snapshot === null &&
+    lastFailure !== null;
   const snapshotRuns = activeSnapshotRuns(snapshot?.runs ?? []);
   const snapshotSessions = activeSnapshotSessions(snapshot);
   const snapshotWorkers = snapshot?.workers ?? [];
@@ -423,8 +486,8 @@ export function JarvisSettingsPanel() {
           title="Account pairing"
           description={
             oauthConfigured
-              ? "The server has an admin-seeded OAuth mapping for this Jarvis brain."
-              : "Account pairing controls are disabled until the OAuth flow is wired. Use manual recovery tokens for now."
+              ? "The server has an OAuth mapping for this Jarvis brain. Browser sessions use the server-side Jarvis authority."
+              : "OAuth is not configured for this Jarvis brain. Use a manual recovery token until the mapping exists."
           }
           control={
             <div className="flex flex-wrap items-center gap-2">
@@ -437,6 +500,24 @@ export function JarvisSettingsPanel() {
                 Connect brain
               </Button>
             </div>
+          }
+        />
+
+        <SettingsRow
+          title="Connection diagnostics"
+          description={authModeDescription(connection)}
+          status={
+            <span>
+              Last successful snapshot: {formatDateTime(lastSuccessfulSnapshotAt)}
+              {lastFailure
+                ? ` · Last failure: ${lastFailure.className} - ${lastFailure.message}`
+                : ""}
+            </span>
+          }
+          control={
+            <Badge variant={connection?.oauthTokenConfigured ? "success" : "outline"}>
+              {authModeLabel(connection)}
+            </Badge>
           }
         />
 
@@ -514,13 +595,24 @@ export function JarvisSettingsPanel() {
         </Alert>
       ) : null}
 
+      {showBrainDisconnected && lastFailure ? (
+        <Alert variant="error">
+          <TriangleAlertIcon />
+          <AlertTitle>Brain disconnected</AlertTitle>
+          <AlertDescription>
+            Reconnect Jarvis Brain before starting live work. {lastFailure.className}:{" "}
+            {lastFailure.message}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
       {connection?.fixtureMode ? (
         <Alert variant="warning">
           <TriangleAlertIcon />
-          <AlertTitle>Fixture mode is enabled</AlertTitle>
+          <AlertTitle>Fixture mode: no live workers</AlertTitle>
           <AlertDescription>
-            Unset JARVIS_FIXTURE_MODE to test live fleet data. Normal cockpit development should use
-            the fleet brain endpoint, not demo data.
+            Start work simulates dispatch against demo data. Unset JARVIS_FIXTURE_MODE to test live
+            fleet data from the Jarvis brain.
           </AlertDescription>
         </Alert>
       ) : null}
