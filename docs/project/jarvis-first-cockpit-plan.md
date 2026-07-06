@@ -68,6 +68,19 @@ Decision: show current reported worker status now, and add richer readiness
 checks as Jarvis exposes them. The UI must distinguish `reported healthy` from
 `readiness not reported`.
 
+### Repo Access Follows Worker Identity, Not Worker Disk
+
+Decision (2026-07-06, see `repo-access-and-provisioning.md`): the dispatchable repo set is
+defined by access, not presence. A repo is eligible on a worker when it is public or the
+worker's own git identity (device-held GitHub credentials — different workers may use
+different GitHub accounts) can read it. Repos already on a worker's disk are a warm cache
+affecting first-run latency only. Workers materialize missing repos on dispatch:
+clone/fetch → designated location → worktree per work item, with each phase visible in
+dispatch progress. Validation blocks on access ("can we pull it, and if not, how do we get
+access") and capability, never on presence. Interim: until Jarvis exposes access catalogs
+and provision-on-dispatch, worker-reported repos remain the dispatchable set but are
+labelled as warm checkouts with presence-based blocking marked temporary.
+
 ### Activity Feed Needs Jarvis Ownership
 
 Decision: a complete project activity feed should come from a Jarvis endpoint.
@@ -271,10 +284,13 @@ Jarvis dependency:
 
 Goal: worker failures are visible and actionable from Cockpit.
 
-Work:
+Work (reframed per `repo-access-and-provisioning.md`):
 
 - Worker cards show:
-  - startable repos
+  - git identity: which GitHub account this worker is signed in as, auth freshness
+  - repo access summary (accessible via identity + public), with warm checkouts as a
+    cache detail — not a headline repo list
+  - worktree inventory: count, disk usage, stale/orphaned worktrees (cleanup insight)
   - active sessions
   - queue/capacity
   - capabilities
@@ -283,10 +299,15 @@ Work:
 - Add readiness rows:
   - Codex installed
   - Codex authenticated
-  - repo checkout valid
+  - git credentials valid / identity connected
+  - can materialize worktrees (clone/fetch/worktree capability)
   - package manager availability
   - browser/dev-server capability
 - Add `Send test job` per worker.
+- Start-work surfaces show which git identity will fetch/push for the selected worker.
+- All repo pickers (chat composer, start-work, project settings) share one catalog source
+  with stale-while-revalidate freshness labelling and type-to-filter search — no
+  unsearchable repo lists.
 - Clearly show laptop sandbox/browser-dev-server limitations when readiness
   cannot support browser dogfood.
 
@@ -391,6 +412,11 @@ Still required or recommended:
 - worker readiness diagnostics
 - project activity feed
 - Jarvis MCP status/token APIs
+- per-worker git identity + repo access catalog (or access probe) in worker snapshot
+- `work/validate` access-probe semantics with remediation reason codes
+- provision-on-dispatch (any accessible repo) with progress phases
+  (`resolving-access`, `cloning`, `creating-worktree`, `running`)
+- worktree inventory (count/size/stale) in worker snapshot
 
 ## Verification Baseline
 
