@@ -40,6 +40,19 @@ describe("buildStartWorkSources", () => {
     expect(byId.get("continue-run")?.enabled).toBe(true);
   });
 
+  it("labels manual starts as simulations in fixture mode", () => {
+    const sources = buildStartWorkSources({
+      hasAnchorProject: true,
+      hasResumableThread: false,
+      fixtureMode: true,
+    });
+    const describeWork = sources.find((source) => source.id === "describe-work");
+
+    expect(describeWork?.title).toBe("Simulate work");
+    expect(describeWork?.description).toContain("No live workers");
+    expect(describeWork?.description).not.toContain("dispatched to Jarvis");
+  });
+
   it("keeps describe work enabled before the first run", () => {
     const sources = buildStartWorkSources({ hasAnchorProject: false, hasResumableThread: false });
     const byId = new Map(sources.map((source) => [source.id, source]));

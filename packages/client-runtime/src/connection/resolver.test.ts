@@ -93,6 +93,7 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   readonly credentials?: ReadonlyArray<readonly [string, ConnectionCredential]>;
   readonly connectEnvironment?: ManagedRelay.ManagedRelayClient["Service"]["connectEnvironment"];
   readonly authorizeBearer?: RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]["authorizeBearer"];
+  readonly authorizeBrowserSession?: RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]["authorizeBrowserSession"];
   readonly authorizeDpop?: RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]["authorizeDpop"];
   readonly primaryBearerToken?: string;
   readonly prepareSsh?: ClientCapabilities.SshEnvironmentGateway["Service"]["prepare"];
@@ -126,6 +127,16 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
             _tag: "Bearer" as const,
             token: input.bearerToken,
           },
+        })),
+    authorizeBrowserSession:
+      options?.authorizeBrowserSession ??
+      ((input) =>
+        Effect.succeed({
+          environmentId: input.expectedEnvironmentId,
+          label: "Primary",
+          httpBaseUrl: input.httpBaseUrl,
+          socketUrl: "ws://127.0.0.1:3777/ws?wsTicket=browser",
+          httpAuthorization: null,
         })),
     authorizeDpop:
       options?.authorizeDpop ??
@@ -200,7 +211,7 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
 });
 
 describe("ConnectionResolver", () => {
-  it.effect("prepares a primary environment without remote capabilities", () =>
+  it.effect("prepares a primary browser session with a websocket ticket", () =>
     Effect.gen(function* () {
       const brokerLayer = yield* makeDependencies();
       const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
@@ -215,7 +226,7 @@ describe("ConnectionResolver", () => {
         environmentId: ENVIRONMENT_ID,
         label: "Primary",
         httpBaseUrl: "http://127.0.0.1:3777",
-        socketUrl: "ws://127.0.0.1:3777/ws",
+        socketUrl: "ws://127.0.0.1:3777/ws?wsTicket=browser",
         httpAuthorization: null,
         target,
       });

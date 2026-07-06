@@ -142,6 +142,20 @@ it.effect("fixture client exposes a v1 run snapshot and paginated details", () =
   }),
 );
 
+it.effect("fixture client can expose connected workers without projects", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisFixtureClient({ emptyProjects: true });
+
+    const fixtureSnapshot = yield* client.getSnapshot();
+    const projects = yield* client.getProjects();
+
+    assert.strictEqual(fixtureSnapshot.runs.length, 0);
+    assert.strictEqual(fixtureSnapshot.sessions.length, 0);
+    assert.strictEqual(fixtureSnapshot.workers.length, 2);
+    assert.strictEqual(projects.length, 0);
+  }),
+);
+
 it.effect("fixture client synthesizes distinct runs and sessions for start work", () =>
   Effect.gen(function* () {
     const client = makeJarvisFixtureClient();

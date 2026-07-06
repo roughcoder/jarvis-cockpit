@@ -40,7 +40,8 @@ it.effect("loads Jarvis fixture data as orchestration shell and read-model snaps
     const shell = yield* loadJarvisShellSnapshot(client);
     const readModel = yield* loadJarvisReadModel(client);
 
-    assert.strictEqual(shell.projects[0]?.id, "jarvis-run_run_fixture_dashboard");
+    assert.strictEqual(shell.projects[0]?.id, "jarvis-start");
+    assert.strictEqual(shell.projects[1]?.id, "jarvis-run_run_fixture_dashboard");
     assert.strictEqual(
       shell.threads[0]?.id,
       "jarvis-session_sessref_macbook-worker_sess_fixture_codex",

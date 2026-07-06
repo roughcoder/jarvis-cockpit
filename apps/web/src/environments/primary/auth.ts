@@ -147,6 +147,11 @@ type ServerAuthGateState =
       status: "requires-auth";
       auth: AuthSessionState["auth"];
       errorMessage?: string;
+    }
+  | {
+      status: "jarvis-bootstrap-failed";
+      auth: AuthSessionState["auth"];
+      errorMessage: string;
     };
 
 let bootstrapPromise: Promise<ServerAuthGateState> | null = null;
@@ -354,9 +359,15 @@ async function bootstrapServerAuth(): Promise<ServerAuthGateState> {
         }
         await waitForAuthenticatedSessionAfterBootstrap();
         return { status: "authenticated" };
-      } catch {
-        // Non-Jarvis or remote loopback-compatible servers fall back to the
-        // explicit pairing screen.
+      } catch (error) {
+        return {
+          status: "jarvis-bootstrap-failed",
+          auth: currentSession.auth,
+          errorMessage:
+            error instanceof Error
+              ? error.message
+              : "The local Jarvis browser session could not be created.",
+        };
       }
     }
 

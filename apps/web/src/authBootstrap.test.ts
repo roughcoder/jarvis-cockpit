@@ -197,6 +197,29 @@ describe("resolveInitialServerAuthGateState", () => {
     expect(testApi.calls.localJarvisBrowserSession).toBe(1);
   });
 
+  it("surfaces local Jarvis bootstrap failures without showing generic pairing", async () => {
+    const testApi = await installAuthApi({
+      session: () => unauthenticatedSession(LOCAL_JARVIS_AUTH),
+      localJarvisBrowserSession: () =>
+        Effect.fail(
+          new EnvironmentAuthInvalidError({
+            code: "auth_invalid",
+            reason: "invalid_credential",
+            traceId: "trace-local-jarvis",
+          }),
+        ),
+    });
+
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+
+    await expect(resolveInitialServerAuthGateState()).resolves.toMatchObject({
+      status: "jarvis-bootstrap-failed",
+      auth: LOCAL_JARVIS_AUTH,
+    });
+    expect(testApi.calls.localJarvisBrowserSession).toBe(1);
+    expect(testApi.calls.browserSession).toEqual([]);
+  });
+
   it("uses https urls when the primary environment uses wss", async () => {
     await installAuthApi({ session: () => unauthenticatedSession(LOOPBACK_AUTH) });
     vi.stubEnv("VITE_HTTP_URL", "https://remote.example.com");

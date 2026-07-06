@@ -139,6 +139,9 @@ const EnvServerConfig = Config.all({
     Config.map(Option.getOrUndefined),
   ),
   jarvisFixtureMode: Config.boolean("JARVIS_FIXTURE_MODE").pipe(Config.withDefault(false)),
+  jarvisFixtureEmptyProjects: Config.boolean("JARVIS_FIXTURE_EMPTY_PROJECTS").pipe(
+    Config.withDefault(false),
+  ),
   betterAuthUrl: Config.url("BETTER_AUTH_URL").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -411,6 +414,7 @@ export const resolveServerConfig = (
       jarvisApiBaseUrl: env.jarvisApiBaseUrl,
       jarvisApiToken: env.jarvisApiToken,
       jarvisFixtureMode: env.jarvisFixtureMode,
+      jarvisFixtureEmptyProjects: env.jarvisFixtureEmptyProjects,
       betterAuthUrl,
       betterAuthSecret: env.betterAuthSecret,
       jarvisOAuthIssuer:

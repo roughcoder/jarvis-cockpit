@@ -76,6 +76,8 @@ export interface BuildStartWorkSourcesInput {
   readonly hasAnchorProject: boolean;
   /** A Jarvis session thread exists that can be reopened. */
   readonly hasResumableThread: boolean;
+  /** Development fixture data is active, so work starts are simulations. */
+  readonly fixtureMode?: boolean;
   /** Jarvis-owned form/source defaults from `/v1/cockpit/catalog`. */
   readonly catalog?: StartWorkCatalogInput | null;
   /** Public-safe worker rows from the Jarvis snapshot. */
@@ -99,6 +101,10 @@ export function buildStartWorkSources(
     defaultEngine ? `Engine: ${defaultEngine}` : null,
     defaultLandingMode ? `Landing: ${defaultLandingMode}` : null,
   ].filter((item): item is string => item !== null);
+  const describeTitle = input.fixtureMode ? "Simulate work" : "Describe work";
+  const describePrefix = input.fixtureMode
+    ? "Freeform objective, simulated by fixture mode. No live workers."
+    : "Freeform objective, dispatched to Jarvis";
 
   return [
     {
@@ -112,12 +118,12 @@ export function buildStartWorkSources(
     {
       id: "describe-work",
       value: "action:start-work:describe",
-      title: "Describe work",
+      title: describeTitle,
       description:
         describeDetails.length > 0
-          ? `Freeform objective, dispatched to Jarvis. ${describeDetails.join(" · ")}`
-          : "Freeform objective, dispatched to Jarvis",
-      searchTerms: ["describe", "objective", "prompt", "freeform", "new work"],
+          ? `${describePrefix} ${describeDetails.join(" · ")}`
+          : describePrefix,
+      searchTerms: ["describe", "objective", "prompt", "freeform", "new work", "simulate"],
       enabled: catalogSources.has("manual"),
       ...(catalogSources.has("manual")
         ? {}

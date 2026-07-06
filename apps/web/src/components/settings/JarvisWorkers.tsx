@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useAtomValue } from "@effect/atom-react";
 import {
   BoxesIcon,
   CpuIcon,
@@ -10,7 +11,7 @@ import {
 import type { JarvisWorkerProfile } from "@t3tools/contracts";
 
 import { cn } from "../../lib/utils";
-import { serverEnvironment } from "../../state/server";
+import { primaryServerConfigAtom, serverEnvironment } from "../../state/server";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
@@ -40,7 +41,7 @@ function workerRepositories(
   return worker.repositories ?? [];
 }
 
-function WorkerRow({ worker }: { worker: JarvisWorkerProfile }) {
+function WorkerRow({ worker, fixtureMode }: { worker: JarvisWorkerProfile; fixtureMode: boolean }) {
   const repositories = workerRepositories(worker);
   const defaultRepository = repositories.find((repository) => repository.is_default);
   const engines = worker.engines.length > 0 ? worker.engines : [];
@@ -54,7 +55,14 @@ function WorkerRow({ worker }: { worker: JarvisWorkerProfile }) {
             <h3 className="truncate text-[13px] font-semibold text-foreground">
               {worker.display_name}
             </h3>
-            <Badge variant={healthVariant(worker)}>{formatWorkerStatus(worker)}</Badge>
+            <Badge variant={fixtureMode ? "warning" : healthVariant(worker)}>
+              {fixtureMode ? "Fixture mode" : formatWorkerStatus(worker)}
+            </Badge>
+            {fixtureMode ? (
+              <Badge variant="outline" size="sm">
+                No live workers
+              </Badge>
+            ) : null}
           </div>
           <p className="break-all font-mono text-[11px] text-muted-foreground">
             {worker.worker_id}
@@ -155,6 +163,7 @@ function WorkerRow({ worker }: { worker: JarvisWorkerProfile }) {
 
 export function JarvisWorkersPanel() {
   const primaryEnvironment = usePrimaryEnvironment();
+  const fixtureMode = useAtomValue(primaryServerConfigAtom)?.jarvisBrain?.fixtureMode === true;
   const snapshotQuery = useEnvironmentQuery(
     primaryEnvironment
       ? serverEnvironment.jarvisSnapshot({
@@ -190,6 +199,19 @@ export function JarvisWorkersPanel() {
           </Button>
         }
       >
+        {fixtureMode ? (
+          <div className="border-b border-border/60 px-4 py-4 sm:px-5">
+            <Alert variant="warning">
+              <TriangleAlertIcon />
+              <AlertTitle>Fixture mode: no live workers</AlertTitle>
+              <AlertDescription>
+                Worker rows are simulated fixture data. Use this screen for UI testing only; live
+                dispatch requires a real Jarvis brain connection.
+              </AlertDescription>
+            </Alert>
+          </div>
+        ) : null}
+
         <div className="grid grid-cols-3 border-b border-border/60 text-center">
           <div className="px-3 py-3">
             <div className="text-lg font-semibold text-foreground">{workers.length}</div>
@@ -232,7 +254,7 @@ export function JarvisWorkersPanel() {
         ) : null}
 
         {sortedWorkers.map((worker) => (
-          <WorkerRow key={worker.worker_id} worker={worker} />
+          <WorkerRow key={worker.worker_id} worker={worker} fixtureMode={fixtureMode} />
         ))}
       </SettingsSection>
     </SettingsPageContainer>
