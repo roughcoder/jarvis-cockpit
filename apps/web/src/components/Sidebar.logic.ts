@@ -10,6 +10,8 @@ import type { SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import type { SidebarProjectGroupMember, SidebarProjectSnapshot } from "../sidebarProjectGrouping";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
@@ -38,16 +40,16 @@ export function resolveSidebarSurfaceCopy(input: {
     return {
       topLevelLabel: "Projects",
       topLevelSortLabel: "Sort projects",
-      childLabel: "sessions",
-      childSortLabel: "Sort sessions",
-      visibleChildLabel: "Visible sessions",
-      emptyTopLevelLabel: "No projects yet",
-      emptyChildLabel: "No sessions yet",
+      childLabel: "conversations and work",
+      childSortLabel: "Sort work",
+      visibleChildLabel: "Visible work sessions",
+      emptyTopLevelLabel: "No Jarvis projects yet",
+      emptyChildLabel: "No work sessions yet",
       groupedTopLevelCountLabel: (count) => `${count} projects`,
-      createChildActionLabel: (topLevelName) => `Start session in ${topLevelName}`,
+      createChildActionLabel: (topLevelName) => `Start work in ${topLevelName}`,
       createChildTooltipLabel: (shortcutLabel) =>
-        shortcutLabel ? `New session (${shortcutLabel})` : "New session",
-      createChildErrorTitle: "Could not start session",
+        shortcutLabel ? `Start work (${shortcutLabel})` : "Start work",
+      createChildErrorTitle: "Could not start work",
     };
   }
 
@@ -73,6 +75,120 @@ type SidebarProject = {
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
 };
+
+export type SidebarProjectSourceKind = "default" | "jarvis-registry" | "jarvis-work-artifact";
+
+export interface SidebarProjectView extends SidebarProjectSnapshot {
+  sidebarSourceKind: SidebarProjectSourceKind;
+  jarvisRegistryProjectId: string | null;
+  sidebarBadges: readonly string[];
+}
+
+export interface SidebarJarvisRegistryProject {
+  id: string;
+  name: string;
+  status?: string | null | undefined;
+}
+
+const JARVIS_REGISTRY_PROJECT_KEY_PREFIX = "jarvis-registry:";
+const JARVIS_PROJECT_WORKSPACE_ROOT_PREFIX = "jarvis://projects/";
+
+export function jarvisRegistryProjectWorkspaceRoot(projectId: string): string {
+  return `${JARVIS_PROJECT_WORKSPACE_ROOT_PREFIX}${encodeURIComponent(projectId)}`;
+}
+
+function normalizeJarvisStatusBadge(status: string | null | undefined): string | null {
+  const normalized = status?.trim();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized === "active") {
+    return null;
+  }
+  return normalized
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+export function buildJarvisRegistrySidebarProject(input: {
+  project: SidebarJarvisRegistryProject;
+  environmentId: EnvironmentId;
+  nowIso: string;
+  makeProjectId: (value: string) => ProjectId;
+}): SidebarProjectView {
+  const projectId = input.makeProjectId(input.project.id);
+  const projectKey = `${JARVIS_REGISTRY_PROJECT_KEY_PREFIX}${input.project.id}`;
+  const workspaceRoot = jarvisRegistryProjectWorkspaceRoot(input.project.id);
+  const badge = normalizeJarvisStatusBadge(input.project.status);
+  const member: SidebarProjectGroupMember = {
+    id: projectId,
+    environmentId: input.environmentId,
+    title: input.project.name,
+    workspaceRoot,
+    repositoryIdentity: null,
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: input.nowIso,
+    updatedAt: input.nowIso,
+    physicalProjectKey: projectKey,
+    environmentLabel: null,
+  };
+
+  return {
+    ...member,
+    projectKey,
+    displayName: input.project.name,
+    groupedProjectCount: 1,
+    environmentPresence: "local-only",
+    allRemoteMembersAreDesktopLocal: false,
+    memberProjects: [member],
+    memberProjectRefs: [],
+    remoteEnvironmentLabels: [],
+    sidebarSourceKind: "jarvis-registry",
+    jarvisRegistryProjectId: input.project.id,
+    sidebarBadges: badge ? [badge] : [],
+  };
+}
+
+export function markSidebarProjectsWithSourceKind(
+  projects: readonly SidebarProjectSnapshot[],
+  sourceKind: SidebarProjectSourceKind,
+): SidebarProjectView[] {
+  return projects.map((project) => ({
+    ...project,
+    sidebarSourceKind: sourceKind,
+    jarvisRegistryProjectId: null,
+    sidebarBadges: sourceKind === "jarvis-work-artifact" ? ["Recent work"] : [],
+  }));
+}
+
+export function buildJarvisProjectFirstSidebarProjects(input: {
+  registryProjects: readonly SidebarJarvisRegistryProject[] | null;
+  projectedWorkProjects: readonly SidebarProjectSnapshot[];
+  environmentId: EnvironmentId | null;
+  nowIso: string;
+  makeProjectId: (value: string) => ProjectId;
+}): SidebarProjectView[] {
+  if (input.registryProjects === null || input.environmentId === null) {
+    return [];
+  }
+  const environmentId = input.environmentId;
+
+  const registryProjects = input.registryProjects.map((project) =>
+    buildJarvisRegistrySidebarProject({
+      project,
+      environmentId,
+      nowIso: input.nowIso,
+      makeProjectId: input.makeProjectId,
+    }),
+  );
+  return [
+    ...registryProjects,
+    ...markSidebarProjectsWithSourceKind(input.projectedWorkProjects, "jarvis-work-artifact"),
+  ];
+}
 
 export type ThreadTraversalDirection = "previous" | "next";
 

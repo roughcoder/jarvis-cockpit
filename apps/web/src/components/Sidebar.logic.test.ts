@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
+  buildJarvisProjectFirstSidebarProjects,
   createThreadJumpHintVisibilityController,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
@@ -16,6 +17,7 @@ import {
   resolveSidebarNewThreadEnvMode,
   resolveSidebarStageBadgeLabel,
   resolveSidebarSurfaceCopy,
+  jarvisRegistryProjectWorkspaceRoot,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
@@ -35,6 +37,7 @@ import {
   type Project,
   type Thread,
 } from "../types";
+import type { SidebarProjectSnapshot } from "../sidebarProjectGrouping";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 
@@ -91,20 +94,104 @@ describe("resolveSidebarSurfaceCopy", () => {
     expect(copy.createChildTooltipLabel("Mod+N")).toBe("New thread (Mod+N)");
   });
 
-  it("uses project/session vocabulary for Jarvis cockpit mode", () => {
+  it("uses project-first work vocabulary for Jarvis cockpit mode", () => {
     const copy = resolveSidebarSurfaceCopy({ isJarvisCockpitMode: true });
 
     expect(copy.topLevelLabel).toBe("Projects");
     expect(copy.topLevelSortLabel).toBe("Sort projects");
-    expect(copy.childSortLabel).toBe("Sort sessions");
-    expect(copy.visibleChildLabel).toBe("Visible sessions");
-    expect(copy.emptyTopLevelLabel).toBe("No projects yet");
-    expect(copy.emptyChildLabel).toBe("No sessions yet");
+    expect(copy.childLabel).toBe("conversations and work");
+    expect(copy.childSortLabel).toBe("Sort work");
+    expect(copy.visibleChildLabel).toBe("Visible work sessions");
+    expect(copy.emptyTopLevelLabel).toBe("No Jarvis projects yet");
+    expect(copy.emptyChildLabel).toBe("No work sessions yet");
     expect(copy.groupedTopLevelCountLabel(2)).toBe("2 projects");
     expect(copy.createChildActionLabel("Build worker sessions")).toBe(
-      "Start session in Build worker sessions",
+      "Start work in Build worker sessions",
     );
-    expect(copy.createChildTooltipLabel(null)).toBe("New session");
+    expect(copy.createChildTooltipLabel(null)).toBe("Start work");
+  });
+});
+
+function makeSidebarProjectSnapshot(
+  overrides: Partial<SidebarProjectSnapshot> = {},
+): SidebarProjectSnapshot {
+  const project = makeProject({
+    id: ProjectId.make("jarvis-run_run-1"),
+    title: "Recent worker run",
+    workspaceRoot: "jarvis://runs/run-1",
+  });
+  const member = {
+    ...project,
+    physicalProjectKey: "environment-local:jarvis-run_run-1",
+    environmentLabel: null,
+  };
+  return {
+    ...project,
+    projectKey: "environment-local:jarvis-run_run-1",
+    displayName: project.title,
+    groupedProjectCount: 1,
+    environmentPresence: "local-only",
+    allRemoteMembersAreDesktopLocal: false,
+    memberProjects: [member],
+    memberProjectRefs: [],
+    remoteEnvironmentLabels: [],
+    ...overrides,
+  };
+}
+
+describe("buildJarvisProjectFirstSidebarProjects", () => {
+  it("uses registry projects as the primary sidebar rows before projected work artifacts", () => {
+    const projects = buildJarvisProjectFirstSidebarProjects({
+      registryProjects: [
+        { id: "jarvis", name: "Jarvis", status: "active" },
+        { id: "cockpit", name: "Cockpit", status: "stale" },
+      ],
+      projectedWorkProjects: [makeSidebarProjectSnapshot()],
+      environmentId: localEnvironmentId,
+      nowIso: "2026-07-06T10:00:00.000Z",
+      makeProjectId: ProjectId.make,
+    });
+
+    expect(projects.map((project) => project.displayName)).toEqual([
+      "Jarvis",
+      "Cockpit",
+      "Recent worker run",
+    ]);
+    expect(projects.map((project) => project.sidebarSourceKind)).toEqual([
+      "jarvis-registry",
+      "jarvis-registry",
+      "jarvis-work-artifact",
+    ]);
+    expect(projects[0]?.workspaceRoot).toBe(jarvisRegistryProjectWorkspaceRoot("jarvis"));
+    expect(projects[1]?.sidebarBadges).toEqual(["Stale"]);
+    expect(projects[2]?.sidebarBadges).toEqual(["Recent work"]);
+  });
+
+  it("does not expose projected work artifacts when the registry is unavailable", () => {
+    const projects = buildJarvisProjectFirstSidebarProjects({
+      registryProjects: null,
+      projectedWorkProjects: [makeSidebarProjectSnapshot()],
+      environmentId: localEnvironmentId,
+      nowIso: "2026-07-06T10:00:00.000Z",
+      makeProjectId: ProjectId.make,
+    });
+
+    expect(projects).toEqual([]);
+  });
+
+  it("keeps registry projects visible even when no projected work exists", () => {
+    const projects = buildJarvisProjectFirstSidebarProjects({
+      registryProjects: [{ id: "jarvis", name: "Jarvis", status: null }],
+      projectedWorkProjects: [],
+      environmentId: localEnvironmentId,
+      nowIso: "2026-07-06T10:00:00.000Z",
+      makeProjectId: ProjectId.make,
+    });
+
+    expect(projects).toHaveLength(1);
+    expect(projects[0]?.displayName).toBe("Jarvis");
+    expect(projects[0]?.jarvisRegistryProjectId).toBe("jarvis");
+    expect(projects[0]?.sidebarBadges).toEqual([]);
   });
 });
 
