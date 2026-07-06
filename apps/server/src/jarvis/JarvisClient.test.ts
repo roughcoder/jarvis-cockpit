@@ -474,6 +474,8 @@ it.effect("cockpit client calls project memory and file endpoints", () =>
           body = {
             title: init.body.get("title"),
             artifact_type: init.body.get("artifact_type"),
+            idempotency_key: init.body.get("idempotency_key"),
+            metadata: init.body.get("metadata"),
             file: await (init.body.get("file") as Blob).text(),
           };
         } else if (init?.body) {
@@ -515,8 +517,12 @@ it.effect("cockpit client calls project memory and file endpoints", () =>
       title: "Spec",
       artifact_type: "spec",
       mime_type: "text/markdown",
+      idempotency_key: "upload-spec-1",
+      metadata: { surface: "jarvis-cockpit", source: "test" },
     });
-    yield* client.retractProjectFile("dogfood", "spec-1");
+    yield* client.retractProjectFile("dogfood", "spec-1", {
+      reason: "Superseded by a newer spec",
+    });
 
     assert.deepStrictEqual(
       requests.map((request) => [request.method, request.url]),
@@ -541,7 +547,46 @@ it.effect("cockpit client calls project memory and file endpoints", () =>
     assert.deepStrictEqual(requests[5]?.body, {
       title: "Spec",
       artifact_type: "spec",
+      idempotency_key: "upload-spec-1",
+      metadata: '{"surface":"jarvis-cockpit","source":"test"}',
       file: "# Spec",
+    });
+    assert.deepStrictEqual(requests[6]?.body, {
+      reason: "Superseded by a newer spec",
+      metadata: { surface: "jarvis-cockpit" },
+    });
+  }),
+);
+
+it.effect("cockpit client decodes JSON project thread turn responses", () =>
+  Effect.gen(function* () {
+    const requests: Array<{ body: unknown }> = [];
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async (_url, init) => {
+        requests.push({
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        });
+        return jsonResponse({
+          ok: true,
+          text: "Project reply",
+          events: [{ event: "thread.reply", data: { text: "Project reply" } }],
+        });
+      },
+    });
+
+    const result = yield* client.sendProjectThreadTurn("dogfood", "thread-1", {
+      text: "What changed?",
+      idempotency_key: "turn-1",
+    });
+
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.text, "Project reply");
+    assert.strictEqual(result.events[0]?.event, "thread.reply");
+    assert.deepStrictEqual(requests[0]?.body, {
+      text: "What changed?",
+      idempotency_key: "turn-1",
+      metadata: { surface: "jarvis-cockpit" },
     });
   }),
 );

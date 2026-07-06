@@ -327,6 +327,7 @@ const decodeProjectMemoryResponse = Schema.decodeUnknownEffect(JarvisProjectMemo
 const decodeProjectFilesResponse = Schema.decodeUnknownEffect(JarvisProjectFilesResponse);
 const decodeProjectThreadsResponse = Schema.decodeUnknownEffect(JarvisProjectThreadsResponse);
 const decodeProjectThread = Schema.decodeUnknownEffect(JarvisProjectThread);
+const decodeProjectThreadTurnResult = Schema.decodeUnknownEffect(JarvisProjectThreadTurnResult);
 const decodeProjectThreadResponse = (operation: string, body: unknown) =>
   Effect.gen(function* () {
     const candidate = projectThreadPayloadFromResponse(operation, body);
@@ -657,12 +658,13 @@ export function makeJarvisCockpitClient(input: {
         method: "POST",
         body: projectFileUploadFormData(input),
       }).pipe(Effect.flatMap(decodeFor("projects.files.upload", decodeJsonObject))),
-    retractProjectFile: (projectId, docId) =>
+    retractProjectFile: (projectId, docId, input = {}) =>
       requestJson(
         "projects.files.retract",
         `/v1/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(docId)}`,
         {
           method: "DELETE",
+          body: JSON.stringify(withSurfaceMetadata(input)),
         },
       ).pipe(Effect.flatMap(decodeFor("projects.files.retract", decodeJsonObject))),
     createProjectThread: (projectId, threadInput = {}) =>
@@ -689,7 +691,9 @@ export function makeJarvisCockpitClient(input: {
           method: "POST",
           body: JSON.stringify(withSurfaceMetadata(turnInput)),
         },
-      ).pipe(Effect.map(parseProjectThreadTurnSse)),
+      ).pipe(
+        Effect.flatMap((text) => parseProjectThreadTurnResponse("projects.threads.turn", text)),
+      ),
     getSession: (sessionRef) =>
       requestJson("sessions.get", `/v1/sessions/${encodeURIComponent(sessionRef)}`).pipe(
         Effect.flatMap(decodeFor("sessions.get", decodeSessionDetail)),
@@ -2500,6 +2504,28 @@ function makeSharedJarvisFixtureClient(): JarvisClient {
   return sharedJarvisFixtureClient;
 }
 
+function parseProjectThreadTurnResponse(
+  operation: string,
+  text: string,
+): Effect.Effect<JarvisProjectThreadTurnResult, JarvisClientError> {
+  const trimmed = text.trim();
+  if (trimmed.length > 0 && (trimmed.startsWith("{") || trimmed.startsWith("["))) {
+    try {
+      const body = JSON.parse(trimmed) as unknown;
+      return decodeFor(operation, decodeProjectThreadTurnResult)(body);
+    } catch (cause) {
+      return Effect.fail(
+        new JarvisClientError({
+          operation,
+          message: `Jarvis response for ${operation} was not valid JSON.`,
+          cause,
+        }),
+      );
+    }
+  }
+  return Effect.succeed(parseProjectThreadTurnSse(text));
+}
+
 function parseProjectThreadTurnSse(text: string): JarvisProjectThreadTurnResult {
   const events: Record<string, Schema.Json>[] = [];
   const replyParts: string[] = [];
@@ -2563,16 +2589,21 @@ function isFormDataBody(body: Exclude<RequestInit["body"], null | undefined>): b
 }
 
 function projectFileUploadFormData(input: JarvisProjectFileUploadInput): FormData {
+  const payload = withSurfaceMetadata(input);
   const formData = new FormData();
-  const mimeType = input.mime_type ?? "application/octet-stream";
-  const content = NodeBuffer.Buffer.from(input.content_base64, "base64");
-  formData.append("file", new Blob([content], { type: mimeType }), input.filename);
-  if (input.title !== undefined) {
-    formData.append("title", input.title);
+  const mimeType = payload.mime_type ?? "application/octet-stream";
+  const content = NodeBuffer.Buffer.from(payload.content_base64, "base64");
+  formData.append("file", new Blob([content], { type: mimeType }), payload.filename);
+  if (payload.title !== undefined) {
+    formData.append("title", payload.title);
   }
-  if (input.artifact_type !== undefined) {
-    formData.append("artifact_type", input.artifact_type);
+  if (payload.artifact_type !== undefined) {
+    formData.append("artifact_type", payload.artifact_type);
   }
+  if (payload.idempotency_key !== undefined) {
+    formData.append("idempotency_key", payload.idempotency_key);
+  }
+  formData.append("metadata", JSON.stringify(payload.metadata));
   return formData;
 }
 

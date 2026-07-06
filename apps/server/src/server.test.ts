@@ -900,6 +900,25 @@ const bootstrapBrowserSession = (
     };
   });
 
+const bootstrapLocalJarvisBrowserSession = (options?: {
+  readonly headers?: Record<string, string>;
+}) =>
+  Effect.gen(function* () {
+    const bootstrapUrl = yield* getHttpServerUrl("/api/auth/local-jarvis-browser-session");
+    const response = yield* fetchEffect(bootstrapUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...options?.headers,
+      },
+      body: jsonRequestBody({}),
+    });
+    return {
+      response,
+      cookie: response.headers["set-cookie"],
+    };
+  });
+
 const exchangeAccessToken = (
   credential = defaultDesktopBootstrapToken,
   options?: {
@@ -1357,6 +1376,37 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(sessionResponse.status, 200);
       assert.equal(sessionBody.authenticated, true);
       assert.equal(sessionBody.sessionMethod, "browser-session-cookie");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects local Jarvis browser bootstrap from non-loopback request origins", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          mode: "web",
+          host: "127.0.0.1",
+          jarvisCockpitEnabled: true,
+          devUrl: new URL("https://cockpit.localhost"),
+        },
+      });
+
+      const trusted = yield* bootstrapLocalJarvisBrowserSession({
+        headers: {
+          host: "cockpit.localhost",
+          origin: "https://cockpit.localhost",
+        },
+      });
+      const untrusted = yield* bootstrapLocalJarvisBrowserSession({
+        headers: {
+          host: "attacker.example",
+          origin: "https://attacker.example",
+        },
+      });
+
+      assert.equal(trusted.response.status, 200);
+      assert.isDefined(trusted.cookie);
+      assert.equal(untrusted.response.status, 401);
+      assert.isUndefined(untrusted.cookie);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

@@ -163,6 +163,56 @@ function isLocalJarvisBrowserBootstrapAllowed(config: ServerConfig.ServerConfig[
   );
 }
 
+function hostnameFromAuthority(authority: string | undefined): string | null {
+  const trimmed = authority?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  try {
+    return new URL(trimmed.includes("://") ? trimmed : `http://${trimmed}`).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function isTrustedLocalBrowserHostname(
+  hostname: string,
+  config: ServerConfig.ServerConfig["Service"],
+): boolean {
+  const normalized = hostname.toLowerCase();
+  return (
+    isLoopbackHost(normalized) ||
+    normalized.endsWith(".localhost") ||
+    (config.devUrl !== undefined && normalized === config.devUrl.hostname.toLowerCase())
+  );
+}
+
+function isTrustedLocalBrowserOrigin(
+  origin: string | undefined,
+  config: ServerConfig.ServerConfig["Service"],
+): boolean {
+  if (origin === undefined) {
+    return true;
+  }
+  const hostname = hostnameFromAuthority(origin);
+  return hostname !== null && isTrustedLocalBrowserHostname(hostname, config);
+}
+
+function isLocalJarvisBrowserBootstrapRequestAllowed(
+  config: ServerConfig.ServerConfig["Service"],
+  request: HttpServerRequest.HttpServerRequest,
+): boolean {
+  if (!isLocalJarvisBrowserBootstrapAllowed(config)) {
+    return false;
+  }
+  const host = hostnameFromAuthority(request.headers.host);
+  return (
+    host !== null &&
+    isTrustedLocalBrowserHostname(host, config) &&
+    isTrustedLocalBrowserOrigin(request.headers.origin, config)
+  );
+}
+
 export const requireEnvironmentScope = Effect.fn("environment.auth.requireScope")(function* (
   scope: AuthEnvironmentScope,
 ) {
@@ -259,11 +309,11 @@ export const authHttpApiLayer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const serverConfig = yield* ServerConfig.ServerConfig;
-            if (!isLocalJarvisBrowserBootstrapAllowed(serverConfig)) {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            if (!isLocalJarvisBrowserBootstrapRequestAllowed(serverConfig, request)) {
               return yield* failEnvironmentAuthInvalid("invalid_credential");
             }
 
-            const request = yield* HttpServerRequest.HttpServerRequest;
             const issued = yield* sessions.issue({
               method: "browser-session-cookie",
               subject: "local-jarvis-cockpit",
