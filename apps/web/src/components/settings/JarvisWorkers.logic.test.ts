@@ -4,6 +4,7 @@ import { JarvisWorkerId, MessageId, ThreadId, type JarvisWorkerProfile } from "@
 import {
   buildWorkerTestJobStartTurnInput,
   NOT_REPORTED,
+  resolveWorkerTestJobStatus,
   workerIdentityAccessSummary,
   workerReadinessRows,
 } from "./JarvisWorkers.logic";
@@ -138,11 +139,74 @@ describe("buildWorkerTestJobStartTurnInput", () => {
     expect(input.threadId).toBe("thread-worker-test");
     expect(input.message.text).toContain("worker readiness test");
     expect(input.titleSeed).toBe("Worker readiness test: Mac mini");
-    expect(input.bootstrap).toEqual({
+    expect(input.bootstrap?.createThread).toMatchObject({
+      projectId: "jarvis-start",
+      title: "Worker readiness test: Mac mini",
+      modelSelection: { instanceId: "codex" },
+      branch: null,
+      worktreePath: null,
+      createdAt: "2026-07-06T12:00:00.000Z",
+    });
+    expect(input.bootstrap).toMatchObject({
       jarvisWorkerId: "mac-mini-worker",
       jarvisEngine: "codex",
       jarvisRepo: "roughcoder/jarvis-cockpit",
     });
     expect(input.createdAt).toBe("2026-07-06T12:00:00.000Z");
+  });
+});
+
+describe("resolveWorkerTestJobStatus", () => {
+  it("returns an idle presentation before any test job is sent", () => {
+    expect(resolveWorkerTestJobStatus(null)).toEqual({
+      label: "Not sent",
+      detail: "No worker readiness test has been sent from this card.",
+      variant: "outline",
+      timestamp: null,
+    });
+  });
+
+  it("keeps pending test jobs inspectable while the RPC is in flight", () => {
+    expect(
+      resolveWorkerTestJobStatus({
+        state: "pending",
+        updatedAt: "2026-07-06T12:01:00.000Z",
+      }),
+    ).toEqual({
+      label: "Pending",
+      detail: "Dispatch RPC is in flight.",
+      variant: "warning",
+      timestamp: "2026-07-06T12:01:00.000Z",
+    });
+  });
+
+  it("shows the promoted Jarvis thread when dispatch succeeds", () => {
+    expect(
+      resolveWorkerTestJobStatus({
+        state: "dispatched",
+        updatedAt: "2026-07-06T12:02:00.000Z",
+        promotedThreadId: "jarvis-session_sessref_worker_sess_1",
+      }),
+    ).toEqual({
+      label: "Dispatched",
+      detail: "Jarvis accepted the test job as jarvis-session_sessref_worker_sess_1.",
+      variant: "success",
+      timestamp: "2026-07-06T12:02:00.000Z",
+    });
+  });
+
+  it("keeps failed dispatch errors visible on the worker card", () => {
+    expect(
+      resolveWorkerTestJobStatus({
+        state: "failed",
+        updatedAt: "2026-07-06T12:03:00.000Z",
+        error: "missing authority github:write",
+      }),
+    ).toEqual({
+      label: "Failed",
+      detail: "missing authority github:write",
+      variant: "error",
+      timestamp: "2026-07-06T12:03:00.000Z",
+    });
   });
 });
