@@ -12,6 +12,7 @@ export interface NoActiveThreadActionDescriptor {
 
 export interface NoActiveThreadProjectConversationTarget {
   readonly environmentId: string;
+  readonly projectId?: string;
   readonly threadId: string;
 }
 
@@ -92,12 +93,14 @@ export function resolveNoActiveThreadState(
     };
   }
 
-  if (input.latestProjectConversation !== null) {
+  if (input.visibleProjectCount > 0 && (!input.fixtureMode || input.latestProjectConversation)) {
     return {
       headerLabel: "No active project",
       title: "Open a project conversation",
       description:
-        "Continue the latest Jarvis project conversation or choose another project from the sidebar.",
+        input.latestProjectConversation === null
+          ? "Create a Jarvis project conversation or choose another project from the sidebar."
+          : "Continue the latest Jarvis project conversation or choose another project from the sidebar.",
       actions: [
         {
           kind: "open-project-conversation",

@@ -132,6 +132,10 @@ import {
   resolveThreadRouteRef,
   resolveThreadRouteTarget,
 } from "../threadRoutes";
+import {
+  buildProjectConversationRouteParams,
+  formatProjectConversationFailure,
+} from "../jarvisProjectConversations.logic";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
@@ -914,6 +918,7 @@ interface SidebarProjectThreadListProps {
   projectKey: string;
   projectEnvironmentId: EnvironmentId;
   jarvisRegistryProjectId: string | null;
+  projectDisplayName: string;
   projectExpanded: boolean;
   hasOverflowingThreads: boolean;
   hiddenThreadStatus: ThreadStatusPill | null;
@@ -964,10 +969,17 @@ interface SidebarProjectThreadListProps {
 function SidebarJarvisProjectConversations({
   environmentId,
   projectId,
+  projectName,
 }: {
   readonly environmentId: EnvironmentId;
   readonly projectId: string;
+  readonly projectName: string;
 }) {
+  const navigate = useNavigate();
+  const { isMobile, setOpenMobile } = useSidebar();
+  const createThread = useAtomCommand(serverEnvironment.createJarvisProjectThread, {
+    reportFailure: false,
+  });
   const projectThreadsQuery = useEnvironmentQuery(
     serverEnvironment.jarvisProjectThreads({
       environmentId,
@@ -978,53 +990,157 @@ function SidebarJarvisProjectConversations({
     projectThreadsQuery.data?.ok === true ? (projectThreadsQuery.data.threads ?? []) : [];
   const showPending = !projectThreadsQuery.data && projectThreadsQuery.isPending;
   const showFailed = projectThreadsQuery.error !== null || projectThreadsQuery.data?.ok === false;
+  const navigateToProjectConversation = useCallback(
+    (conversation: { readonly thread_id: string }) => {
+      if (isMobile) {
+        setOpenMobile(false);
+      }
+      void navigate({
+        to: "/jarvis-project/$environmentId/$projectId/$threadId",
+        params: buildProjectConversationRouteParams({
+          environmentId,
+          projectId,
+          threadId: conversation.thread_id,
+        }),
+      });
+    },
+    [environmentId, isMobile, navigate, projectId, setOpenMobile],
+  );
+  const handleCreateProjectConversation = useCallback(async () => {
+    const title = `Conversation for ${projectName}`;
+    const result = await createThread({
+      environmentId,
+      input: {
+        projectId,
+        input: { title },
+      },
+    });
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        toastManager.add({
+          type: "error",
+          title: "Could not create project conversation",
+          description: formatProjectConversationFailure("create", squashAtomCommandFailure(result)),
+        });
+      }
+      return;
+    }
+    if (!result.value.ok || !result.value.thread) {
+      toastManager.add({
+        type: "error",
+        title: "Could not create project conversation",
+        description: formatProjectConversationFailure(
+          "create",
+          result.value.error?.message ?? "Jarvis did not return a project conversation.",
+        ),
+      });
+      return;
+    }
+    projectThreadsQuery.refresh();
+    navigateToProjectConversation(result.value.thread);
+  }, [
+    createThread,
+    environmentId,
+    navigateToProjectConversation,
+    projectId,
+    projectName,
+    projectThreadsQuery,
+  ]);
 
   if (showPending) {
     return (
-      <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
-        <div className="flex h-6 w-full items-center gap-1.5 px-2 text-[10px] text-muted-foreground/60">
-          <LoaderIcon className="size-3 animate-spin" />
-          <span>Checking conversations</span>
-        </div>
-      </SidebarMenuSubItem>
+      <>
+        <SidebarProjectConversationCreateRow
+          onCreate={() => void handleCreateProjectConversation()}
+          disabled
+        />
+        <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
+          <div className="flex h-6 w-full items-center gap-1.5 px-2 text-[10px] text-muted-foreground/60">
+            <LoaderIcon className="size-3 animate-spin" />
+            <span>Checking conversations</span>
+          </div>
+        </SidebarMenuSubItem>
+      </>
     );
   }
 
   if (showFailed) {
     return (
-      <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
-        <div className="flex h-6 w-full items-center px-2 text-[10px] text-destructive/80">
-          <span>Conversations unavailable</span>
-        </div>
-      </SidebarMenuSubItem>
+      <>
+        <SidebarProjectConversationCreateRow
+          onCreate={() => void handleCreateProjectConversation()}
+          disabled={false}
+        />
+        <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
+          <div className="flex h-6 w-full items-center px-2 text-[10px] text-destructive/80">
+            <span>Conversations unavailable</span>
+          </div>
+        </SidebarMenuSubItem>
+      </>
     );
   }
 
   if (conversations.length === 0) {
     return (
-      <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
-        <div className="flex h-6 w-full items-center px-2 text-[10px] text-muted-foreground/60">
-          <span>No project conversations yet</span>
-        </div>
-      </SidebarMenuSubItem>
+      <>
+        <SidebarProjectConversationCreateRow
+          onCreate={() => void handleCreateProjectConversation()}
+          disabled={false}
+        />
+        <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
+          <div className="flex h-6 w-full items-center px-2 text-[10px] text-muted-foreground/60">
+            <span>No project conversations yet</span>
+          </div>
+        </SidebarMenuSubItem>
+      </>
     );
   }
 
   return (
     <>
+      <SidebarProjectConversationCreateRow
+        onCreate={() => void handleCreateProjectConversation()}
+        disabled={false}
+      />
       {conversations.map((conversation) => (
         <SidebarMenuSubItem
           key={conversation.thread_id}
           className="w-full"
           data-thread-selection-safe
         >
-          <div className="flex h-6 w-full min-w-0 items-center gap-1.5 px-2 text-left text-muted-foreground">
+          <button
+            type="button"
+            className="flex h-6 w-full min-w-0 items-center gap-1.5 rounded-md px-2 text-left text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+            onClick={() => navigateToProjectConversation(conversation)}
+          >
             <MessageSquareIcon className="size-3 shrink-0 text-muted-foreground/60" />
             <span className="min-w-0 flex-1 truncate text-xs">{conversation.title}</span>
-          </div>
+          </button>
         </SidebarMenuSubItem>
       ))}
     </>
+  );
+}
+
+function SidebarProjectConversationCreateRow({
+  onCreate,
+  disabled,
+}: {
+  readonly onCreate: () => void;
+  readonly disabled: boolean;
+}) {
+  return (
+    <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
+      <button
+        type="button"
+        className="flex h-6 w-full min-w-0 items-center gap-1.5 rounded-md px-2 text-left text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+        onClick={onCreate}
+        disabled={disabled}
+      >
+        <SquarePenIcon className="size-3 shrink-0 text-muted-foreground/60" />
+        <span className="min-w-0 flex-1 truncate text-xs">New conversation</span>
+      </button>
+    </SidebarMenuSubItem>
   );
 }
 
@@ -1035,6 +1151,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     projectKey,
     projectEnvironmentId,
     jarvisRegistryProjectId,
+    projectDisplayName,
     projectExpanded,
     hasOverflowingThreads,
     hiddenThreadStatus,
@@ -1082,6 +1199,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
         <SidebarJarvisProjectConversations
           environmentId={projectEnvironmentId}
           projectId={jarvisRegistryProjectId}
+          projectName={projectDisplayName}
         />
       ) : null}
       {shouldShowThreadPanel && showEmptyThreadState ? (
@@ -2491,6 +2609,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         projectKey={project.projectKey}
         projectEnvironmentId={project.environmentId}
         jarvisRegistryProjectId={project.jarvisRegistryProjectId}
+        projectDisplayName={project.displayName}
         projectExpanded={projectExpanded}
         hasOverflowingThreads={hasOverflowingThreads}
         hiddenThreadStatus={hiddenThreadStatus}
