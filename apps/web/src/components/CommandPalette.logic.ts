@@ -54,6 +54,8 @@ export interface CommandPaletteView {
 
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
 
+export const START_WORK_COMMAND_PALETTE_GROUP_VALUE = "start-work-sources";
+
 export function filterBrowseEntries(input: {
   browseEntries: ReadonlyArray<FilesystemBrowseEntry>;
   browseFilterQuery: string;
@@ -329,6 +331,25 @@ export function getCommandPaletteMode(input: {
     return input.isBrowsing ? "submenu-browse" : "submenu";
   }
   return input.isBrowsing ? "root-browse" : "root";
+}
+
+export function resolveCommandPaletteActiveGroups(input: {
+  currentView: CommandPaletteView | null;
+  rootGroups: ReadonlyArray<CommandPaletteGroup>;
+  sourceSelectionViewValue: string | null;
+  refreshedSourceSelectionGroups: ReadonlyArray<CommandPaletteGroup> | null;
+  refreshedStartWorkGroups: ReadonlyArray<CommandPaletteGroup>;
+}): ReadonlyArray<CommandPaletteGroup> {
+  if (input.currentView?.groups[0]?.value === START_WORK_COMMAND_PALETTE_GROUP_VALUE) {
+    return input.refreshedStartWorkGroups;
+  }
+  if (
+    input.refreshedSourceSelectionGroups !== null &&
+    input.currentView?.groups[0]?.value === input.sourceSelectionViewValue
+  ) {
+    return input.refreshedSourceSelectionGroups;
+  }
+  return input.currentView?.groups ?? input.rootGroups;
 }
 
 export function buildRootGroups(input: {
