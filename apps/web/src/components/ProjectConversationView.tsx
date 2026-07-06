@@ -32,6 +32,15 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
+import {
   archivedProjectConversationSummary,
   defaultProjectRepo,
   extractProjectConversationReply,
@@ -140,6 +149,7 @@ export function ProjectConversationView({
   );
   const [draft, setDraft] = useState("");
   const [turns, setTurns] = useState<LocalTurn[]>([]);
+  const [pendingArchiveConfirmation, setPendingArchiveConfirmation] = useState(false);
   const turnCounter = useRef(0);
   const sendBusy = turns.some((turn) => turn.status === "pending" || turn.status === "streaming");
   const projectName = project?.name ?? projectId;
@@ -244,14 +254,7 @@ export function ProjectConversationView({
     if (conversation === null) {
       return;
     }
-    if (
-      action === "archive" &&
-      !window.confirm(
-        "Archive this project conversation? Jarvis will hide it from the default conversation list.",
-      )
-    ) {
-      return;
-    }
+    setPendingArchiveConfirmation(false);
 
     const result =
       action === "archive"
@@ -354,7 +357,11 @@ export function ProjectConversationView({
                 size="xs"
                 variant="outline"
                 disabled={conversation === null}
-                onClick={() => void writeArchiveState(archived ? "unarchive" : "archive")}
+                onClick={() =>
+                  archived
+                    ? void writeArchiveState("unarchive")
+                    : setPendingArchiveConfirmation(true)
+                }
               >
                 {archived ? (
                   <ArchiveRestoreIcon className="size-3.5" />
@@ -492,6 +499,30 @@ export function ProjectConversationView({
             memoryQuery={memoryQuery}
           />
         </div>
+        <AlertDialog
+          open={pendingArchiveConfirmation}
+          onOpenChange={(open) => {
+            if (!open) {
+              setPendingArchiveConfirmation(false);
+            }
+          }}
+        >
+          <AlertDialogPopup>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Archive project conversation?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Archive this project conversation? Jarvis will hide it from the default conversation
+                list.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+              <Button variant="destructive" onClick={() => void writeArchiveState("archive")}>
+                Archive
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogPopup>
+        </AlertDialog>
       </div>
     </div>
   );
