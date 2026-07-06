@@ -374,6 +374,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverGetJarvisProjectMemory, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetJarvisProjectFiles, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetJarvisProjectThreads, AuthOrchestrationReadScope],
+  [WS_METHODS.serverGetJarvisProjectThread, AuthOrchestrationReadScope],
   [WS_METHODS.serverValidateJarvisWork, AuthOrchestrationReadScope],
   [WS_METHODS.serverCreateJarvisProject, AuthOrchestrationOperateScope],
   [WS_METHODS.serverUpdateJarvisProject, AuthOrchestrationOperateScope],
@@ -387,6 +388,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverRetractJarvisProjectFile, AuthOrchestrationOperateScope],
   [WS_METHODS.serverCreateJarvisProjectThread, AuthOrchestrationOperateScope],
   [WS_METHODS.serverArchiveJarvisProjectThread, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverUnarchiveJarvisProjectThread, AuthOrchestrationOperateScope],
   [WS_METHODS.serverSendJarvisProjectThreadTurn, AuthOrchestrationOperateScope],
   [WS_METHODS.serverDiscoverSourceControl, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetTraceDiagnostics, AuthOrchestrationReadScope],
@@ -1589,13 +1591,42 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
-        [WS_METHODS.serverGetJarvisProjectThreads]: ({ projectId }) =>
+        [WS_METHODS.serverGetJarvisProjectThreads]: ({ projectId, includeArchived }) =>
           observeRpcEffect(
             WS_METHODS.serverGetJarvisProjectThreads,
-            jarvisClient.getProjectThreads(projectId).pipe(
+            jarvisClient
+              .getProjectThreads(
+                projectId,
+                includeArchived === undefined ? undefined : { includeArchived },
+              )
+              .pipe(
+                Effect.map((threads) => ({
+                  ok: true,
+                  threads,
+                })),
+                Effect.catch((error) =>
+                  Effect.succeed({
+                    ok: false,
+                    error: {
+                      message:
+                        error instanceof Error && error.message.trim().length > 0
+                          ? error.message
+                          : "Jarvis project conversations request failed.",
+                    },
+                  }),
+                ),
+              ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverGetJarvisProjectThread]: ({ projectId, threadId }) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetJarvisProjectThread,
+            jarvisClient.getProjectThread(projectId, threadId).pipe(
               Effect.map((threads) => ({
                 ok: true,
-                threads,
+                thread: threads,
               })),
               Effect.catch((error) =>
                 Effect.succeed({
@@ -1604,7 +1635,7 @@ const makeWsRpcLayer = (
                     message:
                       error instanceof Error && error.message.trim().length > 0
                         ? error.message
-                        : "Jarvis project conversations request failed.",
+                        : "Jarvis project conversation detail request failed.",
                   },
                 }),
               ),
@@ -1917,6 +1948,30 @@ const makeWsRpcLayer = (
                       error instanceof Error && error.message.trim().length > 0
                         ? error.message
                         : "Jarvis project conversation archive failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverUnarchiveJarvisProjectThread]: ({ projectId, threadId }) =>
+          observeRpcEffect(
+            WS_METHODS.serverUnarchiveJarvisProjectThread,
+            jarvisClient.unarchiveProjectThread(projectId, threadId).pipe(
+              Effect.map((thread) => ({
+                ok: true,
+                thread,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project conversation unarchive failed.",
                   },
                 }),
               ),

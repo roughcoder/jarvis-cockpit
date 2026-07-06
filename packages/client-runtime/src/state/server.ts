@@ -222,6 +222,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:jarvis-project-threads",
       tag: WS_METHODS.serverGetJarvisProjectThreads,
     }),
+    jarvisProjectThread: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:jarvis-project-thread",
+      tag: WS_METHODS.serverGetJarvisProjectThread,
+    }),
     validateJarvisWork: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:validate-jarvis-work",
       tag: WS_METHODS.serverValidateJarvisWork,
@@ -295,6 +299,12 @@ export function createServerEnvironmentAtoms<R, E>(
     archiveJarvisProjectThread: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:archive-jarvis-project-thread",
       tag: WS_METHODS.serverArchiveJarvisProjectThread,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    unarchiveJarvisProjectThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:unarchive-jarvis-project-thread",
+      tag: WS_METHODS.serverUnarchiveJarvisProjectThread,
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),

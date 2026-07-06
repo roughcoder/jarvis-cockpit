@@ -2,6 +2,8 @@ import type {
   EnvironmentId,
   JarvisProject,
   JarvisProjectFile,
+  JarvisProjectThreadDetail,
+  JarvisProjectThreadMessage,
   JarvisProjectThread,
   JarvisProjectThreadTurnResult,
   ThreadId,
@@ -29,6 +31,17 @@ export type ProjectConversationRouteRenderState =
 export interface ProjectConversationTurnDraft {
   readonly prompt: string;
   readonly response: string;
+  readonly status: ProjectConversationSendStatus;
+  readonly error: string | null;
+}
+
+export interface ProjectConversationMessageView {
+  readonly id: string;
+  readonly role: "user" | "assistant";
+  readonly content: string;
+  readonly observedAt: string;
+  readonly peerId: string | null;
+  readonly source: "history" | "local";
   readonly status: ProjectConversationSendStatus;
   readonly error: string | null;
 }
@@ -86,6 +99,30 @@ export function sortProjectConversations(
   return [...threads].sort((left, right) => right.updated_at.localeCompare(left.updated_at));
 }
 
+export function isProjectConversationArchived(
+  thread: Pick<JarvisProjectThread, "archived_at"> | null,
+): boolean {
+  return typeof thread?.archived_at === "string" && thread.archived_at.trim().length > 0;
+}
+
+export function archivedProjectConversationSummary(
+  thread: Pick<JarvisProjectThread, "archived_at" | "archived_by" | "archive_reason"> | null,
+): string | null {
+  if (thread === null || !isProjectConversationArchived(thread)) {
+    return null;
+  }
+  const parts = [`Archived ${formatArchivedValue(thread.archived_at)}`];
+  const actor = thread.archived_by?.trim();
+  if (actor) {
+    parts.push(`by ${actor}`);
+  }
+  const reason = thread.archive_reason?.trim();
+  if (reason) {
+    parts.push(`- ${reason}`);
+  }
+  return parts.join(" ");
+}
+
 export function latestProjectConversation(
   threads: ReadonlyArray<JarvisProjectThread>,
 ): JarvisProjectThread | null {
@@ -115,13 +152,16 @@ export function formatJarvisCommandFailure(error: unknown, fallback: string): st
 }
 
 export function formatProjectConversationFailure(
-  action: "create" | "send" | "archive" | "unarchive",
+  action: "create" | "detail" | "send" | "archive" | "unarchive",
   error: unknown,
 ): string {
   const message = formatJarvisCommandFailure(
     error,
     "The Jarvis project conversation request failed.",
   );
+  if (action === "detail" && /projects\.threads\.get.*HTTP (404|405|501)/u.test(message)) {
+    return "This Jarvis brain does not expose project conversation history yet. Cockpit will show new turns from this session only.";
+  }
   if (action === "archive" || action === "unarchive") {
     if (/projects\.threads\.archive.*HTTP (404|405|501)/u.test(message)) {
       return "This Jarvis brain does not expose project conversation archive yet. Cockpit reached Jarvis, but the conversation archive route is unavailable.";
@@ -131,6 +171,19 @@ export function formatProjectConversationFailure(
     return `Jarvis denied the project conversation ${action}${formatStatusDetail(message)}`;
   }
   return message;
+}
+
+export function isProjectConversationDetailRouteGap(error: unknown): boolean {
+  return /projects\.threads\.get.*HTTP (404|405|501)/u.test(formatJarvisCommandFailure(error, ""));
+}
+
+export function projectConversationHistoryMessages(
+  thread: Pick<JarvisProjectThreadDetail, "messages"> | null,
+): ProjectConversationMessageView[] {
+  return (thread?.messages ?? [])
+    .map((message, index) => historyMessageView(message, index))
+    .filter((message) => message.content.trim().length > 0)
+    .sort((left, right) => left.observedAt.localeCompare(right.observedAt));
 }
 
 export function extractProjectConversationReply(result: JarvisProjectThreadTurnResult): string {
@@ -165,6 +218,27 @@ export function reduceProjectConversationSendState(
     case "failed":
       return { ...state, status: "failed", error: event.error };
   }
+}
+
+function historyMessageView(
+  message: JarvisProjectThreadMessage,
+  index: number,
+): ProjectConversationMessageView {
+  return {
+    id: `history-${index}-${message.observed_at}`,
+    role: message.role,
+    content: message.content,
+    observedAt: message.observed_at,
+    peerId: message.peer_id?.trim() || null,
+    source: "history",
+    status: "completed",
+    error: null,
+  };
+}
+
+function formatArchivedValue(value: string | null | undefined): string {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : "by Jarvis";
 }
 
 function extractReplyTextFromEvent(event: Record<string, unknown>): string[] {

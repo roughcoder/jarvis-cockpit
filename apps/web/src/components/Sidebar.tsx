@@ -135,6 +135,7 @@ import {
 import {
   buildProjectConversationRouteParams,
   formatProjectConversationFailure,
+  isProjectConversationArchived,
   resolveProjectConversationRouteParams,
   type ProjectConversationRouteParams,
 } from "../jarvisProjectConversations.logic";
@@ -983,13 +984,14 @@ function SidebarJarvisProjectConversations({
 }) {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
+  const [showArchived, setShowArchived] = useState(false);
   const createThread = useAtomCommand(serverEnvironment.createJarvisProjectThread, {
     reportFailure: false,
   });
   const projectThreadsQuery = useEnvironmentQuery(
     serverEnvironment.jarvisProjectThreads({
       environmentId,
-      input: { projectId },
+      input: { projectId, includeArchived: showArchived },
     }),
   );
   const conversations =
@@ -1098,6 +1100,10 @@ function SidebarJarvisProjectConversations({
             <span>No project conversations yet</span>
           </div>
         </SidebarMenuSubItem>
+        <SidebarProjectConversationArchivedToggle
+          showArchived={showArchived}
+          onToggle={() => setShowArchived((value) => !value)}
+        />
       </>
     );
   }
@@ -1112,20 +1118,48 @@ function SidebarJarvisProjectConversations({
         <SidebarProjectConversationRow
           key={conversation.thread_id}
           title={conversation.title}
+          archived={isProjectConversationArchived(conversation)}
           isActive={activeThreadId === conversation.thread_id}
           onClick={() => navigateToProjectConversation(conversation)}
         />
       ))}
+      <SidebarProjectConversationArchivedToggle
+        showArchived={showArchived}
+        onToggle={() => setShowArchived((value) => !value)}
+      />
     </>
+  );
+}
+
+function SidebarProjectConversationArchivedToggle({
+  showArchived,
+  onToggle,
+}: {
+  readonly showArchived: boolean;
+  readonly onToggle: () => void;
+}) {
+  return (
+    <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
+      <button
+        type="button"
+        className="flex h-6 w-full items-center gap-1.5 px-2 text-left text-[10px] text-muted-foreground/70 hover:text-foreground"
+        onClick={onToggle}
+      >
+        <ArchiveIcon className="size-3 shrink-0" />
+        <span>{showArchived ? "Hide archived" : "Show archived"}</span>
+      </button>
+    </SidebarMenuSubItem>
   );
 }
 
 function SidebarProjectConversationRow({
   title,
+  archived,
   isActive,
   onClick,
 }: {
   readonly title: string;
+  readonly archived: boolean;
   readonly isActive: boolean;
   readonly onClick: () => void;
 }) {
@@ -1140,10 +1174,19 @@ function SidebarProjectConversationRow({
         className={`${resolveThreadRowClassName({ isActive, isSelected: false })} gap-1.5`}
         onClick={onClick}
       >
-        <MessageSquareIcon
-          className={`size-3 shrink-0 ${isActive ? "text-foreground/72" : "text-muted-foreground/60"}`}
-        />
+        {archived ? (
+          <ArchiveIcon
+            className={`size-3 shrink-0 ${isActive ? "text-foreground/72" : "text-muted-foreground/60"}`}
+          />
+        ) : (
+          <MessageSquareIcon
+            className={`size-3 shrink-0 ${isActive ? "text-foreground/72" : "text-muted-foreground/60"}`}
+          />
+        )}
         <span className="min-w-0 flex-1 truncate text-xs">{title}</span>
+        {archived ? (
+          <span className="text-[9px] uppercase text-muted-foreground/60">Archived</span>
+        ) : null}
       </SidebarMenuSubButton>
     </SidebarMenuSubItem>
   );

@@ -492,8 +492,27 @@ export const JarvisProjectThread = Schema.Struct({
   created_at: IsoDateTime,
   updated_at: IsoDateTime,
   created_by: OptionalPossiblyEmptyPublicString,
+  archived_at: OptionalPossiblyEmptyPublicString,
+  archived_by: OptionalPossiblyEmptyPublicString,
+  archive_reason: OptionalPossiblyEmptyPublicString,
 });
 export type JarvisProjectThread = typeof JarvisProjectThread.Type;
+
+export const JarvisProjectThreadMessage = Schema.Struct({
+  role: Schema.Literals(["user", "assistant"]),
+  peer_id: OptionalPossiblyEmptyPublicString,
+  content: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  observed_at: IsoDateTime,
+});
+export type JarvisProjectThreadMessage = typeof JarvisProjectThreadMessage.Type;
+
+export const JarvisProjectThreadDetail = Schema.Struct({
+  ...JarvisProjectThread.fields,
+  messages: Schema.Array(JarvisProjectThreadMessage).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+});
+export type JarvisProjectThreadDetail = typeof JarvisProjectThreadDetail.Type;
 
 export const JarvisProjectThreadsResponse = Schema.Struct({
   api_version: Schema.Literal("v1"),
@@ -502,6 +521,14 @@ export const JarvisProjectThreadsResponse = Schema.Struct({
   threads: Schema.Array(JarvisProjectThread),
 });
 export type JarvisProjectThreadsResponse = typeof JarvisProjectThreadsResponse.Type;
+
+export const JarvisProjectThreadDetailResponse = Schema.Struct({
+  api_version: Schema.Literal("v1"),
+  schema_version: Schema.Number,
+  project_id: JarvisProjectId,
+  thread: JarvisProjectThreadDetail,
+});
+export type JarvisProjectThreadDetailResponse = typeof JarvisProjectThreadDetailResponse.Type;
 
 export const JarvisProjectCreateThreadInput = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
@@ -831,6 +858,13 @@ export const JarvisProjectThreadResult = Schema.Struct({
   error: Schema.optionalKey(JarvisReadError),
 });
 export type JarvisProjectThreadResult = typeof JarvisProjectThreadResult.Type;
+
+export const JarvisProjectThreadDetailResult = Schema.Struct({
+  ok: Schema.Boolean,
+  thread: Schema.optionalKey(JarvisProjectThreadDetail),
+  error: Schema.optionalKey(JarvisReadError),
+});
+export type JarvisProjectThreadDetailResult = typeof JarvisProjectThreadDetailResult.Type;
 
 export const JarvisProjectThreadTurnRpcResult = Schema.Struct({
   ok: Schema.Boolean,

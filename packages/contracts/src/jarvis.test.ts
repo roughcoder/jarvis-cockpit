@@ -8,6 +8,7 @@ import {
   JarvisCockpitCatalog,
   JarvisCockpitEvent,
   JarvisControlResult,
+  JarvisProjectThreadDetailResponse,
   JarvisRestoreCheckpointInput,
   JarvisRunsSnapshot,
   JarvisSessionCheckpointsResponse,
@@ -41,6 +42,7 @@ const decodeRestoreCheckpoint = Schema.decodeUnknownEffect(JarvisRestoreCheckpoi
 const decodeArchive = Schema.decodeUnknownEffect(JarvisArchiveInput);
 const decodeControlResult = Schema.decodeUnknownEffect(JarvisControlResult);
 const decodeSseEvent = Schema.decodeUnknownEffect(JarvisCockpitEvent);
+const decodeProjectThreadDetail = Schema.decodeUnknownEffect(JarvisProjectThreadDetailResponse);
 
 const generatedAt = "2026-07-01T12:00:00+00:00";
 const sessionRef = "sessref_macbook-worker_sess_123";
@@ -176,6 +178,46 @@ it.effect("defaults optional Jarvis catalog option groups omitted by live v1 ser
 
     assert.deepStrictEqual(parsed.branch_strategies, []);
     assert.deepStrictEqual(parsed.landing_policies, []);
+  }),
+);
+
+it.effect("decodes project conversation detail with archived state and history", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectThreadDetail({
+      api_version: "v1",
+      schema_version: 1,
+      project_id: "jarvis",
+      thread: {
+        thread_id: "thread_1",
+        project_id: "jarvis",
+        session_id: "project:jarvis:orchestrator:thread_1",
+        title: "Planning",
+        created_at: generatedAt,
+        updated_at: generatedAt,
+        created_by: "neil",
+        archived_at: "2026-07-06T10:00:00+00:00",
+        archived_by: "neil",
+        archive_reason: "superseded",
+        messages: [
+          {
+            role: "user",
+            peer_id: "neil",
+            content: "What next?",
+            observed_at: "2026-07-06T10:01:00+00:00",
+          },
+          {
+            role: "assistant",
+            peer_id: "jarvis",
+            content: "Continue Phase 5.",
+            observed_at: "2026-07-06T10:02:00+00:00",
+          },
+        ],
+      },
+    });
+
+    assert.strictEqual(parsed.thread.archived_by, "neil");
+    assert.strictEqual(parsed.thread.messages[0]?.role, "user");
+    assert.strictEqual(parsed.thread.messages[1]?.content, "Continue Phase 5.");
   }),
 );
 

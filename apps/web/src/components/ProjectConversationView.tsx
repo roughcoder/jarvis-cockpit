@@ -13,6 +13,7 @@ import {
 import { useMemo, useRef, useState } from "react";
 import {
   ArchiveIcon,
+  ArchiveRestoreIcon,
   BrainIcon,
   FileTextIcon,
   GitBranchIcon,
@@ -31,11 +32,16 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
 import { cn } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import {
+  archivedProjectConversationSummary,
   defaultProjectRepo,
   extractProjectConversationReply,
   formatProjectConversationFailure,
+  isProjectConversationArchived,
+  isProjectConversationDetailRouteGap,
+  projectConversationHistoryMessages,
   sortProjectConversations,
   visibleProjectFiles,
+  type ProjectConversationMessageView,
   type ProjectConversationSendStatus,
 } from "../jarvisProjectConversations.logic";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
@@ -75,7 +81,13 @@ export function ProjectConversationView({
   const threadsQuery = useEnvironmentQuery(
     serverEnvironment.jarvisProjectThreads({
       environmentId,
-      input: { projectId },
+      input: { projectId, includeArchived: true },
+    }),
+  );
+  const threadDetailQuery = useEnvironmentQuery(
+    serverEnvironment.jarvisProjectThread({
+      environmentId,
+      input: { projectId, threadId: String(threadId) },
     }),
   );
   const memoryQuery = useEnvironmentQuery(
@@ -93,6 +105,12 @@ export function ProjectConversationView({
   const sendTurn = useAtomCommand(serverEnvironment.sendJarvisProjectThreadTurn, {
     reportFailure: false,
   });
+  const archiveThread = useAtomCommand(serverEnvironment.archiveJarvisProjectThread, {
+    reportFailure: false,
+  });
+  const unarchiveThread = useAtomCommand(serverEnvironment.unarchiveJarvisProjectThread, {
+    reportFailure: false,
+  });
   const project =
     projectsQuery.data?.ok === true
       ? ((projectsQuery.data.projects ?? []).find((candidate) => candidate.id === projectId) ??
@@ -106,7 +124,16 @@ export function ProjectConversationView({
     [threadsQuery.data],
   );
   const conversation =
-    conversations.find((candidate) => candidate.thread_id === String(threadId)) ?? null;
+    threadDetailQuery.data?.ok === true && threadDetailQuery.data.thread
+      ? threadDetailQuery.data.thread
+      : (conversations.find((candidate) => candidate.thread_id === String(threadId)) ?? null);
+  const historyMessages = useMemo(
+    () =>
+      projectConversationHistoryMessages(
+        threadDetailQuery.data?.ok === true ? (threadDetailQuery.data.thread ?? null) : null,
+      ),
+    [threadDetailQuery.data],
+  );
   const files = useMemo(
     () => visibleProjectFiles(filesQuery.data?.ok === true ? (filesQuery.data.files ?? []) : []),
     [filesQuery.data],
@@ -117,10 +144,17 @@ export function ProjectConversationView({
   const sendBusy = turns.some((turn) => turn.status === "pending" || turn.status === "streaming");
   const projectName = project?.name ?? projectId;
   const defaultRepo = defaultProjectRepo(project);
-  const archiveRouteGap = true;
+  const archived = isProjectConversationArchived(conversation);
+  const archiveSummary = archivedProjectConversationSummary(conversation);
+  const detailFallback =
+    threadDetailQuery.data?.ok === false &&
+    isProjectConversationDetailRouteGap(threadDetailQuery.data.error?.message)
+      ? formatProjectConversationFailure("detail", threadDetailQuery.data.error?.message)
+      : null;
 
   const refreshConversationData = () => {
     threadsQuery.refresh();
+    threadDetailQuery.refresh();
     memoryQuery.refresh();
     filesQuery.refresh();
   };
@@ -145,7 +179,7 @@ export function ProjectConversationView({
 
   const sendPrompt = async (prompt: string, existingTurnId?: string) => {
     const text = prompt.trim();
-    if (text.length === 0 || sendBusy) return;
+    if (text.length === 0 || sendBusy || archived) return;
 
     const turnId = existingTurnId ?? `project-turn-${Date.now()}-${turnCounter.current++}`;
     if (existingTurnId) {
@@ -206,6 +240,74 @@ export function ProjectConversationView({
     refreshConversationData();
   };
 
+  const writeArchiveState = async (action: "archive" | "unarchive") => {
+    if (conversation === null) {
+      return;
+    }
+    if (
+      action === "archive" &&
+      !window.confirm(
+        "Archive this project conversation? Jarvis will hide it from the default conversation list.",
+      )
+    ) {
+      return;
+    }
+
+    const result =
+      action === "archive"
+        ? await archiveThread({
+            environmentId,
+            input: {
+              projectId,
+              threadId: String(threadId),
+              input: {},
+            },
+          })
+        : await unarchiveThread({
+            environmentId,
+            input: {
+              projectId,
+              threadId: String(threadId),
+            },
+          });
+
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const message = formatProjectConversationFailure(action, squashAtomCommandFailure(result));
+        toastManager.add({
+          type: "error",
+          title:
+            action === "archive"
+              ? "Could not archive conversation"
+              : "Could not unarchive conversation",
+          description: message,
+        });
+      }
+      return;
+    }
+    if (!result.value.ok || !result.value.thread) {
+      const message = formatProjectConversationFailure(
+        action,
+        result.value.error?.message ?? "Jarvis did not return the project conversation.",
+      );
+      toastManager.add({
+        type: "error",
+        title:
+          action === "archive"
+            ? "Could not archive conversation"
+            : "Could not unarchive conversation",
+        description: message,
+      });
+      return;
+    }
+
+    refreshConversationData();
+    toastManager.add({
+      type: "success",
+      title: action === "archive" ? "Conversation archived" : "Conversation unarchived",
+    });
+  };
+
   const projectQueryFailed = projectsQuery.error !== null || projectsQuery.data?.ok === false;
   const threadsQueryFailed = threadsQuery.error !== null || threadsQuery.data?.ok === false;
   const loadingProject =
@@ -232,10 +334,12 @@ export function ProjectConversationView({
                 <p className="truncate text-xs text-muted-foreground">
                   {projectName}
                   {defaultRepo ? ` · ${defaultRepo.remote}` : ""}
+                  {archived ? " · Archived" : ""}
                 </p>
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
+              {archived ? <Badge variant="secondary">Archived</Badge> : null}
               <Button
                 size="icon-xs"
                 variant="outline"
@@ -249,25 +353,36 @@ export function ProjectConversationView({
               <Button
                 size="xs"
                 variant="outline"
-                disabled={archiveRouteGap}
-                title="Project conversation archive is unavailable until Jarvis exposes the route."
+                disabled={conversation === null}
+                onClick={() => void writeArchiveState(archived ? "unarchive" : "archive")}
               >
-                <ArchiveIcon className="size-3.5" />
-                Archive unavailable
+                {archived ? (
+                  <ArchiveRestoreIcon className="size-3.5" />
+                ) : (
+                  <ArchiveIcon className="size-3.5" />
+                )}
+                {archived ? "Unarchive" : "Archive"}
               </Button>
             </div>
           </div>
         </header>
 
-        {archiveRouteGap ? (
+        {detailFallback ? (
+          <div className="mx-auto w-full max-w-5xl px-3 pt-3 sm:px-5">
+            <Alert variant="info">
+              <MessageSquareIcon />
+              <AlertTitle>History unavailable</AlertTitle>
+              <AlertDescription>{detailFallback}</AlertDescription>
+            </Alert>
+          </div>
+        ) : null}
+
+        {archiveSummary ? (
           <div className="mx-auto w-full max-w-5xl px-3 pt-3 sm:px-5">
             <Alert variant="info">
               <ArchiveIcon />
-              <AlertTitle>Archive unavailable</AlertTitle>
-              <AlertDescription>
-                Jarvis has not exposed project conversation archive yet. Cockpit will not fake a
-                local archive state.
-              </AlertDescription>
+              <AlertTitle>Archived conversation</AlertTitle>
+              <AlertDescription>{archiveSummary}</AlertDescription>
             </Alert>
           </div>
         ) : null}
@@ -308,7 +423,7 @@ export function ProjectConversationView({
                     </EmptyHeader>
                   </Empty>
                 ) : null}
-                {conversation !== null && turns.length === 0 ? (
+                {conversation !== null && historyMessages.length === 0 && turns.length === 0 ? (
                   <Empty className="min-h-80">
                     <EmptyHeader>
                       <MessageSquareIcon className="mb-4 size-7 text-muted-foreground" />
@@ -320,6 +435,9 @@ export function ProjectConversationView({
                     </EmptyHeader>
                   </Empty>
                 ) : null}
+                {historyMessages.map((message) => (
+                  <ProjectConversationMessageRow key={message.id} message={message} />
+                ))}
                 {turns.map((turn) => (
                   <ProjectConversationTurnRow
                     key={turn.id}
@@ -336,19 +454,29 @@ export function ProjectConversationView({
                   <Textarea
                     value={draft}
                     onChange={(event) => setDraft(event.currentTarget.value)}
-                    placeholder="Send a project conversation turn"
+                    placeholder={
+                      archived
+                        ? "Unarchive this conversation to send a turn"
+                        : "Send a project conversation turn"
+                    }
                     aria-label="Project conversation message"
-                    disabled={conversation === null || sendBusy}
+                    disabled={conversation === null || sendBusy || archived}
                     className="border-transparent shadow-none before:shadow-none"
                   />
                   <div className="mt-2 flex items-center justify-between gap-3">
                     <span className="text-xs text-muted-foreground">
-                      {sendBusy ? "Sending to Jarvis" : "Jarvis project context attached"}
+                      {archived
+                        ? "Archived conversations are read-only"
+                        : sendBusy
+                          ? "Sending to Jarvis"
+                          : "Jarvis project context attached"}
                     </span>
                     <Button
                       size="sm"
                       onClick={() => void sendPrompt(draft)}
-                      disabled={conversation === null || draft.trim().length === 0 || sendBusy}
+                      disabled={
+                        conversation === null || draft.trim().length === 0 || sendBusy || archived
+                      }
                     >
                       {sendBusy ? <Spinner className="size-4" /> : <SendIcon className="size-4" />}
                       Send
@@ -403,6 +531,26 @@ function ProjectConversationTurnRow({
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function ProjectConversationMessageRow({
+  message,
+}: {
+  readonly message: ProjectConversationMessageView;
+}) {
+  const isUser = message.role === "user";
+  return (
+    <div
+      className={cn(
+        "max-w-[85%] rounded-lg px-3 py-2 text-sm",
+        isUser
+          ? "ml-auto bg-primary text-primary-foreground"
+          : "border border-border/70 bg-card/40 text-foreground",
+      )}
+    >
+      <div className="whitespace-pre-wrap">{message.content}</div>
     </div>
   );
 }
