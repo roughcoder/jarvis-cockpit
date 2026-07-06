@@ -218,6 +218,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:jarvis-project-threads",
       tag: WS_METHODS.serverGetJarvisProjectThreads,
     }),
+    validateJarvisWork: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:validate-jarvis-work",
+      tag: WS_METHODS.serverValidateJarvisWork,
+    }),
     createJarvisProject: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:create-jarvis-project",
       tag: WS_METHODS.serverCreateJarvisProject,

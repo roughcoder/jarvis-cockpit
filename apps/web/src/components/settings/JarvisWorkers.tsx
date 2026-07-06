@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   BoxesIcon,
@@ -8,7 +8,7 @@ import {
   ServerIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import type { JarvisWorkerProfile } from "@t3tools/contracts";
+import type { JarvisWorkerProfile, JarvisWorkerSession } from "@t3tools/contracts";
 
 import { cn } from "../../lib/utils";
 import { primaryServerConfigAtom, serverEnvironment } from "../../state/server";
@@ -19,6 +19,9 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
+
+const WORKER_SNAPSHOT_POLL_MS = 2_000;
+const TERMINAL_SESSION_STATUSES = new Set(["completed", "failed", "stopped", "interrupted"]);
 
 function healthVariant(worker: JarvisWorkerProfile): "success" | "warning" | "error" | "outline" {
   if (worker.status === "online" && worker.health === "healthy") return "success";
@@ -41,7 +44,37 @@ function workerRepositories(
   return worker.repositories ?? [];
 }
 
-function WorkerRow({ worker, fixtureMode }: { worker: JarvisWorkerProfile; fixtureMode: boolean }) {
+function sessionVariant(session: JarvisWorkerSession): "success" | "warning" | "error" | "outline" {
+  if (session.status === "completed") return "success";
+  if (session.status === "failed") return "error";
+  if (TERMINAL_SESSION_STATUSES.has(session.status)) return "outline";
+  if (session.status === "needs_input" || session.status === "needs_approval") return "warning";
+  return "outline";
+}
+
+function sessionProgressLabel(session: JarvisWorkerSession): string {
+  const phase = session.status.replaceAll("_", " ");
+  if (TERMINAL_SESSION_STATUSES.has(session.status)) {
+    return `Terminal: ${phase}`;
+  }
+  if (session.pending_input_count > 0) {
+    return "Waiting for input";
+  }
+  if (session.pending_approval_count > 0) {
+    return "Waiting for approval";
+  }
+  return phase;
+}
+
+function WorkerRow({
+  fixtureMode,
+  sessions,
+  worker,
+}: {
+  worker: JarvisWorkerProfile;
+  sessions: ReadonlyArray<JarvisWorkerSession>;
+  fixtureMode: boolean;
+}) {
   const repositories = workerRepositories(worker);
   const defaultRepository = repositories.find((repository) => repository.is_default);
   const engines = worker.engines.length > 0 ? worker.engines : [];
@@ -157,6 +190,39 @@ function WorkerRow({ worker, fixtureMode }: { worker: JarvisWorkerProfile; fixtu
           ))}
         </div>
       ) : null}
+
+      <div className="mt-3 space-y-2">
+        <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+          <ServerIcon className="size-3" />
+          Dispatch Progress
+        </div>
+        {sessions.length > 0 ? (
+          <div className="space-y-1.5">
+            {sessions.map((session) => (
+              <div
+                key={session.session_ref}
+                className="flex min-w-0 flex-wrap items-center gap-2 rounded-md border bg-background/50 px-2 py-1.5"
+              >
+                <Badge variant={sessionVariant(session)} size="sm">
+                  {sessionProgressLabel(session)}
+                </Badge>
+                <span className="min-w-0 flex-1 truncate text-xs text-foreground">
+                  {session.title}
+                </span>
+                {session.repo ? (
+                  <span className="max-w-48 truncate text-[11px] text-muted-foreground">
+                    {session.repo}
+                  </span>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <span className="text-xs text-muted-foreground">
+            No active or terminal dispatches reported for this worker.
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -174,10 +240,29 @@ export function JarvisWorkersPanel() {
   );
   const result = snapshotQuery.data;
   const workers = result?.snapshot?.workers ?? [];
+  useEffect(() => {
+    if (!primaryEnvironment) return;
+    const id = window.setInterval(() => {
+      snapshotQuery.refresh();
+    }, WORKER_SNAPSHOT_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [primaryEnvironment, snapshotQuery]);
   const sortedWorkers = useMemo(
     () => [...workers].sort((left, right) => left.display_name.localeCompare(right.display_name)),
     [workers],
   );
+  const sessionsByWorker = useMemo(() => {
+    const byWorker = new Map<string, JarvisWorkerSession[]>();
+    for (const session of result?.snapshot?.sessions ?? []) {
+      const sessions = byWorker.get(session.worker_id) ?? [];
+      sessions.push(session);
+      byWorker.set(session.worker_id, sessions);
+    }
+    for (const sessions of byWorker.values()) {
+      sessions.sort((left, right) => right.updated_at.localeCompare(left.updated_at));
+    }
+    return byWorker;
+  }, [result?.snapshot?.sessions]);
   const totalActiveSessions = workers.reduce(
     (total, worker) => total + worker.capacity.active_sessions,
     0,
@@ -254,7 +339,12 @@ export function JarvisWorkersPanel() {
         ) : null}
 
         {sortedWorkers.map((worker) => (
-          <WorkerRow key={worker.worker_id} worker={worker} fixtureMode={fixtureMode} />
+          <WorkerRow
+            key={worker.worker_id}
+            worker={worker}
+            sessions={sessionsByWorker.get(worker.worker_id) ?? []}
+            fixtureMode={fixtureMode}
+          />
         ))}
       </SettingsSection>
     </SettingsPageContainer>

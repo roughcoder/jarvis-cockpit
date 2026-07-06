@@ -2,6 +2,7 @@ import type {
   ApprovalRequestId,
   EnvironmentId,
   JarvisProject,
+  JarvisStartWorkInput,
   JarvisWorkerProfile,
   ModelSelection,
   PreviewAnnotationPayload,
@@ -15,6 +16,7 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 import {
+  JarvisWorkerId,
   ProviderDriverKind,
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -144,6 +146,7 @@ import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentQuery } from "../../state/query";
+import { buildStartWorkRoutingSummary, type StartWorkRoutingSummary } from "../startWork.logic";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -261,6 +264,7 @@ function ComposerJarvisRoutingControls(props: {
   selectedEngine: string;
   selectedWorkerOverrideId: string | null;
   defaultWorkerId: string | null;
+  routingSummary: StartWorkRoutingSummary;
   compatibilityWarning: string | null;
   onProjectSelect: (projectId: string) => void;
   onRepoSelect: (repoRemote: string | null) => void;
@@ -463,6 +467,14 @@ function ComposerJarvisRoutingControls(props: {
           </TooltipPopup>
         </Tooltip>
       ) : null}
+      <span
+        className={cn(
+          "hidden max-w-44 truncate text-[11px] sm:inline",
+          props.routingSummary.canDispatch ? "text-muted-foreground" : "text-warning-foreground",
+        )}
+      >
+        {props.routingSummary.engineSupport} · {props.routingSummary.compatibilityLabel}
+      </span>
     </>
   );
 }
@@ -475,6 +487,7 @@ function ComposerJarvisRoutingMenuContent(props: {
   selectedEngine: string;
   selectedWorkerOverrideId: string | null;
   defaultWorkerId: string | null;
+  routingSummary: StartWorkRoutingSummary;
   compatibilityWarning: string | null;
   onProjectSelect: (projectId: string) => void;
   onRepoSelect: (repoRemote: string | null) => void;
@@ -597,6 +610,9 @@ function ComposerJarvisRoutingMenuContent(props: {
           {props.compatibilityWarning}
         </MenuGroupLabel>
       ) : null}
+      <MenuGroupLabel className="max-w-72 normal-case text-muted-foreground">
+        Engine {props.routingSummary.engineSupport}; {props.routingSummary.compatibilityLabel}.
+      </MenuGroupLabel>
     </>
   );
 }
@@ -1440,9 +1456,67 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => selectedJarvisRepoEntry?.remote ?? jarvisRepoForProject(selectedJarvisProject),
     [selectedJarvisProject, selectedJarvisRepoEntry],
   );
+  const jarvisValidationInput = useMemo<JarvisStartWorkInput | null>(() => {
+    if (!canRouteJarvisStart) {
+      return null;
+    }
+    return {
+      phrase: "Validate Jarvis start routing.",
+      source: "manual",
+      start: false,
+      ...(selectedJarvisRepo ? { repo: selectedJarvisRepo } : {}),
+      ...(selectedJarvisEngine ? { engine: selectedJarvisEngine } : {}),
+      ...(selectedWorkerOverrideIdForDispatch
+        ? { worker_id: JarvisWorkerId.make(selectedWorkerOverrideIdForDispatch) }
+        : {}),
+      branch_strategy: "auto",
+    };
+  }, [
+    canRouteJarvisStart,
+    selectedJarvisEngine,
+    selectedJarvisRepo,
+    selectedWorkerOverrideIdForDispatch,
+  ]);
+  const jarvisValidationQuery = useEnvironmentQuery(
+    jarvisValidationInput === null
+      ? null
+      : serverEnvironment.validateJarvisWork({
+          environmentId,
+          input: { input: jarvisValidationInput },
+        }),
+  );
+  const jarvisRoutingSummary = useMemo(
+    () =>
+      buildStartWorkRoutingSummary({
+        projects: environmentProjects,
+        workers: jarvisWorkers,
+        selectedProjectId: selectedJarvisProject?.id ?? null,
+        selectedRepo: selectedJarvisRepo,
+        selectedWorkerId: selectedWorkerOverrideIdForDispatch,
+        engine: selectedJarvisEngine,
+        validation: jarvisValidationQuery.data?.result ?? null,
+        validationPending: jarvisValidationQuery.isPending,
+        validationError:
+          jarvisValidationQuery.error ?? jarvisValidationQuery.data?.error?.message ?? null,
+      }),
+    [
+      environmentProjects,
+      jarvisValidationQuery.data,
+      jarvisValidationQuery.error,
+      jarvisValidationQuery.isPending,
+      jarvisWorkers,
+      selectedJarvisEngine,
+      selectedJarvisProject,
+      selectedJarvisRepo,
+      selectedWorkerOverrideIdForDispatch,
+    ],
+  );
   const jarvisCompatibilityWarning = useMemo(() => {
     if (!canRouteJarvisStart) {
       return null;
+    }
+    if (jarvisRoutingSummary.validationMessages.length > 0) {
+      return jarvisRoutingSummary.validationMessages.join(" · ");
     }
     if (jarvisSnapshotQuery.isPending && jarvisWorkers.length === 0) {
       return null;
@@ -1464,6 +1538,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     compatibleJarvisWorkers.length,
     canRouteJarvisStart,
     jarvisSnapshotQuery.isPending,
+    jarvisRoutingSummary.validationMessages,
     jarvisWorkers.length,
     selectedJarvisEngine,
     selectedJarvisProject,
@@ -3151,6 +3226,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           selectedEngine={selectedJarvisEngine}
                           selectedWorkerOverrideId={selectedWorkerOverrideIdForDispatch}
                           defaultWorkerId={jarvisDefaultWorkerId}
+                          routingSummary={jarvisRoutingSummary}
                           compatibilityWarning={jarvisCompatibilityWarning}
                           onProjectSelect={handleJarvisProjectSelect}
                           onRepoSelect={setSelectedJarvisRepoRemote}
@@ -3171,6 +3247,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         selectedEngine={selectedJarvisEngine}
                         selectedWorkerOverrideId={selectedWorkerOverrideIdForDispatch}
                         defaultWorkerId={jarvisDefaultWorkerId}
+                        routingSummary={jarvisRoutingSummary}
                         compatibilityWarning={jarvisCompatibilityWarning}
                         onProjectSelect={handleJarvisProjectSelect}
                         onRepoSelect={setSelectedJarvisRepoRemote}

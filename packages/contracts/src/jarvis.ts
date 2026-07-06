@@ -858,6 +858,13 @@ export const JarvisStartWorkValidationResult = Schema.Struct({
 });
 export type JarvisStartWorkValidationResult = typeof JarvisStartWorkValidationResult.Type;
 
+export const JarvisStartWorkValidationRpcResult = Schema.Struct({
+  ok: Schema.Boolean,
+  result: Schema.optionalKey(JarvisStartWorkValidationResult),
+  error: Schema.optionalKey(JarvisReadError),
+});
+export type JarvisStartWorkValidationRpcResult = typeof JarvisStartWorkValidationRpcResult.Type;
+
 export const JarvisResumeWorkInput = Schema.Struct({
   run_id: Schema.Union([JarvisRunId, Schema.Literal("latest")]),
   prompt: TrimmedNonEmptyString,

@@ -57,10 +57,22 @@ export interface StartWorkCatalogInput {
   };
 }
 
+export interface StartWorkProjectRepositoryInput {
+  readonly name: string;
+  readonly remote: string;
+  readonly default?: boolean;
+}
+
+export interface StartWorkProjectInput {
+  readonly id: string;
+  readonly name: string;
+  readonly repos?: ReadonlyArray<StartWorkProjectRepositoryInput>;
+}
+
 export interface StartWorkWorkerRepositoryInput {
   readonly repo: string;
-  readonly status?: string | null;
-  readonly default_branch?: string | null;
+  readonly status?: string | null | undefined;
+  readonly default_branch?: string | null | undefined;
   readonly is_default?: boolean;
   readonly can_start_work?: boolean;
 }
@@ -68,6 +80,12 @@ export interface StartWorkWorkerRepositoryInput {
 export interface StartWorkWorkerInput {
   readonly worker_id: string;
   readonly display_name?: string | null;
+  readonly status?: string | null | undefined;
+  readonly health?: string | null | undefined;
+  readonly engines?: ReadonlyArray<{
+    readonly engine: string;
+    readonly status?: string | null | undefined;
+  }>;
   readonly repositories?: ReadonlyArray<StartWorkWorkerRepositoryInput>;
 }
 
@@ -80,6 +98,8 @@ export interface BuildStartWorkSourcesInput {
   readonly fixtureMode?: boolean;
   /** Jarvis-owned form/source defaults from `/v1/cockpit/catalog`. */
   readonly catalog?: StartWorkCatalogInput | null;
+  /** Selected Jarvis dispatch route shown in the start-work surface. */
+  readonly routing?: StartWorkRoutingSummaryInput | null;
   /** Public-safe worker rows from the Jarvis snapshot. */
   readonly workers?: ReadonlyArray<StartWorkWorkerInput>;
 }
@@ -96,11 +116,26 @@ export function buildStartWorkSources(
   );
   const defaultEngine = firstNonEmpty(input.catalog?.defaults?.engine);
   const defaultLandingMode = firstNonEmpty(input.catalog?.defaults?.landing_mode);
-  const describeDetails = [
-    defaultRepo ? `Repo: ${defaultRepo}` : "Repo selected by Jarvis",
-    defaultEngine ? `Engine: ${defaultEngine}` : null,
-    defaultLandingMode ? `Landing: ${defaultLandingMode}` : null,
-  ].filter((item): item is string => item !== null);
+  const routingSummary = input.routing
+    ? buildStartWorkRoutingSummary({
+        ...input.routing,
+        fixtureMode: input.fixtureMode === true || input.routing.fixtureMode === true,
+      })
+    : null;
+  const describeDetails =
+    routingSummary !== null
+      ? [
+          `Project: ${routingSummary.projectLabel}`,
+          `Repo: ${routingSummary.repoLabel}`,
+          `Worker: ${routingSummary.workerLabel}`,
+          `Engine: ${routingSummary.engineSupport}`,
+          routingSummary.compatibilityLabel,
+        ]
+      : [
+          defaultRepo ? `Repo: ${defaultRepo}` : "Repo selected by Jarvis",
+          defaultEngine ? `Engine: ${defaultEngine}` : null,
+          defaultLandingMode ? `Landing: ${defaultLandingMode}` : null,
+        ].filter((item): item is string => item !== null);
   const describeTitle = input.fixtureMode ? "Simulate work" : "Describe work";
   const describePrefix = input.fixtureMode
     ? "Freeform objective, simulated by fixture mode. No live workers."
@@ -184,6 +219,129 @@ export interface StartWorkRepositoryOption {
   readonly canStartWork: boolean;
 }
 
+export interface StartWorkValidationSummaryInput {
+  readonly ok?: boolean;
+  readonly validation?:
+    | {
+        readonly can_start: boolean;
+        readonly missing?: ReadonlyArray<string> | undefined;
+        readonly missing_authority?: ReadonlyArray<string> | undefined;
+        readonly reasons?: ReadonlyArray<string> | undefined;
+        readonly notes?: ReadonlyArray<string> | undefined;
+      }
+    | undefined;
+  readonly error?: { readonly message?: string | undefined } | undefined;
+}
+
+export interface StartWorkRoutingSummaryInput {
+  readonly projects?: ReadonlyArray<StartWorkProjectInput>;
+  readonly workers?: ReadonlyArray<StartWorkWorkerInput>;
+  readonly selectedProjectId?: string | null;
+  readonly selectedRepo?: string | null;
+  readonly selectedWorkerId?: string | null;
+  readonly engine?: string | null;
+  readonly validation?: StartWorkValidationSummaryInput | null;
+  readonly validationPending?: boolean;
+  readonly validationError?: string | null;
+  readonly fixtureMode?: boolean;
+}
+
+export interface StartWorkRoutingSummary {
+  readonly projectLabel: string;
+  readonly repoLabel: string;
+  readonly workerLabel: string;
+  readonly compatibilityLabel: string;
+  readonly engineSupport: string;
+  readonly canDispatch: boolean;
+  readonly validationMessages: ReadonlyArray<string>;
+}
+
+export function buildStartWorkRoutingSummary(
+  input: StartWorkRoutingSummaryInput,
+): StartWorkRoutingSummary {
+  const projects = input.projects ?? [];
+  const workers = input.workers ?? [];
+  const selectedProject = selectStartWorkProject(projects, input.selectedProjectId ?? null);
+  const selectedRepo = firstNonEmpty(input.selectedRepo, defaultRepoForProject(selectedProject));
+  const engine = firstNonEmpty(input.engine) ?? "codex";
+  const validationMessages = startWorkValidationMessages(input.validation, input.validationError);
+  const compatibleWorkers = workers.filter(
+    (worker) =>
+      workerIsStartable(worker) &&
+      workerSupportsEngine(worker, engine) &&
+      workerCanStartRepo(worker, selectedRepo),
+  );
+  const selectedWorker = workers.find((worker) => worker.worker_id === input.selectedWorkerId);
+  const selectedWorkerCompatible =
+    selectedWorker !== undefined &&
+    compatibleWorkers.some((worker) => worker.worker_id === selectedWorker.worker_id);
+  const defaultWorker = compatibleWorkers[0] ?? null;
+  const workerLabel =
+    selectedWorker !== undefined
+      ? startWorkWorkerLabel(selectedWorker)
+      : defaultWorker !== null
+        ? `Auto: ${startWorkWorkerLabel(defaultWorker)}`
+        : "Auto";
+  const engineSupported = workers.some((worker) => workerSupportsEngine(worker, engine));
+
+  let compatibilityLabel = "Compatible";
+  if (input.fixtureMode === true) {
+    compatibilityLabel = "Simulation only";
+  } else if (input.validationPending === true) {
+    compatibilityLabel = "Validating";
+  } else if (validationMessages.length > 0) {
+    compatibilityLabel = input.validation?.validation?.can_start === false ? "Blocked" : "Warning";
+  } else if (workers.length === 0) {
+    compatibilityLabel = "No workers reported";
+  } else if (compatibleWorkers.length === 0) {
+    compatibilityLabel = "No compatible worker";
+  } else if (selectedWorker !== undefined && !selectedWorkerCompatible) {
+    compatibilityLabel = "Worker override warning";
+  }
+
+  const canDispatch =
+    input.fixtureMode === true ||
+    (validationMessages.length === 0 &&
+      input.validationPending !== true &&
+      compatibleWorkers.length > 0 &&
+      (selectedWorker === undefined || selectedWorkerCompatible));
+
+  return {
+    projectLabel: selectedProject?.name ?? "No project",
+    repoLabel: selectedRepo ?? "No repo",
+    workerLabel,
+    compatibilityLabel,
+    engineSupport: engineSupported || workers.length === 0 ? engine : `${engine} unsupported`,
+    canDispatch,
+    validationMessages,
+  };
+}
+
+export function startWorkValidationMessages(
+  validation: StartWorkValidationSummaryInput | null | undefined,
+  validationError?: string | null,
+): string[] {
+  const messages: string[] = [];
+  const errorMessage = firstNonEmpty(validationError, validation?.error?.message);
+  if (errorMessage) {
+    messages.push(errorMessage);
+  }
+  const result = validation?.validation;
+  if (!result) {
+    return messages;
+  }
+  const missing = result.missing ?? [];
+  const missingAuthority = result.missing_authority ?? [];
+  if (missing.length > 0) {
+    messages.push(`Missing: ${missing.join(", ")}`);
+  }
+  if (missingAuthority.length > 0) {
+    messages.push(`Missing authority: ${missingAuthority.join(", ")}`);
+  }
+  messages.push(...(result.reasons ?? []));
+  return dedupe(messages);
+}
+
 export function buildStartWorkRepositoryOptions(
   workers: ReadonlyArray<StartWorkWorkerInput>,
 ): StartWorkRepositoryOption[] {
@@ -207,6 +365,73 @@ export function buildStartWorkRepositoryOptions(
       }
       return left.repo.localeCompare(right.repo);
     });
+}
+
+function selectStartWorkProject(
+  projects: ReadonlyArray<StartWorkProjectInput>,
+  selectedProjectId: string | null,
+): StartWorkProjectInput | null {
+  const selected =
+    selectedProjectId === null
+      ? undefined
+      : projects.find((project) => project.id === selectedProjectId);
+  return selected ?? projects[0] ?? null;
+}
+
+function defaultRepoForProject(project: StartWorkProjectInput | null): string | null {
+  const repo = project?.repos?.find((candidate) => candidate.default) ?? project?.repos?.[0];
+  return firstNonEmpty(repo?.remote, repo?.name);
+}
+
+function workerIsStartable(worker: StartWorkWorkerInput): boolean {
+  const status = "status" in worker && typeof worker.status === "string" ? worker.status : null;
+  const health = "health" in worker && typeof worker.health === "string" ? worker.health : null;
+  return status !== "offline" && health !== "unhealthy";
+}
+
+function workerSupportsEngine(worker: StartWorkWorkerInput, engine: string): boolean {
+  const engines = "engines" in worker && Array.isArray(worker.engines) ? worker.engines : [];
+  if (engines.length === 0) {
+    return true;
+  }
+  const selected = engine.trim().toLowerCase();
+  return engines.some((candidate) => {
+    if (typeof candidate !== "object" || candidate === null) {
+      return false;
+    }
+    const candidateEngine =
+      "engine" in candidate && typeof candidate.engine === "string" ? candidate.engine : "";
+    const status =
+      "status" in candidate && typeof candidate.status === "string" ? candidate.status : "";
+    return (
+      candidateEngine.trim().toLowerCase() === selected &&
+      (status === "available" || status === "degraded")
+    );
+  });
+}
+
+function workerCanStartRepo(worker: StartWorkWorkerInput, repo: string | null): boolean {
+  const repositories = worker.repositories ?? [];
+  if (repositories.length === 0 || repo === null) {
+    return true;
+  }
+  const selected = repo.trim().toLowerCase();
+  const selectedName = selected.split("/").at(-1);
+  return repositories.some((repository) => {
+    if (repository.can_start_work !== true) {
+      return false;
+    }
+    const workerRepo = repository.repo.trim().toLowerCase();
+    return workerRepo === selected || workerRepo === selectedName;
+  });
+}
+
+function startWorkWorkerLabel(worker: StartWorkWorkerInput): string {
+  return firstNonEmpty(worker.display_name, worker.worker_id) ?? worker.worker_id;
+}
+
+function dedupe(values: ReadonlyArray<string>): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter((value) => value.length > 0))];
 }
 
 function firstNonEmpty(...values: ReadonlyArray<string | null | undefined>): string | null {
