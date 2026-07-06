@@ -523,6 +523,27 @@ export function resolveThreadRowClassName(input: {
   return cn(baseClassName, "text-muted-foreground hover:bg-accent hover:text-foreground");
 }
 
+export function resolveSidebarProjectConversationActiveThreadId(input: {
+  route: {
+    readonly environmentId: string;
+    readonly projectId: string;
+    readonly threadId: string;
+  } | null;
+  environmentId: string;
+  projectId: string | null;
+}): string | null {
+  if (input.route === null || input.projectId === null) {
+    return null;
+  }
+  if (
+    input.route.environmentId !== input.environmentId ||
+    input.route.projectId !== input.projectId
+  ) {
+    return null;
+  }
+  return input.route.threadId;
+}
+
 export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
 }): ThreadStatusPill | null {
