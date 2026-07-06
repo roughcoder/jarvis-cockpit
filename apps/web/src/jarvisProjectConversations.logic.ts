@@ -20,6 +20,12 @@ export interface ProjectConversationRouteParams {
   readonly threadId: ThreadId;
 }
 
+export type ProjectConversationRouteRenderState =
+  | { readonly status: "invalid" }
+  | { readonly status: "loading" }
+  | { readonly status: "error"; readonly message: string }
+  | { readonly status: "ready"; readonly params: ProjectConversationRouteParams };
+
 export interface ProjectConversationTurnDraft {
   readonly prompt: string;
   readonly response: string;
@@ -54,6 +60,24 @@ export function resolveProjectConversationRouteParams(
     projectId: params.projectId,
     threadId: params.threadId,
   });
+}
+
+export function resolveProjectConversationRouteRenderState(input: {
+  readonly params: ProjectConversationRouteParams | null;
+  readonly shellError: string | null;
+  readonly shellHasSnapshot: boolean;
+  readonly shellPending: boolean;
+}): ProjectConversationRouteRenderState {
+  if (input.params === null) {
+    return { status: "invalid" };
+  }
+  if (input.shellError !== null) {
+    return { status: "error", message: input.shellError };
+  }
+  if (input.shellPending && !input.shellHasSnapshot) {
+    return { status: "loading" };
+  }
+  return { status: "ready", params: input.params };
 }
 
 export function sortProjectConversations(

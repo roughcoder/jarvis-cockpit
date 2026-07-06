@@ -13,6 +13,7 @@ import {
   latestProjectConversation,
   reduceProjectConversationSendState,
   resolveProjectConversationRouteParams,
+  resolveProjectConversationRouteRenderState,
   sortProjectConversations,
   visibleProjectFiles,
 } from "./jarvisProjectConversations.logic";
@@ -55,6 +56,50 @@ describe("project conversation routes", () => {
       threadId: "thread-1",
     });
     expect(resolveProjectConversationRouteParams({ environmentId: "env-1" })).toBeNull();
+  });
+
+  it("resolves every route bootstrap condition to a visible render state", () => {
+    const params = buildProjectConversationRouteParams({
+      environmentId: "env-1",
+      projectId: "jarvis",
+      threadId: "thread-1",
+    });
+
+    expect(
+      resolveProjectConversationRouteRenderState({
+        params: null,
+        shellError: null,
+        shellHasSnapshot: false,
+        shellPending: false,
+      }),
+    ).toEqual({ status: "invalid" });
+
+    expect(
+      resolveProjectConversationRouteRenderState({
+        params,
+        shellError: null,
+        shellHasSnapshot: false,
+        shellPending: true,
+      }),
+    ).toEqual({ status: "loading" });
+
+    expect(
+      resolveProjectConversationRouteRenderState({
+        params,
+        shellError: "Environment bootstrap failed.",
+        shellHasSnapshot: false,
+        shellPending: false,
+      }),
+    ).toEqual({ status: "error", message: "Environment bootstrap failed." });
+
+    expect(
+      resolveProjectConversationRouteRenderState({
+        params,
+        shellError: null,
+        shellHasSnapshot: false,
+        shellPending: false,
+      }),
+    ).toEqual({ status: "ready", params });
   });
 });
 
