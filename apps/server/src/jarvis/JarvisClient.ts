@@ -393,28 +393,27 @@ export const snapshotWithValidSessions = (candidate: unknown) =>
     };
   });
 
-const decodeSnapshotDroppingMalformedSessions = (
-  decode: (input: unknown) => Effect.Effect<JarvisRunsSnapshot, JarvisClientError>,
-) =>
-(candidate: unknown) =>
-  decode(candidate).pipe(
-    Effect.catch((error: JarvisClientError) =>
-      snapshotWithValidSessions(candidate).pipe(
-        Effect.flatMap((sanitized) =>
-          sanitized === null
-            ? Effect.fail(error)
-            : decode(sanitized.candidate).pipe(
-                Effect.tap(() =>
-                  Effect.logWarning(
-                    `Dropped ${sanitized.dropped} malformed session row(s) from Jarvis cockpit snapshot`,
+const decodeSnapshotDroppingMalformedSessions =
+  (decode: (input: unknown) => Effect.Effect<JarvisRunsSnapshot, JarvisClientError>) =>
+  (candidate: unknown) =>
+    decode(candidate).pipe(
+      Effect.catch((error: JarvisClientError) =>
+        snapshotWithValidSessions(candidate).pipe(
+          Effect.flatMap((sanitized) =>
+            sanitized === null
+              ? Effect.fail(error)
+              : decode(sanitized.candidate).pipe(
+                  Effect.tap(() =>
+                    Effect.logWarning(
+                      `Dropped ${sanitized.dropped} malformed session row(s) from Jarvis cockpit snapshot`,
+                    ),
                   ),
+                  Effect.mapError(() => error),
                 ),
-                Effect.mapError(() => error),
-              ),
+          ),
         ),
       ),
-    ),
-  );
+    );
 
 const decodeFor =
   <A>(operation: string, decoder: (input: unknown) => Effect.Effect<A, Schema.SchemaError>) =>
