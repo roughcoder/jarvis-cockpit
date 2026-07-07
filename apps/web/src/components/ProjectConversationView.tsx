@@ -1,10 +1,12 @@
 import { ProjectId } from "@t3tools/contracts";
 import type {
   EnvironmentId,
+  JarvisConversationWorkspace,
   JarvisProject,
   JarvisProjectFile,
   JarvisProjectMemoryResult,
   JarvisTurnAttachment,
+  JarvisTurnWorkspaceInput,
   ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
@@ -29,6 +31,7 @@ import {
   PencilIcon,
   RefreshCwIcon,
   RotateCcwIcon,
+  ServerIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
@@ -81,7 +84,17 @@ import {
   type ProjectConversationMessageView,
 } from "../jarvisProjectConversations.logic";
 import { buildProjectConversationTurnAttachments } from "./projectConversationComposer.logic";
+import {
+  buildTurnWorkspaceInput,
+  clearProjectConversationWorkspaceRepos,
+  createProjectConversationWorkspaceStaging,
+  deriveWorkspaceProvisionSteps,
+  setProjectConversationWorkspaceEngine,
+  shouldPollProjectConversationWorkspace,
+  type ProjectConversationWorkspaceStaging,
+} from "./projectConversationWorkspace.logic";
 import { projectConversationCapabilities } from "./composer/composerCapabilities";
+import { BrainWorkspaceStrip } from "./composer/BrainWorkspaceStrip";
 import {
   buildProjectConversationRenameInput,
   PROJECT_CONTEXT_PANEL_COLLAPSED_STORAGE_KEY,
@@ -98,6 +111,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { toastManager } from "./ui/toast";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
+import { mergeJarvisThreadToolEventsWithReply } from "../jarvisThreadToolEvents.logic";
+import { ThreadToolCallRow } from "./chat/ThreadToolCallRow";
 
 interface ProjectConversationViewProps {
   readonly environmentId: EnvironmentId;
@@ -219,10 +234,17 @@ export function ProjectConversationView({
     false,
     Schema.Boolean,
   );
+  const workspaceStagingKey = `${environmentId}:${projectId}:${String(threadId)}`;
+  const [workspaceStagingByThread, setWorkspaceStagingByThread] = useState<
+    Record<string, ProjectConversationWorkspaceStaging>
+  >({});
+  const workspaceStaging =
+    workspaceStagingByThread[workspaceStagingKey] ?? createProjectConversationWorkspaceStaging();
   const turnCounter = useRef(0);
   const sendBusy = turns.some((turn) => turn.status === "pending" || turn.status === "streaming");
   const projectName = project?.name ?? projectId;
   const archived = isProjectConversationArchived(conversation);
+  const conversationWorkspace = conversation?.workspace ?? null;
   const archiveSummary = archivedProjectConversationSummary(conversation);
   const conversationTitle = resolveProjectConversationTitle({
     serverTitle: conversation?.title ?? "Project conversation",
@@ -255,6 +277,26 @@ export function ProjectConversationView({
     isProjectConversationDetailRouteGap(threadDetailQuery.data.error?.message)
       ? formatProjectConversationFailure("detail", threadDetailQuery.data.error?.message)
       : null;
+  const pollWorkspaceProvision = shouldPollProjectConversationWorkspace({
+    turnInFlight: sendBusy,
+    workspace: conversationWorkspace,
+  });
+
+  const setWorkspaceStaging = (staging: ProjectConversationWorkspaceStaging) => {
+    setWorkspaceStagingByThread((existing) => ({
+      ...existing,
+      [workspaceStagingKey]: staging,
+    }));
+  };
+
+  const clearWorkspaceRepoStaging = () => {
+    setWorkspaceStagingByThread((existing) => ({
+      ...existing,
+      [workspaceStagingKey]: clearProjectConversationWorkspaceRepos(
+        existing[workspaceStagingKey] ?? workspaceStaging,
+      ),
+    }));
+  };
 
   useEffect(() => {
     // Param-only navigation between conversations reuses this component, so reset all
@@ -265,6 +307,38 @@ export function ProjectConversationView({
     setTurns([]);
     turnCounter.current = 0;
   }, [threadId]);
+
+  useEffect(() => {
+    const engine = conversationWorkspace?.engine?.trim().toLowerCase();
+    if (engine !== "codex" && engine !== "claude") {
+      return;
+    }
+    setWorkspaceStagingByThread((existing) => ({
+      ...existing,
+      [workspaceStagingKey]: setProjectConversationWorkspaceEngine(
+        existing[workspaceStagingKey] ?? createProjectConversationWorkspaceStaging(),
+        engine,
+      ),
+    }));
+  }, [conversationWorkspace?.engine, workspaceStagingKey]);
+
+  const threadDetailRefreshRef = useRef(threadDetailQuery.refresh);
+  useEffect(() => {
+    threadDetailRefreshRef.current = threadDetailQuery.refresh;
+  }, [threadDetailQuery.refresh]);
+
+  useEffect(() => {
+    if (!pollWorkspaceProvision) {
+      return;
+    }
+    threadDetailRefreshRef.current();
+    const id = window.setInterval(() => {
+      if (!document.hidden) {
+        threadDetailRefreshRef.current();
+      }
+    }, 2_500);
+    return () => window.clearInterval(id);
+  }, [pollWorkspaceProvision, workspaceStagingKey]);
 
   const refreshConversationData = () => {
     threadsQuery.refresh();
@@ -346,7 +420,7 @@ export function ProjectConversationView({
 
   const markTurn = (
     turnId: string,
-    patch: Pick<LocalTurn, "status"> & Partial<Pick<LocalTurn, "response" | "error">>,
+    patch: Pick<LocalTurn, "status"> & Partial<Pick<LocalTurn, "response" | "error" | "toolItems">>,
   ) => {
     setTurns((existing) =>
       existing.map((turn) =>
@@ -355,6 +429,7 @@ export function ProjectConversationView({
               ...turn,
               ...patch,
               response: patch.response ?? turn.response,
+              toolItems: patch.toolItems ?? turn.toolItems ?? [],
               error: patch.error === undefined ? turn.error : patch.error,
             }
           : turn,
@@ -422,16 +497,18 @@ export function ProjectConversationView({
     options: {
       readonly attachments?: ReadonlyArray<JarvisTurnAttachment>;
       readonly existingTurnId?: string;
+      readonly workspace?: JarvisTurnWorkspaceInput;
     } = {},
   ) => {
     const text = prompt.trim();
     if (text.length === 0 || sendBusy || archived) return;
     const existingTurnId = options.existingTurnId;
     const turnAttachments = existingTurnId ? [] : (options.attachments ?? []);
+    const turnWorkspace = options.workspace;
 
     const turnId = existingTurnId ?? `project-turn-${Date.now()}-${turnCounter.current++}`;
     if (existingTurnId) {
-      markTurn(turnId, { status: "pending", response: "", error: null });
+      markTurn(turnId, { status: "pending", response: "", toolItems: [], error: null });
     } else {
       setTurns((existing) => [
         ...existing,
@@ -439,6 +516,8 @@ export function ProjectConversationView({
           id: turnId,
           prompt: text,
           response: "",
+          toolItems: [],
+          workspaceInput: turnWorkspace ?? null,
           status: "pending",
           error: null,
           createdAt: new Date().toISOString(),
@@ -458,6 +537,7 @@ export function ProjectConversationView({
         input: {
           text,
           ...(turnAttachments.length > 0 ? { attachments: turnAttachments } : {}),
+          ...(turnWorkspace !== undefined ? { workspace: turnWorkspace } : {}),
         },
       },
     });
@@ -494,11 +574,20 @@ export function ProjectConversationView({
       return;
     }
 
-    const reply = extractProjectConversationReply(result.value.result);
-    markTurn(turnId, { status: "completed", response: reply, error: null });
+    const toolItems = mergeJarvisThreadToolEventsWithReply(result.value.result);
+    const mergedReply = toolItems
+      .filter((item) => item.kind === "reply")
+      .map((item) => item.text)
+      .join("")
+      .trim();
+    const reply = mergedReply || extractProjectConversationReply(result.value.result);
+    markTurn(turnId, { status: "completed", response: reply, toolItems, error: null });
     if (!existingTurnId) {
       clearComposerContent(composerDraftTarget);
       composerRef.current?.resetCursorState({ cursor: 0, prompt: "" });
+      if (turnWorkspace !== undefined) {
+        clearWorkspaceRepoStaging();
+      }
     }
     refreshConversationData();
   };
@@ -508,6 +597,7 @@ export function ProjectConversationView({
     if (sendBusy || archived || conversation === null) return;
     const sendContext = composerRef.current?.getSendContext();
     if (!sendContext) return;
+    const workspace = buildTurnWorkspaceInput(workspaceStaging);
     const attachments = await prepareProjectTurnAttachments({
       images: sendContext.images,
       persistedImages: sendContext.persistedImages,
@@ -515,7 +605,10 @@ export function ProjectConversationView({
     if (attachments === null) {
       return;
     }
-    await sendPrompt(sendContext.prompt, { attachments });
+    await sendPrompt(sendContext.prompt, {
+      attachments,
+      ...(workspace !== undefined ? { workspace } : {}),
+    });
   };
 
   const retryMessage = (message: ProjectConversationMessageView): (() => void) | undefined => {
@@ -524,7 +617,11 @@ export function ProjectConversationView({
     if (!retryPrompt || !localTurnId) {
       return undefined;
     }
-    return () => void sendPrompt(retryPrompt, { existingTurnId: localTurnId });
+    return () =>
+      void sendPrompt(retryPrompt, {
+        existingTurnId: localTurnId,
+        ...(message.retryWorkspace !== null ? { workspace: message.retryWorkspace } : {}),
+      });
   };
 
   const writeArchiveState = async (action: "archive" | "unarchive") => {
@@ -816,8 +913,9 @@ export function ProjectConversationView({
                       <MessageSquareIcon className="mb-4 size-7 text-muted-foreground" />
                       <EmptyTitle>{conversation.title}</EmptyTitle>
                       <EmptyDescription>
-                        Updated {formatRelativeTimeLabel(conversation.updated_at)}. Continue the
-                        Jarvis project conversation from this surface.
+                        {conversation.workspace
+                          ? `Updated ${formatRelativeTimeLabel(conversation.updated_at)}. Continue the workspace conversation from this surface.`
+                          : "Planning conversation - no repo access. Attach a repo to let it inspect code."}
                       </EmptyDescription>
                     </EmptyHeader>
                   </Empty>
@@ -826,6 +924,7 @@ export function ProjectConversationView({
                   <ProjectConversationMessageRow
                     key={message.id}
                     message={message}
+                    workspaceProvisionPhase={conversationWorkspace?.provision_phase ?? null}
                     onRetry={retryMessage(message)}
                     retryDisabled={sendBusy}
                   />
@@ -882,6 +981,16 @@ export function ProjectConversationView({
                     settings={settings}
                     keybindings={keybindings}
                     idlePlaceholder="Send a project conversation turn"
+                    belowComposer={
+                      <BrainWorkspaceStrip
+                        compact={false}
+                        project={project}
+                        workspace={conversationWorkspace}
+                        staging={workspaceStaging}
+                        disabled={conversation === null || archived || sendBusy}
+                        onStagingChange={setWorkspaceStaging}
+                      />
+                    }
                     terminalOpen={false}
                     gitCwd={null}
                     promptRef={promptRef}
@@ -919,6 +1028,7 @@ export function ProjectConversationView({
           </main>
           <ProjectConversationContextPanel
             project={project}
+            workspace={conversationWorkspace}
             files={files}
             memoryQuery={memoryQuery}
             collapsed={contextPanelCollapsed}
@@ -969,6 +1079,9 @@ function formatProjectConversationRenameFailure(error: unknown): string {
 
 function formatProjectConversationSendFailure(error: unknown): string {
   const message = formatProjectConversationFailure("send", error);
+  if (/thread_archived|HTTP 409/u.test(message)) {
+    return "This conversation was archived before the turn could be sent. Unarchive it to continue.";
+  }
   if (/validation[_ -]?failed/i.test(message)) {
     return `Jarvis rejected the turn attachments: ${message}`;
   }
@@ -977,14 +1090,20 @@ function formatProjectConversationSendFailure(error: unknown): string {
 
 function ProjectConversationMessageRow({
   message,
+  workspaceProvisionPhase,
   onRetry,
   retryDisabled,
 }: {
   readonly message: ProjectConversationMessageView;
+  readonly workspaceProvisionPhase: string | null;
   readonly onRetry: (() => void) | undefined;
   readonly retryDisabled: boolean;
 }) {
   const isUser = message.role === "user";
+  const showProvisionStepper =
+    !isUser &&
+    message.workspaceProvisionRequested &&
+    (message.status === "pending" || message.status === "streaming");
   return (
     <div
       className={cn(
@@ -996,13 +1115,32 @@ function ProjectConversationMessageRow({
     >
       {isUser ? <div className="whitespace-pre-wrap">{message.content}</div> : null}
       {!isUser && (message.status === "pending" || message.status === "streaming") ? (
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Spinner className="size-4" />
-          {message.content || "Waiting for Jarvis"}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Spinner className="size-4" />
+            {message.content || "Waiting for Jarvis"}
+          </div>
+          {showProvisionStepper ? (
+            <WorkspaceProvisionStepper phase={workspaceProvisionPhase} />
+          ) : null}
         </div>
       ) : null}
       {!isUser && message.status === "completed" ? (
-        <div className="whitespace-pre-wrap">{message.content}</div>
+        message.toolItems.length > 0 ? (
+          <div className="space-y-2">
+            {message.toolItems.map((item) =>
+              item.kind === "tool" ? (
+                <ThreadToolCallRow key={item.id} toolCall={item.toolCall} />
+              ) : (
+                <div key={item.id} className="whitespace-pre-wrap">
+                  {item.text}
+                </div>
+              ),
+            )}
+          </div>
+        ) : (
+          <div className="whitespace-pre-wrap">{message.content}</div>
+        )
       ) : null}
       {!isUser && message.status === "failed" ? (
         <div className="space-y-2">
@@ -1019,13 +1157,52 @@ function ProjectConversationMessageRow({
   );
 }
 
+function WorkspaceProvisionStepper({ phase }: { readonly phase: string | null }) {
+  const steps = deriveWorkspaceProvisionSteps(phase);
+  return (
+    <div className="rounded-md border border-border/60 bg-muted/35 px-2.5 py-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {steps.map((step) => (
+          <div
+            key={step.phase}
+            className={cn(
+              "flex min-w-0 items-center gap-1.5 text-[11px]",
+              step.active
+                ? "font-medium text-foreground"
+                : step.complete
+                  ? "text-success-foreground"
+                  : "text-muted-foreground",
+            )}
+          >
+            <span
+              className={cn(
+                "flex size-4 shrink-0 items-center justify-center rounded-full border text-[9px]",
+                step.active
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : step.complete
+                    ? "border-success/40 bg-success/10 text-success-foreground"
+                    : "border-border bg-background",
+              )}
+            >
+              {step.complete ? <CheckIcon className="size-2.5" /> : null}
+            </span>
+            <span className="truncate">{step.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ProjectConversationContextPanel({
   project,
+  workspace,
   files,
   memoryQuery,
   collapsed,
 }: {
   readonly project: JarvisProject | null;
+  readonly workspace: JarvisConversationWorkspace | null;
   readonly files: JarvisProjectFile[];
   readonly memoryQuery: EnvironmentQueryView<JarvisProjectMemoryResult>;
   readonly collapsed: boolean;
@@ -1052,6 +1229,7 @@ function ProjectConversationContextPanel({
             <div className="text-xs text-muted-foreground">No default repo</div>
           )}
         </section>
+        {workspace ? <ProjectConversationWorkspacePanel workspace={workspace} /> : null}
         <section className="space-y-2">
           <div className="flex items-center gap-2 text-xs font-medium uppercase text-muted-foreground">
             <BrainIcon className="size-3.5" />
@@ -1107,5 +1285,53 @@ function ProjectConversationContextPanel({
         </section>
       </div>
     </aside>
+  );
+}
+
+function ProjectConversationWorkspacePanel({
+  workspace,
+}: {
+  readonly workspace: JarvisConversationWorkspace;
+}) {
+  return (
+    <section className="space-y-2">
+      <div className="flex items-center gap-2 text-xs font-medium uppercase text-muted-foreground">
+        <ServerIcon className="size-3.5" />
+        Workspace
+      </div>
+      <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 text-xs">
+        <span className="text-muted-foreground">Engine</span>
+        <span className="truncate text-foreground">{workspace.engine || "unknown"}</span>
+        <span className="text-muted-foreground">Worker</span>
+        <span className="truncate text-foreground">{workspace.worker_id || "auto"}</span>
+        <span className="text-muted-foreground">Status</span>
+        <span className="truncate text-foreground">{workspace.status || "unknown"}</span>
+      </div>
+      {workspace.worktrees.length > 0 ? (
+        <div className="space-y-2">
+          {workspace.worktrees.map((worktree, index) => (
+            <div
+              key={`${worktree.repo ?? "repo"}:${worktree.name ?? index}`}
+              className="min-w-0 border-t border-border/60 pt-2 first:border-0 first:pt-0"
+            >
+              <div className="truncate text-sm font-medium text-foreground">
+                {worktree.name || worktree.repo || `Worktree ${index + 1}`}
+              </div>
+              <div className="space-y-0.5 text-xs text-muted-foreground">
+                <div className="truncate">repo: {worktree.repo || "unknown"}</div>
+                <div className="truncate">branch: {worktree.branch || "unknown"}</div>
+                <div className="truncate">base: {worktree.base_ref || "default"}</div>
+                <div className="truncate">
+                  status: {worktree.status || "unknown"}
+                  {worktree.provision_phase ? ` / ${worktree.provision_phase}` : ""}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-xs text-muted-foreground">No worktrees projected yet.</div>
+      )}
+    </section>
   );
 }
