@@ -101,6 +101,31 @@ brain-brokered (workers host ACP servers, brain routes; cockpit never runs `acpx
 **Acceptance (phase 1):** a session carries `parent_chat_id`; the snapshot exposes the tree;
 archiving a parent reparents children to root; cockpit renders the nested tree.
 
+## A6. Brain conversation must not fabricate capabilities (from thread review)
+
+**Problem.** In brain conversation `thread_1783429567_9977030b`, asked for a "code review",
+the brain claimed it was "underway"/"reviewing the runtime repo" and hand-waved a tool list —
+having made ZERO review tool calls (only a memory `record_finding` fired). It admitted "the
+review didn't run" only when pushed. Brain conversations are `respond_text` with no
+worktree/repo tools, but nothing stops the model claiming otherwise.
+
+**Ask.** The brain must not claim an action/capability it did not perform via a real tool
+call; when it can't do something from a conversation it declines and offers to escalate
+(dispatch / provision a workspace). See `conversation-quality-findings-2026-07-07.md`.
+
+## A7. Expose tool calls / actions on the project-thread turn stream
+
+**Problem.** The cockpit shows no tool calls for brain conversations because the project-thread
+API is text-only: turn SSE `thread.reply` = `{"reply": "..."}`, detail `messages` =
+`{role, content}`. No tool/action events exist (work-session `/sessions/{ref}/events` DO carry
+`tool.call`/`tool.result`, and the cockpit already renders those). So even the memory write is
+invisible, and a fabricated "review" looks identical to a real one.
+
+**Ask.** Emit the brain's tool calls/actions (memory writes, project switches, function calls)
+as events on the thread turn stream / detail, like work-session events. The cockpit will
+render them inline (reusing `MessagesTimeline`). Makes brain conversations observable and
+exposes fabrication (A6).
+
 ## A5. Per-worker git identity + repo access (still open from batch 1 #5)
 
 **Problem.** Worker eligibility should be "the worker's own git identity can access the repo"
