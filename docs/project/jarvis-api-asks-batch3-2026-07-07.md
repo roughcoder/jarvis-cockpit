@@ -65,6 +65,23 @@ projections.
 **Acceptance.** Dispatch into project Jarvis → the run appears nested under Jarvis in the
 sidebar with the engine icon and live status, not under "Legacy recent work".
 
+## A9. Project-thread attachments need a vision-capable model route
+
+**Problem.** Verified live (2026-07-07): the cockpit correctly attaches an image and sends it
+on the project-thread lane (no client/shape validation error), but the turn returns
+`ended_reason: engine_error`. The brain accepted the attachment shape, then the engine failed
+processing the image — the project thread's model route (`model: "strong"`) is evidently not
+vision-capable, or the gateway vision path errored.
+
+**Ask.** For project-thread turns carrying image attachments, route to (or require) a
+vision-capable gateway model, or surface a clear `validation_failed`/capability error up front
+instead of a generic `engine_error` after the fact. Ideally the catalog exposes which
+model/engine can accept images so the cockpit gates honestly (today it optimistically enables
+attachments for the brain engine).
+
+**Cockpit status:** the send path is verified working; nothing to change cockpit-side until the
+brain route accepts images (or exposes a real per-model attachment capability to gate on).
+
 **Related UX note (cockpit-side, not an API ask):** dispatched work "did nothing for over a
 minute" with no visible progress — the run's `status`/`phase`/`state_reason` exist but aren't
 surfaced inline for these rows; and Auto routing may hit the Mac mini's `refs/heads/jarvis`
