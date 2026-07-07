@@ -744,10 +744,15 @@ export const JarvisRun = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   run_id: JarvisRunId,
+  // Registry project the run belongs to (2026-07-07 brain release, work.dispatched linkage).
+  // Optional so older snapshots still decode; lets the cockpit nest dispatched work under its
+  // project instead of a synthetic "legacy recent work" row.
+  project_id: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   title: TrimmedNonEmptyString,
   objective: OptionalPublicString,
   status: JarvisRunStatus,
   phase: OptionalPublicString,
+  engine: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   repo: OptionalPossiblyEmptyPublicString,
   branch: OptionalPossiblyEmptyPublicString,
   session_count: NonNegativeInt,
@@ -779,6 +784,8 @@ export const JarvisWorkerSession = Schema.Struct({
   worker_id: JarvisWorkerId,
   session_id: JarvisWorkerSessionId,
   run_id: JarvisRunId,
+  // Registry project linkage (optional; see JarvisRun.project_id).
+  project_id: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   title: TrimmedNonEmptyString,
   provider: JarvisProviderId,
   engine: JarvisEngineId,
