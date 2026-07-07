@@ -32,6 +32,25 @@ engine/status) and it does **not** match reliably (verified: neither `session_id
 **Acceptance.** For a project conversation, the cockpit can display its engine icon, model,
 and live status without heuristics; a completed conversation shows why via `ended_reason`.
 
+## A1b. Conversations must be able to act on repos (workspace + worktrees) — see conversation-workspace-model.md
+
+**Problem.** A project conversation is a Honcho memory chat (`BrainSession.respond_text`) with
+NO worktree/worker/filesystem — it knows repo _names_ but has no checkout, so it cannot answer
+"what's the latest on the repos" or touch code. Work sessions (`/v1/work/start`) have worktrees
+but are a separate lane. The conversation surface only exposes the memory lane.
+
+**Ask.** Let a conversation own a **workspace root** and **materialize worktrees on demand**
+(origin default, named base optional), **multi-repo** (N worktrees under one workspace it
+owns — "the folder above the repos"), and run its engine turn in that workspace with git/fs
+tools. Support **escalation**: a memory/orchestrator thread promotes to a working conversation
+without losing history. Provisioning + tool surface must be **engine-unified** (Codex + Claude
+identical). Jarvis/worker-owned; cockpit renders. Reuses repo-access/provisioning + worktree
+cleanup + `parent_chat_id` tree.
+
+**Acceptance.** In a conversation, ask it to check a repo → it provisions a worktree (origin)
+and answers from the real checkout; a two-repo project can materialize both worktrees under one
+workspace; Codex and Claude behave identically.
+
 ## A2. Attachments on the project-thread turn lane (raised on PR #96)
 
 **Problem.** PR #96 enabled attachments on `/v1/sessions/{ref}/turns` and `/v1/work/start`
