@@ -80,4 +80,13 @@ describe("project conversation image attachments", () => {
       false,
     );
   });
+
+  it("treats the brain (jarvis) engine as supporting attachments without a catalog row", () => {
+    expect(projectConversationSupportsImageAttachments({ catalog: null, engine: "jarvis" })).toBe(
+      true,
+    );
+    expect(projectConversationSupportsImageAttachments({ catalog: null, engine: "brain" })).toBe(
+      true,
+    );
+  });
 });

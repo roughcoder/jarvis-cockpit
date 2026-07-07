@@ -124,6 +124,12 @@ export function projectConversationSupportsImageAttachments(input: {
   if (!engine) {
     return false;
   }
+  // Project-thread conversations run on the brain (engine "jarvis"), which accepts image
+  // attachments via the gateway vision model. The brain engine is not a worker-engine catalog
+  // row, so it would never match below — treat it as supported for this lane.
+  if (engine === "jarvis" || engine === "brain") {
+    return true;
+  }
   return (
     input.catalog?.engines?.some(
       (candidate) =>
