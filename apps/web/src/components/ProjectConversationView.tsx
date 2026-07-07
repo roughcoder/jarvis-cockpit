@@ -406,8 +406,8 @@ export function ProjectConversationView({
             COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
           )}
         >
-          <div className="flex min-w-0 items-start justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-2 pt-0.5">
+          <div className="flex w-full min-w-0 items-start justify-between gap-3">
+            <div className="flex min-w-0 flex-1 items-center gap-2 pt-0.5">
               <MessageSquareIcon className="size-4 shrink-0 text-muted-foreground" />
               {renamingConversation ? (
                 <form

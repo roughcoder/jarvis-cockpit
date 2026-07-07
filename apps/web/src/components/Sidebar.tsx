@@ -2805,7 +2805,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           </span>
         </SidebarMenuButton>
         {project.sidebarSourceKind === "jarvis-registry" ? (
-          <div className="pointer-events-none absolute top-[calc(50%+1px)] left-1 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
+          <div className="pointer-events-none absolute top-[calc(50%+1px)] right-1 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
             <Tooltip>
               <TooltipTrigger
                 render={
