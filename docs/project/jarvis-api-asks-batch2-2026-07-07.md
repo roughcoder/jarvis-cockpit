@@ -126,6 +126,24 @@ as events on the thread turn stream / detail, like work-session events. The cock
 render them inline (reusing `MessagesTimeline`). Makes brain conversations observable and
 exposes fabrication (A6).
 
+## A8. Runs/sessions must carry project_id (+ engine) in the snapshot — dispatched work must nest under its project
+
+**Problem.** Dispatching work via "Describe work" into a project (project Jarvis, repo
+roughcoder/jarvis) produces a run/session that appears under **"Legacy recent work"** with a
+terminal `>_` icon, NOT nested under the Jarvis project with an engine icon. Cause: the
+`RunSummary`/`WorkerSession` snapshot projections have `run_id`, `title`, `repo`, `status`,
+`phase`, `branch` but **no `project_id`**. The brain records the linkage on the transient
+`work.dispatched` activity, but the durable run/session doesn't expose it — so the cockpit
+can't map the run to the registry project and falls back to a synthetic `jarvis-run_<id>`
+"legacy work artifact" row. This is the carried-forward gap from Phase 2 / repo-access design.
+
+**Ask.** Add `project_id` (and `engine`) to the run summary/detail and worker-session snapshot
+projections. Then the cockpit nests dispatched work under its project with the correct engine
+icon and live status, instead of the legacy bucket.
+
+**Acceptance.** Dispatch into project Jarvis → the run appears nested under Jarvis in the
+sidebar with the engine icon and status, not under "Legacy recent work".
+
 ## A5. Per-worker git identity + repo access (still open from batch 1 #5)
 
 **Problem.** Worker eligibility should be "the worker's own git identity can access the repo"
