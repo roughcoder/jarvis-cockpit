@@ -10,18 +10,24 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import * as Schema from "effect/Schema";
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
   BrainIcon,
+  CheckIcon,
   FileTextIcon,
   GitBranchIcon,
   MessageSquareIcon,
+  PanelRightCloseIcon,
+  PanelRightOpenIcon,
+  PencilIcon,
   RefreshCwIcon,
   RotateCcwIcon,
   SendIcon,
   TriangleAlertIcon,
+  XIcon,
 } from "lucide-react";
 
 import { isElectron } from "../env";
@@ -30,6 +36,7 @@ import { type EnvironmentQueryView, useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
 import { cn } from "../lib/utils";
+import { useLocalStorage } from "../hooks/useLocalStorage";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import {
   AlertDialog,
@@ -53,12 +60,19 @@ import {
   type ProjectConversationMessageView,
   type ProjectConversationSendStatus,
 } from "../jarvisProjectConversations.logic";
+import {
+  commitProjectConversationLocalRename,
+  PROJECT_CONTEXT_PANEL_COLLAPSED_STORAGE_KEY,
+  resolveProjectContextPanelToggleState,
+  resolveProjectConversationTitle,
+} from "./projectConversationHeader.logic";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { Spinner } from "./ui/spinner";
 import { Textarea } from "./ui/textarea";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { toastManager } from "./ui/toast";
 
 interface ProjectConversationViewProps {
@@ -150,23 +164,82 @@ export function ProjectConversationView({
   const [draft, setDraft] = useState("");
   const [turns, setTurns] = useState<LocalTurn[]>([]);
   const [pendingArchiveConfirmation, setPendingArchiveConfirmation] = useState(false);
+  const [renamingConversation, setRenamingConversation] = useState(false);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [localTitleByThreadId, setLocalTitleByThreadId] = useState<
+    Readonly<Record<string, string>>
+  >({});
+  const [contextPanelCollapsed, setContextPanelCollapsed] = useLocalStorage(
+    PROJECT_CONTEXT_PANEL_COLLAPSED_STORAGE_KEY,
+    false,
+    Schema.Boolean,
+  );
   const turnCounter = useRef(0);
   const sendBusy = turns.some((turn) => turn.status === "pending" || turn.status === "streaming");
   const projectName = project?.name ?? projectId;
-  const defaultRepo = defaultProjectRepo(project);
   const archived = isProjectConversationArchived(conversation);
   const archiveSummary = archivedProjectConversationSummary(conversation);
+  const conversationTitle = resolveProjectConversationTitle({
+    threadId: String(threadId),
+    serverTitle: conversation?.title ?? "Project conversation",
+    localTitleByThreadId,
+  });
+  const contextPanelToggleState = resolveProjectContextPanelToggleState(contextPanelCollapsed);
   const detailFallback =
     threadDetailQuery.data?.ok === false &&
     isProjectConversationDetailRouteGap(threadDetailQuery.data.error?.message)
       ? formatProjectConversationFailure("detail", threadDetailQuery.data.error?.message)
       : null;
 
+  useEffect(() => {
+    setRenamingConversation(false);
+    setRenameDraft("");
+  }, [threadId]);
+
   const refreshConversationData = () => {
     threadsQuery.refresh();
     threadDetailQuery.refresh();
     memoryQuery.refresh();
     filesQuery.refresh();
+  };
+
+  const startConversationRename = () => {
+    if (conversation === null) return;
+    setRenameDraft(conversationTitle.title);
+    setRenamingConversation(true);
+  };
+
+  const cancelConversationRename = () => {
+    setRenamingConversation(false);
+    setRenameDraft("");
+  };
+
+  const commitConversationRename = () => {
+    if (conversation === null) return;
+    const result = commitProjectConversationLocalRename({
+      threadId: String(threadId),
+      serverTitle: conversation.title,
+      draftTitle: renameDraft,
+      localTitleByThreadId,
+    });
+    setLocalTitleByThreadId(result.localTitleByThreadId);
+    setRenameDraft("");
+    setRenamingConversation(false);
+    if (result.status === "empty") {
+      toastManager.add({
+        type: "error",
+        title: "Conversation title not changed",
+        description: "Enter a title before saving.",
+      });
+      return;
+    }
+    if (result.status === "local-only") {
+      toastManager.add({
+        type: "info",
+        title: "Rename shown locally",
+        description: "Jarvis does not expose project conversation rename yet.",
+      });
+    }
   };
 
   const markTurn = (
@@ -327,32 +400,129 @@ export function ProjectConversationView({
             COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
           )}
         >
-          <div className="flex min-w-0 items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-2">
+          <div className="flex min-w-0 items-start justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2 pt-0.5">
               <MessageSquareIcon className="size-4 shrink-0 text-muted-foreground" />
-              <div className="min-w-0">
-                <h2 className="truncate text-sm font-medium text-foreground">
-                  {conversation?.title ?? "Project conversation"}
-                </h2>
-                <p className="truncate text-xs text-muted-foreground">
-                  {projectName}
-                  {defaultRepo ? ` · ${defaultRepo.remote}` : ""}
-                  {archived ? " · Archived" : ""}
-                </p>
-              </div>
+              {renamingConversation ? (
+                <form
+                  className="flex min-w-0 items-center gap-1.5"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    commitConversationRename();
+                  }}
+                >
+                  <input
+                    className="h-7 min-w-0 rounded-md border border-input bg-background px-2 text-sm font-medium text-foreground outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                    value={renameDraft}
+                    aria-label="Conversation title"
+                    onChange={(event) => setRenameDraft(event.currentTarget.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        cancelConversationRename();
+                      }
+                    }}
+                    autoFocus
+                  />
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          type="submit"
+                          size="icon-xs"
+                          variant="outline"
+                          aria-label="Save conversation title locally"
+                        >
+                          <CheckIcon className="size-3.5" />
+                        </Button>
+                      }
+                    />
+                    <TooltipPopup side="bottom">Rename not yet persisted by Jarvis</TooltipPopup>
+                  </Tooltip>
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label="Cancel conversation rename"
+                    onClick={cancelConversationRename}
+                  >
+                    <XIcon className="size-3.5" />
+                  </Button>
+                </form>
+              ) : (
+                <div className="flex min-w-0 items-center gap-2">
+                  <button
+                    type="button"
+                    className="group/title flex min-w-0 cursor-pointer items-center gap-1.5 text-left outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default"
+                    onClick={startConversationRename}
+                    disabled={conversation === null}
+                    title={
+                      conversationTitle.isLocalOnly
+                        ? "Rename not yet persisted by Jarvis"
+                        : "Rename conversation"
+                    }
+                  >
+                    <h2 className="truncate text-sm font-medium text-foreground">
+                      {conversationTitle.title}
+                    </h2>
+                    {conversation !== null ? (
+                      <PencilIcon className="size-3 shrink-0 text-muted-foreground/0 transition-colors group-hover/title:text-muted-foreground group-focus-visible/title:text-muted-foreground" />
+                    ) : null}
+                  </button>
+                  {conversationTitle.isLocalOnly ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Badge variant="outline" className="h-5 shrink-0 text-[10px]">
+                            Local
+                          </Badge>
+                        }
+                      />
+                      <TooltipPopup side="bottom">Rename not yet persisted by Jarvis</TooltipPopup>
+                    </Tooltip>
+                  ) : null}
+                </div>
+              )}
             </div>
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex shrink-0 items-center justify-end gap-2">
               {archived ? <Badge variant="secondary">Archived</Badge> : null}
-              <Button
-                size="icon-xs"
-                variant="outline"
-                aria-label="Refresh project conversation"
-                onClick={refreshConversationData}
-              >
-                <RefreshCwIcon
-                  className={cn("size-3.5", threadsQuery.isPending && "animate-spin")}
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant="outline"
+                      aria-label={contextPanelToggleState.ariaLabel}
+                      onClick={() =>
+                        setContextPanelCollapsed(contextPanelToggleState.nextCollapsed)
+                      }
+                    >
+                      {contextPanelCollapsed ? (
+                        <PanelRightOpenIcon className="size-3.5" />
+                      ) : (
+                        <PanelRightCloseIcon className="size-3.5" />
+                      )}
+                    </Button>
+                  }
                 />
-              </Button>
+                <TooltipPopup side="bottom">{contextPanelToggleState.tooltip}</TooltipPopup>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      size="icon-xs"
+                      variant="outline"
+                      aria-label="Refresh project conversation"
+                      onClick={refreshConversationData}
+                    >
+                      <RefreshCwIcon
+                        className={cn("size-3.5", threadsQuery.isPending && "animate-spin")}
+                      />
+                    </Button>
+                  }
+                />
+                <TooltipPopup side="bottom">Refresh</TooltipPopup>
+              </Tooltip>
               <Button
                 size="xs"
                 variant="outline"
@@ -410,7 +580,12 @@ export function ProjectConversationView({
           </div>
         ) : null}
 
-        <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[minmax(0,1fr)_20rem]">
+        <div
+          className={cn(
+            "grid min-h-0 flex-1 grid-cols-1 overflow-hidden",
+            contextPanelCollapsed ? "lg:grid-cols-1" : "lg:grid-cols-[minmax(0,1fr)_20rem]",
+          )}
+        >
           <main className="relative flex min-h-0 flex-col overflow-hidden">
             <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-5">
               <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 pb-40">
@@ -497,6 +672,7 @@ export function ProjectConversationView({
             project={project}
             files={files}
             memoryQuery={memoryQuery}
+            collapsed={contextPanelCollapsed}
           />
         </div>
         <AlertDialog
@@ -590,13 +766,18 @@ function ProjectConversationContextPanel({
   project,
   files,
   memoryQuery,
+  collapsed,
 }: {
   readonly project: JarvisProject | null;
   readonly files: JarvisProjectFile[];
   readonly memoryQuery: EnvironmentQueryView<JarvisProjectMemoryResult>;
+  readonly collapsed: boolean;
 }) {
   const defaultRepo = defaultProjectRepo(project);
   const memory = memoryQuery.data?.ok === true ? memoryQuery.data.memory : null;
+  if (collapsed) {
+    return null;
+  }
   return (
     <aside className="hidden min-h-0 overflow-y-auto border-l border-border/70 bg-muted/15 px-4 py-4 lg:block">
       <div className="space-y-5">

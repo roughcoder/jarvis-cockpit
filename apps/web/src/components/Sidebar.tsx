@@ -985,7 +985,11 @@ function SidebarJarvisProjectConversations({
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
   const [showArchived, setShowArchived] = useState(false);
+  const [confirmingArchiveThreadId, setConfirmingArchiveThreadId] = useState<string | null>(null);
   const createThread = useAtomCommand(serverEnvironment.createJarvisProjectThread, {
+    reportFailure: false,
+  });
+  const archiveThread = useAtomCommand(serverEnvironment.archiveJarvisProjectThread, {
     reportFailure: false,
   });
   const projectThreadsQuery = useEnvironmentQuery(
@@ -1054,6 +1058,49 @@ function SidebarJarvisProjectConversations({
     projectName,
     projectThreadsQuery,
   ]);
+  const handleArchiveProjectConversation = useCallback(
+    async (conversation: { readonly thread_id: string; readonly title: string }) => {
+      setConfirmingArchiveThreadId(null);
+      const result = await archiveThread({
+        environmentId,
+        input: {
+          projectId,
+          threadId: conversation.thread_id,
+          input: {},
+        },
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          toastManager.add({
+            type: "error",
+            title: "Could not archive conversation",
+            description: formatProjectConversationFailure(
+              "archive",
+              squashAtomCommandFailure(result),
+            ),
+          });
+        }
+        return;
+      }
+      if (!result.value.ok || !result.value.thread) {
+        toastManager.add({
+          type: "error",
+          title: "Could not archive conversation",
+          description: formatProjectConversationFailure(
+            "archive",
+            result.value.error?.message ?? "Jarvis did not return the project conversation.",
+          ),
+        });
+        return;
+      }
+      projectThreadsQuery.refresh();
+      toastManager.add({
+        type: "success",
+        title: "Conversation archived",
+      });
+    },
+    [archiveThread, environmentId, projectId, projectThreadsQuery],
+  );
 
   if (showPending) {
     return (
@@ -1121,6 +1168,14 @@ function SidebarJarvisProjectConversations({
           archived={isProjectConversationArchived(conversation)}
           isActive={activeThreadId === conversation.thread_id}
           onClick={() => navigateToProjectConversation(conversation)}
+          confirmingArchive={confirmingArchiveThreadId === conversation.thread_id}
+          onStartArchiveConfirmation={() => setConfirmingArchiveThreadId(conversation.thread_id)}
+          onCancelArchiveConfirmation={() =>
+            setConfirmingArchiveThreadId((current) =>
+              current === conversation.thread_id ? null : current,
+            )
+          }
+          onArchive={() => void handleArchiveProjectConversation(conversation)}
         />
       ))}
       <SidebarProjectConversationArchivedToggle
@@ -1157,21 +1212,55 @@ function SidebarProjectConversationRow({
   archived,
   isActive,
   onClick,
+  confirmingArchive,
+  onStartArchiveConfirmation,
+  onCancelArchiveConfirmation,
+  onArchive,
 }: {
   readonly title: string;
   readonly archived: boolean;
   readonly isActive: boolean;
   readonly onClick: () => void;
+  readonly confirmingArchive: boolean;
+  readonly onStartArchiveConfirmation: () => void;
+  readonly onCancelArchiveConfirmation: () => void;
+  readonly onArchive: () => void;
 }) {
   const rowButtonRender = useMemo(() => <button type="button" />, []);
+  const stopPropagationOnPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>) => {
+      event.stopPropagation();
+    },
+    [],
+  );
+  const handleStartArchiveConfirmation = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onStartArchiveConfirmation();
+    },
+    [onStartArchiveConfirmation],
+  );
+  const handleArchive = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onArchive();
+    },
+    [onArchive],
+  );
 
   return (
-    <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
+    <SidebarMenuSubItem
+      className="group/project-conversation-row w-full"
+      data-thread-selection-safe
+      onMouseLeave={onCancelArchiveConfirmation}
+    >
       <SidebarMenuSubButton
         render={rowButtonRender}
         size="sm"
         isActive={isActive}
-        className={`${resolveThreadRowClassName({ isActive, isSelected: false })} gap-1.5`}
+        className={`${resolveThreadRowClassName({ isActive, isSelected: false })} relative isolate gap-1.5 pr-8`}
         onClick={onClick}
       >
         {archived ? (
@@ -1186,6 +1275,40 @@ function SidebarProjectConversationRow({
         <span className="min-w-0 flex-1 truncate text-xs">{title}</span>
         {archived ? (
           <span className="text-[9px] uppercase text-muted-foreground/60">Archived</span>
+        ) : null}
+        {!archived ? (
+          confirmingArchive ? (
+            <button
+              type="button"
+              data-thread-selection-safe
+              aria-label={`Confirm archive ${title}`}
+              className="absolute top-1/2 right-0.5 z-20 inline-flex h-5 -translate-y-1/2 cursor-pointer items-center rounded-md bg-destructive/12 px-2 text-[10px] font-medium text-destructive transition-colors hover:bg-destructive/18 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-destructive/40"
+              onPointerDown={stopPropagationOnPointerDown}
+              onClick={handleArchive}
+            >
+              Confirm
+            </button>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <div className="pointer-events-none absolute top-1/2 right-0.5 z-20 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-conversation-row:pointer-events-auto group-hover/project-conversation-row:opacity-100 group-focus-within/project-conversation-row:pointer-events-auto group-focus-within/project-conversation-row:opacity-100">
+                    <button
+                      type="button"
+                      data-thread-selection-safe
+                      aria-label={`Archive ${title}`}
+                      className={SIDEBAR_ICON_ACTION_BUTTON_CLASS}
+                      onPointerDown={stopPropagationOnPointerDown}
+                      onClick={handleStartArchiveConfirmation}
+                    >
+                      <ArchiveIcon className="size-3.5" />
+                    </button>
+                  </div>
+                }
+              />
+              <TooltipPopup side="top">Archive</TooltipPopup>
+            </Tooltip>
+          )
         ) : null}
       </SidebarMenuSubButton>
     </SidebarMenuSubItem>
