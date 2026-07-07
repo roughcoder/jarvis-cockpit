@@ -10,7 +10,18 @@ already-built cockpit UI.
 
 ---
 
-## 1. Sessions must accept follow-up turns after a completed turn (BLOCKING)
+## 1. Sessions must accept follow-up turns after a completed turn — RESOLVED by 2026-07-07 release
+
+**STATUS: RESOLVED.** After the new Jarvis release deployed (2026-07-07), the cockpit's
+client-side `sessions.turn` 409 → `work/resume` → retry path works end to end. Live test:
+laptop worker, turn 1 replied "READY", turn 2 returned assistant output beginning
+"Resumed and checked the current state. The worktree is still clean on
+`jarvis/jarvis-f83652e7…`". `work/resume` now returns a resumable session instead of the
+previous "no resumable worker session" 409. Multi-step chat is functional. The two
+improvement options below remain worthwhile (they'd remove the client-side choreography and
+fix the mislabelled `interrupted` state) but are no longer blocking.
+
+Original report follows.
 
 **Problem.** A worker session transitions to `interrupted` (terminal) when its turn
 completes. The next `POST /v1/sessions/{session_ref}/turns` returns
@@ -50,6 +61,23 @@ turn normally, so the `interrupted` state also looks mislabelled.
 session `recoverable: true` but provides no recovery path — the contradiction is the bug.
 Until sessions stay turn-ready (A) or `/turns` auto-resumes (B), multi-step chat cannot
 work no matter what the client does.
+
+## 1b. Cockpit: block/queue sends while a turn is active (cockpit bug, found 2026-07-07)
+
+**Problem.** During the multi-step live test, sending turn 2 while turn 1 was still running
+returned `409 {"code":"session_active","message":"worker session sess_… already has an
+active turn"}`. The composer allowed the send, and the resume-and-retry logic treated it as
+a recoverable-terminal error and attempted `work/resume` (wrong — the session is busy, not
+terminal). Retrying manually after turn 1 finished succeeded.
+
+**Fix (cockpit-side, not a Jarvis ask).**
+
+- Disable the send control while the projected session status is `active`/running, or queue
+  the turn until the active turn completes.
+- Exclude `session_active` from the resume-and-retry predicate (only `session_terminal`
+  is resumable; `session_active` means wait).
+
+Tracked for a cockpit follow-up; not a Jarvis API change.
 
 ## 2. Push channel for cockpit events (BLOCKING for responsiveness at scale)
 
