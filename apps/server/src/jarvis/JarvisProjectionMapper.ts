@@ -168,6 +168,7 @@ export function mapJarvisSessionToThreadDetail(input: {
   return {
     id: threadId,
     projectId,
+    jarvisRegistryProjectId: jarvisRegistryProjectIdForSession(input.session, input.run),
     title: titleForSession(input.session, input.run),
     modelSelection: modelSelectionForSession(input.session),
     runtimeMode: DEFAULT_RUNTIME_MODE,
@@ -273,6 +274,7 @@ function mapSessionToThreadShell(
   return {
     id: jarvisThreadIdForSession(session.session_ref),
     projectId: jarvisProjectIdForRun(session.run_id),
+    jarvisRegistryProjectId: jarvisRegistryProjectIdForSession(session, run),
     title: titleForSession(session, run),
     modelSelection: modelSelectionForSession(session),
     runtimeMode: DEFAULT_RUNTIME_MODE,
@@ -365,6 +367,15 @@ function mapCockpitCheckpoint(checkpoint: CockpitCheckpoint): OrchestrationCheck
 
 function titleForSession(session: JarvisWorkerSession, run: JarvisRun | undefined): string {
   return normalizeJarvisPublicLabel(session.title) ?? run?.title ?? session.session_ref;
+}
+
+// The registry project a run/session is linked to (e.g. "jarvis"), so the sidebar can nest
+// dispatched work under its project instead of a synthetic per-run row. Null when unlinked.
+function jarvisRegistryProjectIdForSession(
+  session: JarvisWorkerSession,
+  run: JarvisRun | undefined,
+): string | null {
+  return session.project_id?.trim() || run?.project_id?.trim() || null;
 }
 
 function branchForSession(session: JarvisWorkerSession, run: JarvisRun | undefined): string | null {

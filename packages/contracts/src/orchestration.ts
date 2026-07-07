@@ -344,6 +344,12 @@ export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
+  // Jarvis registry project this work session belongs to (e.g. "jarvis"), when the run is
+  // linked. Distinct from `projectId`, which is the synthetic per-run cockpit project. Lets
+  // the sidebar nest dispatched work under its registry project. Null for non-Jarvis threads.
+  jarvisRegistryProjectId: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
@@ -390,6 +396,11 @@ export type OrchestrationProjectShell = typeof OrchestrationProjectShell.Type;
 export const OrchestrationThreadShell = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
+  // See OrchestrationThread.jarvisRegistryProjectId — carried on the list projection so the
+  // sidebar can nest dispatched work under its registry project without loading full detail.
+  jarvisRegistryProjectId: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,

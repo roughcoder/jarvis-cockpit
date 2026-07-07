@@ -156,6 +156,7 @@ const makeDefaultOrchestrationReadModel = () => {
       {
         id: defaultThreadId,
         projectId: defaultProjectId,
+        jarvisRegistryProjectId: null,
         title: "Default Thread",
         modelSelection: defaultModelSelection,
         interactionMode: "default" as const,
@@ -184,6 +185,7 @@ const makeDefaultOrchestrationThreadShell = (
   return {
     id: defaultThreadId,
     projectId: defaultProjectId,
+    jarvisRegistryProjectId: null,
     title: "Default Thread",
     modelSelection: defaultModelSelection,
     runtimeMode: "full-access",
@@ -5540,6 +5542,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           {
             id: ThreadId.make("thread-1"),
             projectId: ProjectId.make("project-a"),
+            jarvisRegistryProjectId: null,
             title: "Thread A",
             modelSelection: defaultModelSelection,
             interactionMode: "default" as const,
