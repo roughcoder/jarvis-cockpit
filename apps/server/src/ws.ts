@@ -389,6 +389,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverRetractJarvisProjectFile, AuthOrchestrationOperateScope],
   [WS_METHODS.serverCreateJarvisProjectThread, AuthOrchestrationOperateScope],
   [WS_METHODS.serverArchiveJarvisProjectThread, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverRenameJarvisProjectThread, AuthOrchestrationOperateScope],
   [WS_METHODS.serverUnarchiveJarvisProjectThread, AuthOrchestrationOperateScope],
   [WS_METHODS.serverSendJarvisProjectThreadTurn, AuthOrchestrationOperateScope],
   [WS_METHODS.serverDiscoverSourceControl, AuthOrchestrationReadScope],
@@ -1974,6 +1975,30 @@ const makeWsRpcLayer = (
                       error instanceof Error && error.message.trim().length > 0
                         ? error.message
                         : "Jarvis project conversation archive failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverRenameJarvisProjectThread]: ({ projectId, threadId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverRenameJarvisProjectThread,
+            jarvisClient.renameProjectThread(projectId, threadId, input).pipe(
+              Effect.map((thread) => ({
+                ok: true,
+                thread,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project conversation rename failed.",
                   },
                 }),
               ),

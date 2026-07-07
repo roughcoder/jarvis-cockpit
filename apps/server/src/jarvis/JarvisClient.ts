@@ -178,6 +178,11 @@ export interface JarvisClient {
     threadId: string,
     input?: JarvisProjectThreadArchiveInput,
   ) => Effect.Effect<JarvisProjectThread, JarvisClientError>;
+  readonly renameProjectThread: (
+    projectId: string,
+    threadId: string,
+    input: JarvisProjectThreadRenameInput,
+  ) => Effect.Effect<JarvisProjectThread, JarvisClientError>;
   readonly unarchiveProjectThread: (
     projectId: string,
     threadId: string,
@@ -250,6 +255,12 @@ export class JarvisClientService extends Context.Service<JarvisClientService, Ja
 ) {}
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
+
+export interface JarvisProjectThreadRenameInput {
+  readonly title: string;
+  readonly idempotency_key: string;
+  readonly metadata?: Record<string, unknown>;
+}
 
 type JarvisConnectionConfig = Pick<
   ServerConfig["Service"],
@@ -938,6 +949,17 @@ export function makeJarvisCockpitClient(input: {
       ).pipe(
         Effect.flatMap((body) => decodeProjectThreadResponse("projects.threads.archive", body)),
       ),
+    renameProjectThread: (projectId, threadId, renameInput) =>
+      requestJson(
+        "projects.threads.rename",
+        `/v1/projects/${encodeURIComponent(projectId)}/threads/${encodeURIComponent(threadId)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify(withSurfaceMetadata(renameInput)),
+        },
+      ).pipe(
+        Effect.flatMap((body) => decodeProjectThreadResponse("projects.threads.rename", body)),
+      ),
     unarchiveProjectThread: (projectId, threadId) =>
       postJson(
         "projects.threads.unarchive",
@@ -1214,6 +1236,10 @@ export function makeJarvisClient(config: {
         withClient("projects.threads.archive", (client) =>
           client.archiveProjectThread(projectId, threadId, input),
         ),
+      renameProjectThread: (projectId, threadId, input) =>
+        withClient("projects.threads.rename", (client) =>
+          client.renameProjectThread(projectId, threadId, input),
+        ),
       unarchiveProjectThread: (projectId, threadId) =>
         withClient("projects.threads.unarchive", (client) =>
           client.unarchiveProjectThread(projectId, threadId),
@@ -1408,6 +1434,7 @@ function makeMissingConfigurationClient(message: string): JarvisClient {
     retractProjectFile: () => fail("jarvis.client.configure"),
     createProjectThread: () => fail("jarvis.client.configure"),
     archiveProjectThread: () => fail("jarvis.client.configure"),
+    renameProjectThread: () => fail("jarvis.client.configure"),
     unarchiveProjectThread: () => fail("jarvis.client.configure"),
     sendProjectThreadTurn: () => fail("jarvis.client.configure"),
     getSession: () => fail("jarvis.client.configure"),
@@ -2648,6 +2675,40 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       );
       return Effect.succeed(archived);
     },
+    renameProjectThread: (candidateProjectId, threadId, input) => {
+      const thread = findProjectThread(projectThreads, candidateProjectId, threadId);
+      if (thread === undefined) {
+        return Effect.fail(
+          new JarvisClientError({
+            operation: "fixture.projects.threads.rename",
+            status: 404,
+            message: `No fixture project thread ${candidateProjectId}/${threadId}.`,
+          }),
+        );
+      }
+      const title = normalizeProjectThreadTitle(input.title);
+      if (title.length === 0) {
+        return Effect.fail(
+          new JarvisClientError({
+            operation: "fixture.projects.threads.rename",
+            status: 400,
+            message: "thread title is required",
+          }),
+        );
+      }
+      const renamed = {
+        ...thread,
+        title,
+        updated_at: now,
+      };
+      projectThreads.set(
+        candidateProjectId,
+        (projectThreads.get(candidateProjectId) ?? []).map((candidate) =>
+          candidate.thread_id === threadId ? renamed : candidate,
+        ),
+      );
+      return Effect.succeed(renamed);
+    },
     unarchiveProjectThread: (candidateProjectId, threadId) => {
       const thread = findProjectThread(projectThreads, candidateProjectId, threadId);
       if (thread === undefined) {
@@ -3054,6 +3115,10 @@ function firstTrimmed(...values: ReadonlyArray<unknown>): string | null {
     }
   }
   return null;
+}
+
+function normalizeProjectThreadTitle(title: string): string {
+  return title.trim().replace(/\s+/g, " ").slice(0, 200);
 }
 
 function fixtureIdSlug(value: string): string {

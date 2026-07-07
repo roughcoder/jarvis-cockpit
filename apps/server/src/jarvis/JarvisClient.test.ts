@@ -661,6 +661,55 @@ it.effect("cockpit client decodes JSON project thread turn responses", () =>
   }),
 );
 
+it.effect("cockpit client renames project threads with a PATCH request", () =>
+  Effect.gen(function* () {
+    const requests: Array<{ url: string; method: string; body: unknown }> = [];
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async (url, init) => {
+        requests.push({
+          url: String(url),
+          method: init?.method ?? "GET",
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        });
+        return jsonResponse({
+          ok: true,
+          project_id: "dogfood",
+          thread: {
+            thread_id: "thread-1",
+            project_id: "dogfood",
+            session_id: "project:dogfood:orchestrator:thread-1",
+            title: "Renamed thread",
+            status: "completed",
+            ended_reason: "completed",
+            created_at: now,
+            updated_at: now,
+            created_by: "neil",
+          },
+        });
+      },
+    });
+
+    const result = yield* client.renameProjectThread("dogfood", "thread-1", {
+      title: "Renamed thread",
+      idempotency_key: "rename-1",
+    });
+
+    assert.strictEqual(result.title, "Renamed thread");
+    assert.strictEqual(result.status, "completed");
+    assert.strictEqual(result.ended_reason, "completed");
+    assert.deepStrictEqual(requests[0], {
+      url: "http://jarvis.local:8787/v1/projects/dogfood/threads/thread-1",
+      method: "PATCH",
+      body: {
+        title: "Renamed thread",
+        idempotency_key: "rename-1",
+        metadata: { surface: "jarvis-cockpit" },
+      },
+    });
+  }),
+);
+
 it.effect("cockpit client attaches bearer token and reads the v1 snapshot endpoint", () =>
   Effect.gen(function* () {
     const requests: Array<{ url: string; authorization: string | null }> = [];
