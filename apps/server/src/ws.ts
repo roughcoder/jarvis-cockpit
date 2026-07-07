@@ -120,6 +120,7 @@ import * as SourceControlRepositoryService from "./sourceControl/SourceControlRe
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
+import * as ProjectPullRequests from "./sourceControl/projectPullRequests.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -372,6 +373,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverGetJarvisSnapshot, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetJarvisProjects, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetJarvisProject, AuthOrchestrationReadScope],
+  [WS_METHODS.serverGetJarvisProjectPullRequests, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetJarvisProjectMemory, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetJarvisProjectFiles, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetJarvisProjectThreads, AuthOrchestrationReadScope],
@@ -553,6 +555,7 @@ const makeWsRpcLayer = (
       );
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const projectPullRequests = yield* ProjectPullRequests.ProjectPullRequests;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const sessions = yield* SessionStore.SessionStore;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
@@ -1561,6 +1564,34 @@ const makeWsRpcLayer = (
                       error instanceof Error && error.message.trim().length > 0
                         ? error.message
                         : "Jarvis project request failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverGetJarvisProjectPullRequests]: ({ projectId }) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetJarvisProjectPullRequests,
+            jarvisClient.getProject(projectId).pipe(
+              Effect.flatMap((project) =>
+                projectPullRequests.list({ cwd: config.cwd, repos: project.repos }),
+              ),
+              Effect.map(({ pullRequests, errors }) => ({
+                ok: true,
+                pullRequests,
+                errors,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project pull requests request failed.",
                   },
                 }),
               ),

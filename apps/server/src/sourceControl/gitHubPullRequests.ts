@@ -15,6 +15,9 @@ export interface NormalizedGitHubPullRequestRecord {
   readonly headRefName: string;
   readonly state: "open" | "closed" | "merged";
   readonly updatedAt: Option.Option<DateTime.Utc>;
+  readonly createdAt?: Option.Option<DateTime.Utc>;
+  readonly isDraft?: boolean;
+  readonly authorLogin?: string | null;
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;
@@ -29,6 +32,15 @@ const GitHubPullRequestSchema = Schema.Struct({
   state: Schema.optional(Schema.NullOr(Schema.String)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
   updatedAt: Schema.optional(Schema.OptionFromNullOr(Schema.DateTimeUtcFromString)),
+  createdAt: Schema.optional(Schema.OptionFromNullOr(Schema.DateTimeUtcFromString)),
+  isDraft: Schema.optional(Schema.Boolean),
+  author: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        login: Schema.String,
+      }),
+    ),
+  ),
   isCrossRepository: Schema.optional(Schema.Boolean),
   headRepository: Schema.optional(
     Schema.NullOr(
@@ -86,6 +98,9 @@ function normalizeGitHubPullRequestRecord(
     headRefName: raw.headRefName,
     state: normalizeGitHubPullRequestState(raw),
     updatedAt: raw.updatedAt ?? Option.none(),
+    ...(raw.createdAt !== undefined ? { createdAt: raw.createdAt } : {}),
+    ...(typeof raw.isDraft === "boolean" ? { isDraft: raw.isDraft } : {}),
+    ...(raw.author !== undefined ? { authorLogin: trimOptionalString(raw.author?.login) } : {}),
     ...(typeof raw.isCrossRepository === "boolean"
       ? { isCrossRepository: raw.isCrossRepository }
       : {}),

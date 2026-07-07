@@ -46,6 +46,7 @@ import {
   repoNameFromRemote,
   validateProjectRepositoryDrafts,
 } from "./settings/JarvisProjects.logic";
+import { ProjectPullRequestsPanel } from "./ProjectPullRequestsPanel";
 import { cn } from "../lib/utils";
 import { textToBase64 } from "../lib/fileAttachments";
 import { formatRelativeTimeLabel } from "../timestampFormat";
@@ -836,6 +837,8 @@ export function ProjectView({ environmentId, projectId }: ProjectViewProps) {
                 </div>
               )}
             </div>
+
+            <ProjectPullRequestsPanel environmentId={environmentId} projectId={projectId} />
 
             <div className="rounded-lg border border-border/70 bg-muted/20 p-4">
               <div className="flex items-center justify-between gap-3">

@@ -173,6 +173,7 @@ import {
   JarvisWorkerWorktreePruneResult,
 } from "./jarvis.ts";
 import {
+  JarvisProjectPullRequestsResult,
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
   SourceControlDiscoveryResult,
@@ -256,6 +257,7 @@ export const WS_METHODS = {
   serverGetJarvisProject: "server.getJarvisProject",
   serverGetJarvisProjectMemory: "server.getJarvisProjectMemory",
   serverGetJarvisProjectFiles: "server.getJarvisProjectFiles",
+  serverGetJarvisProjectPullRequests: "server.getJarvisProjectPullRequests",
   serverGetJarvisProjectThreads: "server.getJarvisProjectThreads",
   serverGetJarvisProjectThread: "server.getJarvisProjectThread",
   serverValidateJarvisWork: "server.validateJarvisWork",
@@ -393,6 +395,17 @@ export const WsServerGetJarvisProjectRpc = Rpc.make(WS_METHODS.serverGetJarvisPr
   success: JarvisProjectResult,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
+
+export const WsServerGetJarvisProjectPullRequestsRpc = Rpc.make(
+  WS_METHODS.serverGetJarvisProjectPullRequests,
+  {
+    payload: Schema.Struct({
+      projectId: Schema.String,
+    }),
+    success: JarvisProjectPullRequestsResult,
+    error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+  },
+);
 
 export const WsServerGetJarvisProjectMemoryRpc = Rpc.make(WS_METHODS.serverGetJarvisProjectMemory, {
   payload: Schema.Struct({
@@ -1062,6 +1075,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetJarvisSnapshotRpc,
   WsServerGetJarvisProjectsRpc,
   WsServerGetJarvisProjectRpc,
+  WsServerGetJarvisProjectPullRequestsRpc,
   WsServerGetJarvisProjectMemoryRpc,
   WsServerGetJarvisProjectFilesRpc,
   WsServerGetJarvisProjectThreadsRpc,

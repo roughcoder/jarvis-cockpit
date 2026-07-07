@@ -537,6 +537,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
               .filter((entry): entry is GitHubCli.GitHubPullRequestSummary => entry !== null),
           ),
         ),
+      listRepositoryPullRequests: () => Effect.succeed([]),
       createPullRequest: (input) =>
         execute({
           cwd: input.cwd,
