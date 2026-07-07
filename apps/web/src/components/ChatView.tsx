@@ -139,7 +139,7 @@ import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
-import { ChevronDownIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
+import { ChevronDownIcon, InfoIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -217,7 +217,6 @@ import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayo
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { resolveEffectiveEnvMode } from "./BranchToolbar.logic";
-import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import {
@@ -228,6 +227,7 @@ import {
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  deriveProviderStatusBannerContent,
   hasServerAcknowledgedLocalDispatch,
   getStartedThreadModelChangeBlockReason,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
@@ -2211,6 +2211,25 @@ function ChatViewContent(props: ChatViewProps) {
     const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
+  // Surface provider status through the shared composer banner stack above the
+  // composer rather than a separate top-of-thread banner, so all thread-level
+  // messages live in one consistent, full-width place.
+  const composerBannerItemsWithProviderStatus = useMemo<ComposerBannerStackItem[]>(() => {
+    const providerStatusContent = deriveProviderStatusBannerContent(activeProviderStatus);
+    if (!providerStatusContent || !activeProviderStatus) {
+      return composerBannerItems;
+    }
+    return [
+      ...composerBannerItems,
+      {
+        id: `provider-status:${activeProviderStatus.instanceId}`,
+        variant: providerStatusContent.variant,
+        icon: <InfoIcon />,
+        title: providerStatusContent.title,
+        description: providerStatusContent.description,
+      },
+    ];
+  }, [activeProviderStatus, composerBannerItems]);
   const activeProjectCwd = activeProjectFilesystemCwd;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -5172,7 +5191,6 @@ function ChatViewContent(props: ChatViewProps) {
         </header>
 
         {/* Error banner */}
-        <ProviderStatusBanner status={activeProviderStatus} />
         <ThreadErrorBanner
           error={threadError}
           onDismiss={() => setThreadError(activeThread.id, null)}
@@ -5254,7 +5272,10 @@ function ChatViewContent(props: ChatViewProps) {
               </div>
               <div className="chat-composer-horizontal-inset">
                 <div className="pointer-events-auto relative z-10 isolate">
-                  <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+                  <ComposerBannerStack
+                    className="relative z-0"
+                    items={composerBannerItemsWithProviderStatus}
+                  />
                   <div className="relative z-10">
                     <ChatComposer
                       capabilities={composerCapabilities}
