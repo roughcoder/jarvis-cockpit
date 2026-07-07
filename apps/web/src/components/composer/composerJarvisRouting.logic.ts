@@ -10,6 +10,19 @@ export const WORKER_AUTO_VALUE = "__auto__";
 export type ComposerJarvisProject = Pick<JarvisProject, "id" | "name" | "repos">;
 export type ComposerJarvisRepo = ComposerJarvisProject["repos"][number];
 
+export type ComposerJarvisRoutingSelection = {
+  projectId: string;
+  repoRemote: string | null;
+  workerOverrideId: string | null;
+};
+
+export type EffectiveComposerJarvisRouting = {
+  selectedProject: ComposerJarvisProject | null;
+  selectedRepo: ComposerJarvisRepo | null;
+  selectedRepoRemote: string | null;
+  selectedWorkerOverrideId: string | null;
+};
+
 export function jarvisEngineForComposerSelection(input: {
   readonly selectedProvider: ProviderDriverKind;
   readonly selectedInstanceId: ProviderInstanceId;
@@ -32,6 +45,38 @@ export function jarvisEngineForComposerSelection(input: {
 export function jarvisRepoForProject(project: ComposerJarvisProject | null): string | null {
   const repo = project?.repos.find((candidate) => candidate.default) ?? project?.repos[0];
   return repo?.remote ?? null;
+}
+
+export function resolveEffectiveComposerJarvisRouting(input: {
+  readonly projects: ReadonlyArray<ComposerJarvisProject>;
+  readonly activeProjectId: string | number | null | undefined;
+  readonly storedRouting: ComposerJarvisRoutingSelection | null | undefined;
+}): EffectiveComposerJarvisRouting {
+  const storedProject =
+    input.storedRouting === null || input.storedRouting === undefined
+      ? null
+      : input.projects.find((project) => project.id === input.storedRouting?.projectId);
+  const activeProject =
+    input.activeProjectId === null || input.activeProjectId === undefined
+      ? null
+      : input.projects.find((project) => String(project.id) === String(input.activeProjectId));
+  const selectedProject = storedProject ?? activeProject ?? input.projects[0] ?? null;
+  const storedRepo =
+    selectedProject === null || input.storedRouting?.repoRemote === null
+      ? null
+      : selectedProject.repos.find((repo) => repo.remote === input.storedRouting?.repoRemote);
+  const selectedRepo =
+    storedRepo ??
+    selectedProject?.repos.find((repo) => repo.default) ??
+    selectedProject?.repos[0] ??
+    null;
+
+  return {
+    selectedProject,
+    selectedRepo,
+    selectedRepoRemote: selectedRepo?.remote ?? jarvisRepoForProject(selectedProject),
+    selectedWorkerOverrideId: input.storedRouting?.workerOverrideId ?? null,
+  };
 }
 
 export function jarvisRepoLabel(repo: ComposerJarvisRepo | null | undefined): string {
