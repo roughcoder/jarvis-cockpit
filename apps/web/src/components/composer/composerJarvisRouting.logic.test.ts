@@ -1,4 +1,5 @@
 import {
+  JarvisProjectId,
   JarvisWorkerId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -8,9 +9,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   jarvisEngineForComposerSelection,
+  resolveEffectiveComposerJarvisRouting,
   workerCanStartRepo,
   workerIsHealthyEnough,
   workerSupportsEngine,
+  type ComposerJarvisProject,
 } from "./composerJarvisRouting.logic";
 
 function worker(overrides: Partial<JarvisWorkerProfile> = {}): JarvisWorkerProfile {
@@ -58,6 +61,75 @@ function worker(overrides: Partial<JarvisWorkerProfile> = {}): JarvisWorkerProfi
 }
 
 describe("composer Jarvis routing", () => {
+  const projects: ComposerJarvisProject[] = [
+    {
+      id: JarvisProjectId.make("project-a"),
+      name: "Project A",
+      repos: [
+        { name: "secondary", remote: "roughcoder/secondary", default: false },
+        { name: "primary", remote: "roughcoder/primary", default: true },
+      ],
+    },
+    {
+      id: JarvisProjectId.make("project-b"),
+      name: "Project B",
+      repos: [{ name: "app", remote: "roughcoder/app", default: false }],
+    },
+  ];
+
+  it("derives routing from stored selections before active-thread defaults", () => {
+    expect(
+      resolveEffectiveComposerJarvisRouting({
+        projects,
+        activeProjectId: "project-a",
+        storedRouting: {
+          projectId: "project-b",
+          repoRemote: "roughcoder/app",
+          workerOverrideId: "worker-2",
+        },
+      }),
+    ).toMatchObject({
+      selectedProject: projects[1],
+      selectedRepo: projects[1]?.repos[0],
+      selectedRepoRemote: "roughcoder/app",
+      selectedWorkerOverrideId: "worker-2",
+    });
+  });
+
+  it("uses effective defaults without requiring stored routing", () => {
+    expect(
+      resolveEffectiveComposerJarvisRouting({
+        projects,
+        activeProjectId: "project-a",
+        storedRouting: null,
+      }),
+    ).toMatchObject({
+      selectedProject: projects[0],
+      selectedRepo: projects[0]?.repos[1],
+      selectedRepoRemote: "roughcoder/primary",
+      selectedWorkerOverrideId: null,
+    });
+  });
+
+  it("falls back when stored project or repository selections disappear", () => {
+    expect(
+      resolveEffectiveComposerJarvisRouting({
+        projects,
+        activeProjectId: "project-a",
+        storedRouting: {
+          projectId: "missing",
+          repoRemote: "missing/repo",
+          workerOverrideId: "worker-2",
+        },
+      }),
+    ).toMatchObject({
+      selectedProject: projects[0],
+      selectedRepo: projects[0]?.repos[1],
+      selectedRepoRemote: "roughcoder/primary",
+      selectedWorkerOverrideId: "worker-2",
+    });
+  });
+
   it("accepts available and degraded engines case-insensitively", () => {
     expect(workerSupportsEngine(worker(), "codex")).toBe(true);
     expect(

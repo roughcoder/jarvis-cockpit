@@ -2,7 +2,6 @@ import type {
   ApprovalRequestId,
   EnvironmentId,
   JarvisStartWorkInput,
-  JarvisWorkerProfile,
   ModelSelection,
   PreviewAnnotationPayload,
   ProviderApprovalDecision,
@@ -14,13 +13,7 @@ import type {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import {
-  JarvisWorkerId,
-  ProviderDriverKind,
-  ProviderInstanceId,
-  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
-  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
-} from "@t3tools/contracts";
+import { JarvisWorkerId, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import {
   connectionStatusText,
   type EnvironmentConnectionPresentation,
@@ -49,6 +42,7 @@ import { deriveComposerSendState } from "../ChatView.logic";
 import { readFileAsDataUrl } from "../../lib/fileAttachments";
 import {
   type ComposerImageAttachment,
+  type ComposerJarvisRoutingDraft,
   type DraftId,
   type PersistedComposerImageAttachment,
   useComposerDraftStore,
@@ -79,6 +73,8 @@ import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
+import { ComposerOverridesStrip } from "../composer/ComposerOverridesStrip";
+import type { ComposerCapabilities } from "../composer/composerCapabilities";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
@@ -99,23 +95,16 @@ import {
   Menu,
   MenuGroup,
   MenuGroupLabel,
-  MenuItem,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
-  MenuSeparator as MenuDivider,
   MenuTrigger,
 } from "../ui/menu";
 import {
   BotIcon,
   CircleAlertIcon,
-  FolderGit2Icon,
-  GitBranchIcon,
   ListTodoIcon,
   PencilRulerIcon,
-  RotateCcwIcon,
-  ServerIcon,
-  TriangleAlertIcon,
   type LucideIcon,
   LockIcon,
   LockOpenIcon,
@@ -146,24 +135,18 @@ import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentQuery } from "../../state/query";
-import { buildStartWorkRoutingSummary, type StartWorkRoutingSummary } from "../startWork.logic";
+import { buildStartWorkRoutingSummary } from "../startWork.logic";
 import {
-  WORKER_AUTO_VALUE,
   type ComposerJarvisProject,
-  type ComposerJarvisRepo,
   jarvisEngineForComposerSelection,
-  jarvisRepoForProject,
-  jarvisRepoLabel,
   lastPathSegment,
+  resolveEffectiveComposerJarvisRouting,
   shortProjectLabel,
-  sortWorkers,
   workerCanStartRepo,
   workerIsHealthyEnough,
   workerLabel,
   workerSupportsEngine,
 } from "../composer/composerJarvisRouting.logic";
-
-const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
 const runtimeModeConfig: Record<
   RuntimeMode,
@@ -195,366 +178,41 @@ const COMPOSER_FLOATING_LAYER_SELECTOR = [
   '[data-slot="autocomplete-popup"]',
 ].join(",");
 
-function ComposerJarvisRoutingControls(props: {
-  selectedProject: ComposerJarvisProject | null;
-  selectedRepo: ComposerJarvisRepo | null;
-  environmentProjects: ReadonlyArray<ComposerJarvisProject>;
-  workers: ReadonlyArray<JarvisWorkerProfile>;
-  workersPending: boolean;
-  selectedEngine: string;
-  selectedWorkerOverrideId: string | null;
-  defaultWorkerId: string | null;
-  routingSummary: StartWorkRoutingSummary;
-  compatibilityWarning: string | null;
-  onProjectSelect: (projectId: string) => void;
-  onRepoSelect: (repoRemote: string | null) => void;
-  onWorkerOverrideChange: (workerId: string | null) => void;
-}) {
-  const compatibleWorkers = useMemo(
-    () =>
-      sortWorkers(
-        props.workers.filter(
-          (worker) =>
-            workerIsHealthyEnough(worker) &&
-            workerSupportsEngine(worker, props.selectedEngine) &&
-            workerCanStartRepo(worker, props.selectedRepo?.remote ?? null),
-        ),
-      ),
-    [props.selectedEngine, props.selectedRepo, props.workers],
-  );
-  const incompatibleWorkers = useMemo(
-    () =>
-      sortWorkers(
-        props.workers.filter(
-          (worker) =>
-            !compatibleWorkers.some((candidate) => candidate.worker_id === worker.worker_id),
-        ),
-      ),
-    [compatibleWorkers, props.workers],
-  );
-  const selectedOverrideWorker =
-    props.selectedWorkerOverrideId === null
-      ? null
-      : (props.workers.find((worker) => worker.worker_id === props.selectedWorkerOverrideId) ??
-        null);
-  const defaultWorker =
-    props.defaultWorkerId === null
-      ? (compatibleWorkers[0] ?? null)
-      : (props.workers.find((worker) => worker.worker_id === props.defaultWorkerId) ??
-        compatibleWorkers[0] ??
-        null);
-  const workerTriggerLabel =
-    selectedOverrideWorker !== null
-      ? workerLabel(selectedOverrideWorker)
-      : defaultWorker !== null
-        ? `Auto: ${workerLabel(defaultWorker)}`
-        : props.workersPending
-          ? "Workers..."
-          : "No worker";
-
-  return (
-    <>
-      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-      <Menu>
-        <MenuTrigger
-          render={
-            <Button
-              size="sm"
-              variant="ghost"
-              className="min-w-0 max-w-44 shrink justify-start whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
-              aria-label="Select Jarvis project"
-              disabled={props.environmentProjects.length === 0}
-            />
-          }
-        >
-          <FolderGit2Icon className="size-4 shrink-0" />
-          <span className="min-w-0 truncate">
-            {props.environmentProjects.length === 0
-              ? "No project"
-              : shortProjectLabel(props.selectedProject)}
-          </span>
-        </MenuTrigger>
-        <MenuPopup align="start" side="top" className="min-w-64">
-          <MenuGroup>
-            <MenuGroupLabel>Project</MenuGroupLabel>
-            {props.environmentProjects.map((project) => (
-              <MenuItem key={project.id} onClick={() => props.onProjectSelect(project.id)}>
-                <FolderGit2Icon className="size-4" />
-                <span className="min-w-0 flex-1 truncate">{project.name}</span>
-              </MenuItem>
-            ))}
-          </MenuGroup>
-        </MenuPopup>
-      </Menu>
-
-      <Menu>
-        <MenuTrigger
-          render={
-            <Button
-              size="sm"
-              variant="ghost"
-              className="min-w-0 max-w-56 shrink justify-start whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
-              aria-label="Select Jarvis repository"
-              disabled={!props.selectedProject || props.selectedProject.repos.length === 0}
-            />
-          }
-        >
-          <GitBranchIcon className="size-4 shrink-0" />
-          <span className="min-w-0 truncate">{jarvisRepoLabel(props.selectedRepo)}</span>
-        </MenuTrigger>
-        <MenuPopup align="start" side="top" className="min-w-72">
-          <MenuGroup>
-            <MenuGroupLabel>Repository</MenuGroupLabel>
-            <MenuRadioGroup
-              value={props.selectedRepo?.remote ?? ""}
-              onValueChange={(value) => props.onRepoSelect(value || null)}
-            >
-              {props.selectedProject?.repos.map((repo) => (
-                <MenuRadioItem key={`${repo.name}:${repo.remote}`} value={repo.remote}>
-                  <span className="min-w-0 flex-1 truncate">{jarvisRepoLabel(repo)}</span>
-                  {repo.default ? (
-                    <span className="text-[11px] text-muted-foreground">default</span>
-                  ) : null}
-                </MenuRadioItem>
-              ))}
-            </MenuRadioGroup>
-          </MenuGroup>
-        </MenuPopup>
-      </Menu>
-
-      <Menu>
-        <MenuTrigger
-          render={
-            <Button
-              size="sm"
-              variant="ghost"
-              className={cn(
-                "min-w-0 max-w-48 shrink justify-start whitespace-nowrap px-2 hover:text-foreground/80 sm:px-3",
-                props.compatibilityWarning
-                  ? "text-warning-foreground hover:bg-warning/10"
-                  : "text-muted-foreground/70",
-              )}
-              aria-label="Select Jarvis worker"
-            />
-          }
-        >
-          {props.compatibilityWarning ? (
-            <TriangleAlertIcon className="size-4 shrink-0 text-warning-foreground" />
-          ) : (
-            <ServerIcon className="size-4 shrink-0" />
-          )}
-          <span className="min-w-0 truncate">{workerTriggerLabel}</span>
-        </MenuTrigger>
-        <MenuPopup align="start" side="top" className="min-w-72">
-          <MenuGroup>
-            <MenuGroupLabel>Worker routing</MenuGroupLabel>
-            <MenuRadioGroup
-              value={props.selectedWorkerOverrideId ?? WORKER_AUTO_VALUE}
-              onValueChange={(value) => {
-                props.onWorkerOverrideChange(value === WORKER_AUTO_VALUE ? null : value);
-              }}
-            >
-              <MenuRadioItem value={WORKER_AUTO_VALUE}>
-                Auto{defaultWorker ? `: ${workerLabel(defaultWorker)}` : ""}
-              </MenuRadioItem>
-              {compatibleWorkers.map((worker) => (
-                <MenuRadioItem key={worker.worker_id} value={worker.worker_id}>
-                  <span className="min-w-0 truncate">{workerLabel(worker)}</span>
-                </MenuRadioItem>
-              ))}
-            </MenuRadioGroup>
-          </MenuGroup>
-          {incompatibleWorkers.length > 0 ? (
-            <>
-              <MenuDivider />
-              <MenuGroup>
-                <MenuGroupLabel>Override unavailable workers</MenuGroupLabel>
-                {incompatibleWorkers.map((worker) => (
-                  <MenuItem
-                    key={worker.worker_id}
-                    onClick={() => props.onWorkerOverrideChange(worker.worker_id)}
-                  >
-                    <TriangleAlertIcon className="size-4 text-warning-foreground" />
-                    <span className="min-w-0 flex-1 truncate">{workerLabel(worker)}</span>
-                  </MenuItem>
-                ))}
-              </MenuGroup>
-            </>
-          ) : null}
-          {props.selectedWorkerOverrideId !== null ? (
-            <>
-              <MenuDivider />
-              <MenuItem onClick={() => props.onWorkerOverrideChange(null)}>
-                <RotateCcwIcon className="size-4" />
-                Use project default
-              </MenuItem>
-            </>
-          ) : null}
-        </MenuPopup>
-      </Menu>
-
-      {props.compatibilityWarning ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-warning-foreground" />
-            }
-          >
-            <TriangleAlertIcon className="size-4" />
-          </TooltipTrigger>
-          <TooltipPopup side="top" className="max-w-72 whitespace-normal">
-            {props.compatibilityWarning}
-          </TooltipPopup>
-        </Tooltip>
-      ) : null}
-      <span
-        className={cn(
-          "hidden max-w-44 truncate text-[11px] sm:inline",
-          props.routingSummary.canDispatch ? "text-muted-foreground" : "text-warning-foreground",
-        )}
-      >
-        {props.routingSummary.engineSupport} · {props.routingSummary.compatibilityLabel}
-      </span>
-    </>
-  );
+function detectComposerTriggerForCapabilities(
+  text: string,
+  cursor: number,
+  capabilities: Pick<ComposerCapabilities, "mentions" | "slashCommands">,
+): ComposerTrigger | null {
+  const trigger = detectComposerTrigger(text, cursor);
+  if (trigger?.kind === "path" && !capabilities.mentions) {
+    return null;
+  }
+  if (
+    (trigger?.kind === "slash-command" || trigger?.kind === "skill") &&
+    !capabilities.slashCommands
+  ) {
+    return null;
+  }
+  return trigger;
 }
 
-function ComposerJarvisRoutingMenuContent(props: {
-  selectedProject: ComposerJarvisProject | null;
-  selectedRepo: ComposerJarvisRepo | null;
-  environmentProjects: ReadonlyArray<ComposerJarvisProject>;
-  workers: ReadonlyArray<JarvisWorkerProfile>;
-  selectedEngine: string;
-  selectedWorkerOverrideId: string | null;
-  defaultWorkerId: string | null;
-  routingSummary: StartWorkRoutingSummary;
-  compatibilityWarning: string | null;
-  onProjectSelect: (projectId: string) => void;
-  onRepoSelect: (repoRemote: string | null) => void;
-  onWorkerOverrideChange: (workerId: string | null) => void;
-}) {
-  const compatibleWorkers = useMemo(
-    () =>
-      sortWorkers(
-        props.workers.filter(
-          (worker) =>
-            workerIsHealthyEnough(worker) &&
-            workerSupportsEngine(worker, props.selectedEngine) &&
-            workerCanStartRepo(worker, props.selectedRepo?.remote ?? null),
-        ),
-      ),
-    [props.selectedEngine, props.selectedRepo, props.workers],
-  );
-  const incompatibleWorkers = useMemo(
-    () =>
-      sortWorkers(
-        props.workers.filter(
-          (worker) =>
-            !compatibleWorkers.some((candidate) => candidate.worker_id === worker.worker_id),
-        ),
-      ),
-    [compatibleWorkers, props.workers],
-  );
-  const defaultWorker =
-    props.defaultWorkerId === null
-      ? (compatibleWorkers[0] ?? null)
-      : (props.workers.find((worker) => worker.worker_id === props.defaultWorkerId) ??
-        compatibleWorkers[0] ??
-        null);
+function acceptsComposerAttachmentFile(
+  capability: ComposerCapabilities["attachments"],
+  file: File,
+): boolean {
+  if (capability === null) {
+    return false;
+  }
+  return capability.mimeTypes.some((mimeType) => {
+    if (mimeType.endsWith("/*")) {
+      return file.type.startsWith(mimeType.slice(0, -1));
+    }
+    return file.type === mimeType;
+  });
+}
 
-  return (
-    <>
-      <MenuGroup>
-        <MenuGroupLabel>Jarvis project</MenuGroupLabel>
-        {props.environmentProjects.length === 0 ? (
-          <MenuGroupLabel className="max-w-72 normal-case text-muted-foreground">
-            Create a project in Jarvis Projects before starting work.
-          </MenuGroupLabel>
-        ) : (
-          <MenuRadioGroup
-            value={props.selectedProject?.id ?? ""}
-            onValueChange={(value) => {
-              if (!value) return;
-              props.onProjectSelect(value);
-            }}
-          >
-            {props.environmentProjects.map((project) => (
-              <MenuRadioItem key={project.id} value={project.id}>
-                <span className="min-w-0 truncate">{project.name}</span>
-              </MenuRadioItem>
-            ))}
-          </MenuRadioGroup>
-        )}
-      </MenuGroup>
-      <MenuDivider />
-      <MenuGroup>
-        <MenuGroupLabel>Jarvis repository</MenuGroupLabel>
-        {props.selectedProject === null || props.selectedProject.repos.length === 0 ? (
-          <MenuGroupLabel className="max-w-72 normal-case text-muted-foreground">
-            Add repositories to this project before starting work.
-          </MenuGroupLabel>
-        ) : (
-          <MenuRadioGroup
-            value={props.selectedRepo?.remote ?? ""}
-            onValueChange={(value) => props.onRepoSelect(value || null)}
-          >
-            {props.selectedProject.repos.map((repo) => (
-              <MenuRadioItem key={`${repo.name}:${repo.remote}`} value={repo.remote}>
-                <span className="min-w-0 flex-1 truncate">{jarvisRepoLabel(repo)}</span>
-                {repo.default ? (
-                  <span className="text-[11px] text-muted-foreground">default</span>
-                ) : null}
-              </MenuRadioItem>
-            ))}
-          </MenuRadioGroup>
-        )}
-      </MenuGroup>
-      <MenuDivider />
-      <MenuGroup>
-        <MenuGroupLabel>Jarvis worker</MenuGroupLabel>
-        <MenuRadioGroup
-          value={props.selectedWorkerOverrideId ?? WORKER_AUTO_VALUE}
-          onValueChange={(value) => {
-            props.onWorkerOverrideChange(value === WORKER_AUTO_VALUE ? null : value);
-          }}
-        >
-          <MenuRadioItem value={WORKER_AUTO_VALUE}>
-            Auto{defaultWorker ? `: ${workerLabel(defaultWorker)}` : ""}
-          </MenuRadioItem>
-          {compatibleWorkers.map((worker) => (
-            <MenuRadioItem key={worker.worker_id} value={worker.worker_id}>
-              <span className="min-w-0 truncate">{workerLabel(worker)}</span>
-            </MenuRadioItem>
-          ))}
-        </MenuRadioGroup>
-      </MenuGroup>
-      {incompatibleWorkers.length > 0 ? (
-        <>
-          <MenuDivider />
-          <MenuGroup>
-            <MenuGroupLabel>Override unavailable workers</MenuGroupLabel>
-            {incompatibleWorkers.map((worker) => (
-              <MenuItem
-                key={worker.worker_id}
-                onClick={() => props.onWorkerOverrideChange(worker.worker_id)}
-              >
-                <TriangleAlertIcon className="size-4 text-warning-foreground" />
-                <span className="min-w-0 flex-1 truncate">{workerLabel(worker)}</span>
-              </MenuItem>
-            ))}
-          </MenuGroup>
-        </>
-      ) : null}
-      {props.compatibilityWarning ? (
-        <MenuGroupLabel className="max-w-72 text-warning-foreground">
-          {props.compatibilityWarning}
-        </MenuGroupLabel>
-      ) : null}
-      <MenuGroupLabel className="max-w-72 normal-case text-muted-foreground">
-        Engine {props.routingSummary.engineSupport}; {props.routingSummary.compatibilityLabel}.
-      </MenuGroupLabel>
-    </>
-  );
+function formatAttachmentSizeLimit(bytes: number): string {
+  return `${Math.round(bytes / (1024 * 1024))}MB`;
 }
 
 const extendReplacementRangeForTrailingSpace = (
@@ -590,6 +248,7 @@ function isInsideComposerFloatingLayer(element: Element): boolean {
 }
 
 const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
+  showRuntimeModeControl: boolean;
   showInteractionModeToggle: boolean;
   interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
@@ -647,52 +306,56 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 
   return (
     <>
-      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+      {props.showRuntimeModeControl ? (
+        <>
+          <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
 
-      <Menu>
-        <MenuTrigger
-          render={
-            <Button
-              variant="ghost"
-              size="sm"
-              type="button"
-              className="w-8 shrink-0 px-0 font-medium text-muted-foreground/70 hover:text-foreground/80"
-              aria-label={`Access: ${runtimeModeOption.label}`}
-              title={runtimeModeOption.description}
-            />
-          }
-        >
-          <RuntimeModeIcon className="size-4" />
-          <span className="sr-only">Access: {runtimeModeOption.label}</span>
-        </MenuTrigger>
-        <MenuPopup align="start" side="top" className="min-w-64">
-          <MenuGroup>
-            <MenuGroupLabel>Access</MenuGroupLabel>
-            <MenuRadioGroup
-              value={props.runtimeMode}
-              onValueChange={(value) => props.onRuntimeModeChange(value as RuntimeMode)}
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  type="button"
+                  className="w-8 shrink-0 px-0 font-medium text-muted-foreground/70 hover:text-foreground/80"
+                  aria-label={`Access: ${runtimeModeOption.label}`}
+                  title={runtimeModeOption.description}
+                />
+              }
             >
-              {runtimeModeOptions.map((mode) => {
-                const option = runtimeModeConfig[mode];
-                const OptionIcon = option.icon;
-                return (
-                  <MenuRadioItem key={mode} value={mode} className="py-2">
-                    <div className="grid min-w-0 gap-0.5">
-                      <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-                        <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                        {option.label}
-                      </span>
-                      <span className="text-muted-foreground text-xs leading-4">
-                        {option.description}
-                      </span>
-                    </div>
-                  </MenuRadioItem>
-                );
-              })}
-            </MenuRadioGroup>
-          </MenuGroup>
-        </MenuPopup>
-      </Menu>
+              <RuntimeModeIcon className="size-4" />
+              <span className="sr-only">Access: {runtimeModeOption.label}</span>
+            </MenuTrigger>
+            <MenuPopup align="start" side="top" className="min-w-64">
+              <MenuGroup>
+                <MenuGroupLabel>Access</MenuGroupLabel>
+                <MenuRadioGroup
+                  value={props.runtimeMode}
+                  onValueChange={(value) => props.onRuntimeModeChange(value as RuntimeMode)}
+                >
+                  {runtimeModeOptions.map((mode) => {
+                    const option = runtimeModeConfig[mode];
+                    const OptionIcon = option.icon;
+                    return (
+                      <MenuRadioItem key={mode} value={mode} className="py-2">
+                        <div className="grid min-w-0 gap-0.5">
+                          <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                            <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                            {option.label}
+                          </span>
+                          <span className="text-muted-foreground text-xs leading-4">
+                            {option.description}
+                          </span>
+                        </div>
+                      </MenuRadioItem>
+                    );
+                  })}
+                </MenuRadioGroup>
+              </MenuGroup>
+            </MenuPopup>
+          </Menu>
+        </>
+      ) : null}
 
       {interactionModeToggle}
 
@@ -835,6 +498,7 @@ export interface ChatComposerHandle {
 // --------------------------------------------------------------------------
 
 export interface ChatComposerProps {
+  capabilities: ComposerCapabilities;
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
   routeKind: "server" | "draft";
@@ -950,6 +614,7 @@ export interface ChatComposerProps {
 
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
   const {
+    capabilities,
     composerDraftTarget,
     environmentId,
     routeKind,
@@ -960,7 +625,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThread,
     showJarvisResumeSendHint,
     isServerThread: _isServerThread,
-    isLocalDraftThread,
     phase,
     isConnecting,
     isSendBusy,
@@ -1029,6 +693,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerPreviewAnnotations = composerDraft.previewAnnotations;
   const composerReviewComments = composerDraft.reviewComments;
   const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
+  const storedJarvisRouting = composerDraft.jarvisRouting;
 
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImage = useComposerDraftStore((store) => store.addImage);
@@ -1043,6 +708,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const setComposerDraftTerminalContexts = useComposerDraftStore(
     (store) => store.setTerminalContexts,
   );
+  const setComposerDraftJarvisRouting = useComposerDraftStore((store) => store.setJarvisRouting);
   const removeComposerDraftElementContext = useComposerDraftStore(
     (store) => store.removeElementContext,
   );
@@ -1266,7 +932,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Jarvis routing context
   // ------------------------------------------------------------------
-  const canRouteJarvisStart = props.isJarvisCockpitEnvironment && isLocalDraftThread;
+  const canRouteJarvisStart = capabilities.jarvisRouting;
   const jarvisProjectsQuery = useEnvironmentQuery(
     canRouteJarvisStart
       ? serverEnvironment.jarvisProjects({ environmentId, input: { includeArchived: false } })
@@ -1279,71 +945,105 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ),
     [jarvisProjectsQuery.data?.projects],
   );
-  const [selectedJarvisProjectId, setSelectedJarvisProjectId] = useState<string | null>(null);
-  const [selectedJarvisRepoRemote, setSelectedJarvisRepoRemote] = useState<string | null>(null);
-  const [selectedWorkerOverrideId, setSelectedWorkerOverrideId] = useState<string | null>(null);
-  const composerDraftTargetKey =
-    typeof composerDraftTarget === "string"
-      ? composerDraftTarget
-      : `${composerDraftTarget.environmentId}:${composerDraftTarget.threadId}`;
-  useEffect(() => {
-    setSelectedJarvisProjectId(null);
-    setSelectedJarvisRepoRemote(null);
-    setSelectedWorkerOverrideId(null);
-  }, [composerDraftTargetKey]);
-  const selectedJarvisProject = useMemo(() => {
-    if (!canRouteJarvisStart) return null;
-    const explicit =
-      selectedJarvisProjectId === null
-        ? null
-        : environmentProjects.find((project) => project.id === selectedJarvisProjectId);
-    if (explicit) return explicit;
-    const activeProject =
-      activeThread?.projectId === undefined
-        ? null
-        : environmentProjects.find(
-            (project) => String(project.id) === String(activeThread.projectId),
-          );
-    return activeProject ?? environmentProjects[0] ?? null;
-  }, [activeThread?.projectId, canRouteJarvisStart, environmentProjects, selectedJarvisProjectId]);
-  useEffect(() => {
-    if (
-      canRouteJarvisStart &&
-      selectedJarvisProjectId !== null &&
-      !environmentProjects.some((project) => project.id === selectedJarvisProjectId)
-    ) {
-      setSelectedJarvisProjectId(null);
-    }
-  }, [canRouteJarvisStart, environmentProjects, selectedJarvisProjectId]);
+  const effectiveJarvisRouting = useMemo(
+    () =>
+      canRouteJarvisStart
+        ? resolveEffectiveComposerJarvisRouting({
+            projects: environmentProjects,
+            activeProjectId: activeThread?.projectId,
+            storedRouting: storedJarvisRouting,
+          })
+        : {
+            selectedProject: null,
+            selectedRepo: null,
+            selectedRepoRemote: null,
+            selectedWorkerOverrideId: null,
+          },
+    [activeThread?.projectId, canRouteJarvisStart, environmentProjects, storedJarvisRouting],
+  );
+  const selectedJarvisProject = effectiveJarvisRouting.selectedProject;
+  const selectedJarvisRepoEntry = effectiveJarvisRouting.selectedRepo;
+  const selectedJarvisRepo = effectiveJarvisRouting.selectedRepoRemote;
+  const selectedWorkerOverrideId = effectiveJarvisRouting.selectedWorkerOverrideId;
 
-  const handleJarvisProjectSelect = useCallback((projectId: string) => {
-    setSelectedJarvisProjectId(projectId);
-    setSelectedJarvisRepoRemote(null);
-  }, []);
+  const buildJarvisRoutingDraft = useCallback(
+    (
+      selectedProject: ComposerJarvisProject | null,
+      overrides: Partial<ComposerJarvisRoutingDraft>,
+    ): ComposerJarvisRoutingDraft | null => {
+      if (selectedProject === null) {
+        return null;
+      }
+      const storedRepoRemote =
+        storedJarvisRouting?.projectId === selectedProject.id
+          ? storedJarvisRouting.repoRemote
+          : null;
+      return {
+        projectId: selectedProject.id,
+        repoRemote: storedRepoRemote,
+        workerOverrideId: storedJarvisRouting?.workerOverrideId ?? null,
+        ...overrides,
+      };
+    },
+    [storedJarvisRouting],
+  );
 
-  const selectedJarvisRepoEntry = useMemo(() => {
-    if (!selectedJarvisProject) return null;
-    const explicit =
-      selectedJarvisRepoRemote === null
-        ? null
-        : selectedJarvisProject.repos.find((repo) => repo.remote === selectedJarvisRepoRemote);
-    return (
-      explicit ??
-      selectedJarvisProject.repos.find((repo) => repo.default) ??
-      selectedJarvisProject.repos[0] ??
-      null
-    );
-  }, [selectedJarvisProject, selectedJarvisRepoRemote]);
+  const handleJarvisProjectSelect = useCallback(
+    (projectId: string) => {
+      const nextProject = environmentProjects.find((project) => project.id === projectId) ?? null;
+      setComposerDraftJarvisRouting(
+        composerDraftTarget,
+        buildJarvisRoutingDraft(nextProject, {
+          projectId,
+          repoRemote: null,
+          workerOverrideId: selectedWorkerOverrideId,
+        }),
+      );
+    },
+    [
+      buildJarvisRoutingDraft,
+      composerDraftTarget,
+      environmentProjects,
+      selectedWorkerOverrideId,
+      setComposerDraftJarvisRouting,
+    ],
+  );
 
-  useEffect(() => {
-    if (
-      selectedJarvisRepoRemote !== null &&
-      selectedJarvisProject !== null &&
-      !selectedJarvisProject.repos.some((repo) => repo.remote === selectedJarvisRepoRemote)
-    ) {
-      setSelectedJarvisRepoRemote(null);
-    }
-  }, [selectedJarvisProject, selectedJarvisRepoRemote]);
+  const handleJarvisRepoSelect = useCallback(
+    (repoRemote: string | null) => {
+      setComposerDraftJarvisRouting(
+        composerDraftTarget,
+        buildJarvisRoutingDraft(selectedJarvisProject, {
+          repoRemote,
+          workerOverrideId: selectedWorkerOverrideId,
+        }),
+      );
+    },
+    [
+      buildJarvisRoutingDraft,
+      composerDraftTarget,
+      selectedJarvisProject,
+      selectedWorkerOverrideId,
+      setComposerDraftJarvisRouting,
+    ],
+  );
+
+  const handleJarvisWorkerOverrideChange = useCallback(
+    (workerId: string | null) => {
+      setComposerDraftJarvisRouting(
+        composerDraftTarget,
+        buildJarvisRoutingDraft(selectedJarvisProject, {
+          workerOverrideId: workerId,
+        }),
+      );
+    },
+    [
+      buildJarvisRoutingDraft,
+      composerDraftTarget,
+      selectedJarvisProject,
+      setComposerDraftJarvisRouting,
+    ],
+  );
 
   const jarvisSnapshotQuery = useEnvironmentQuery(
     canRouteJarvisStart ? serverEnvironment.jarvisSnapshot({ environmentId, input: {} }) : null,
@@ -1355,9 +1055,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedWorkerOverrideId !== null &&
       !jarvisWorkers.some((worker) => worker.worker_id === selectedWorkerOverrideId)
     ) {
-      setSelectedWorkerOverrideId(null);
+      handleJarvisWorkerOverrideChange(null);
     }
-  }, [jarvisSnapshotQuery.isPending, jarvisWorkers, selectedWorkerOverrideId]);
+  }, [
+    handleJarvisWorkerOverrideChange,
+    jarvisSnapshotQuery.isPending,
+    jarvisWorkers,
+    selectedWorkerOverrideId,
+  ]);
   const compatibleJarvisWorkers = useMemo(
     () =>
       jarvisWorkers.filter(
@@ -1394,10 +1099,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const selectedOverrideCompatible =
     selectedOverrideWorker !== null &&
     compatibleJarvisWorkers.some((worker) => worker.worker_id === selectedOverrideWorker.worker_id);
-  const selectedJarvisRepo = useMemo(
-    () => selectedJarvisRepoEntry?.remote ?? jarvisRepoForProject(selectedJarvisProject),
-    [selectedJarvisProject, selectedJarvisRepoEntry],
-  );
   const jarvisValidationInput = useMemo<JarvisStartWorkInput | null>(() => {
     if (!canRouteJarvisStart) {
       return null;
@@ -1514,7 +1215,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     collapseExpandedComposerCursor(prompt, prompt.length),
   );
   const [composerTrigger, setComposerTrigger] = useState<ComposerTrigger | null>(() =>
-    detectComposerTrigger(prompt, prompt.length),
+    detectComposerTriggerForCapabilities(prompt, prompt.length, capabilities),
   );
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const [composerHighlightedSearchKey, setComposerHighlightedSearchKey] = useState<string | null>(
@@ -1583,6 +1284,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
+      if (!capabilities.mentions) return [];
       return workspaceEntries.entries.map((entry) => ({
         id: `path:${entry.kind}:${entry.path}`,
         type: "path",
@@ -1593,28 +1295,33 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }));
     }
     if (composerTrigger.kind === "slash-command") {
+      if (!capabilities.slashCommands) return [];
       const builtInSlashCommandItems = [
         {
           id: "slash:model",
-          type: "slash-command",
-          command: "model",
+          type: "slash-command" as const,
+          command: "model" as const,
           label: "/model",
           description: "Switch response model for this thread",
         },
-        {
-          id: "slash:plan",
-          type: "slash-command",
-          command: "plan",
-          label: "/plan",
-          description: "Switch this thread into plan mode",
-        },
-        {
-          id: "slash:default",
-          type: "slash-command",
-          command: "default",
-          label: "/default",
-          description: "Switch this thread back to normal build mode",
-        },
+        ...(capabilities.interactionControl
+          ? [
+              {
+                id: "slash:plan",
+                type: "slash-command" as const,
+                command: "plan" as const,
+                label: "/plan",
+                description: "Switch this thread into plan mode",
+              },
+              {
+                id: "slash:default",
+                type: "slash-command" as const,
+                command: "default" as const,
+                label: "/default",
+                description: "Switch this thread back to normal build mode",
+              },
+            ]
+          : []),
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
         (command) => ({
@@ -1634,6 +1341,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return searchSlashCommandItems(slashCommandItems, query);
     }
     if (composerTrigger.kind === "skill") {
+      if (!capabilities.slashCommands) return [];
       return searchProviderSkills(selectedProviderStatus?.skills ?? [], composerTrigger.query).map(
         (skill) => ({
           id: `skill:${selectedProvider}:${skill.name}`,
@@ -1649,7 +1357,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       );
     }
     return [];
-  }, [composerTrigger, selectedProvider, selectedProviderStatus, workspaceEntries.entries]);
+  }, [
+    capabilities.mentions,
+    capabilities.interactionControl,
+    capabilities.slashCommands,
+    composerTrigger,
+    selectedProvider,
+    selectedProviderStatus,
+    workspaceEntries.entries,
+  ]);
 
   const composerMenuOpen = Boolean(composerTrigger);
   const composerMenuSearchKey = composerTrigger
@@ -1689,7 +1405,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isComposerCollapsedMobile && !isComposerApprovalState && pendingUserInputs.length === 0;
 
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
-  const showPlanSidebarToggle = Boolean(activePlan || sidebarProposedPlan || planSidebarOpen);
+  const showRuntimeModeControl = capabilities.approvalControl;
+  const showComposerInteractionModeToggle =
+    capabilities.interactionControl && composerProviderControls.showInteractionModeToggle;
+  const showPlanSidebarToggle =
+    capabilities.interactionControl &&
+    Boolean(activePlan || sidebarProposedPlan || planSidebarOpen);
   const composerFooterActionLayoutKey = useMemo(() => {
     if (activePendingProgress) {
       return `pending:${activePendingProgress.questionIndex}:${activePendingProgress.isLastQuestion}:${activePendingIsResponding}`;
@@ -1723,6 +1444,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? "No matching files or folders."
       : "No matching command.";
   }, [composerTriggerKind]);
+  const idleComposerPlaceholder = useMemo(() => {
+    if (capabilities.mentions && capabilities.slashCommands) {
+      return "Ask anything, @tag files/folders, $use skills, or / for commands";
+    }
+    if (capabilities.mentions) {
+      return "Ask anything, or @tag files/folders";
+    }
+    if (capabilities.slashCommands) {
+      return "Ask anything, $use skills, or / for commands";
+    }
+    return "Ask anything";
+  }, [capabilities.mentions, capabilities.slashCommands]);
 
   // ------------------------------------------------------------------
   // Provider traits UI
@@ -1737,10 +1470,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setComposerDraftPrompt(composerDraftTarget, nextPrompt);
       const nextCursor = collapseExpandedComposerCursor(nextPrompt, nextPrompt.length);
       setComposerCursor(nextCursor);
-      setComposerTrigger(detectComposerTrigger(nextPrompt, nextPrompt.length));
+      setComposerTrigger(
+        detectComposerTriggerForCapabilities(nextPrompt, nextPrompt.length, capabilities),
+      );
       scheduleComposerFocus();
     },
-    [composerDraftTarget, promptRef, scheduleComposerFocus, setComposerDraftPrompt],
+    [capabilities, composerDraftTarget, promptRef, scheduleComposerFocus, setComposerDraftPrompt],
   );
 
   const providerTraitsMenuContent = renderProviderTraitsMenuContent({
@@ -1765,6 +1500,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     prompt,
     onPromptChange: setPromptFromTraits,
   });
+  const showCompactComposerControlsMenu = Boolean(
+    providerTraitsMenuContent ||
+    showComposerInteractionModeToggle ||
+    showRuntimeModeControl ||
+    showPlanSidebarToggle,
+  );
   const pendingPrimaryAction = useMemo(
     () =>
       activePendingProgress
@@ -1827,11 +1568,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       removeComposerDraftTerminalContext(composerDraftTarget, contextId);
       const nextCursor = collapseExpandedComposerCursor(removal.prompt, removal.cursor);
       setComposerCursor(nextCursor);
-      setComposerTrigger(detectComposerTrigger(removal.prompt, removal.cursor));
+      setComposerTrigger(
+        detectComposerTriggerForCapabilities(removal.prompt, removal.cursor, capabilities),
+      );
     },
     [
       composerDraftTarget,
       composerTerminalContexts,
+      capabilities,
       promptRef,
       removeComposerDraftTerminalContext,
       setPrompt,
@@ -1919,9 +1663,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const nextCursor = collapseExpandedComposerCursor(nextCustomAnswer, nextCustomAnswer.length);
     setComposerCursor(nextCursor);
     setComposerTrigger(
-      detectComposerTrigger(
+      detectComposerTriggerForCapabilities(
         nextCustomAnswer,
         expandCollapsedComposerCursor(nextCustomAnswer, nextCursor),
+        capabilities,
       ),
     );
     setComposerHighlightedItemId(null);
@@ -1929,6 +1674,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activePendingProgress?.customAnswer,
     activePendingProgress?.activeQuestion?.id,
     activePendingUserInput?.requestId,
+    capabilities,
     promptRef,
   ]);
 
@@ -1938,10 +1684,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useEffect(() => {
     setComposerHighlightedItemId(null);
     setComposerCursor(collapseExpandedComposerCursor(promptRef.current, promptRef.current.length));
-    setComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
+    setComposerTrigger(
+      detectComposerTriggerForCapabilities(
+        promptRef.current,
+        promptRef.current.length,
+        capabilities,
+      ),
+    );
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
-  }, [draftId, activeThreadId, promptRef]);
+  }, [draftId, activeThreadId, capabilities, promptRef]);
 
   // ------------------------------------------------------------------
   // Footer compact layout observation
@@ -2071,7 +1823,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
         setComposerCursor(nextCursor);
         setComposerTrigger(
-          cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
+          cursorAdjacentToMention
+            ? null
+            : detectComposerTriggerForCapabilities(nextPrompt, expandedCursor, capabilities),
         );
         onChangeActivePendingUserInputCustomAnswer(
           activePendingProgress.activeQuestion.id,
@@ -2092,7 +1846,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       setComposerCursor(nextCursor);
       setComposerTrigger(
-        cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
+        cursorAdjacentToMention
+          ? null
+          : detectComposerTriggerForCapabilities(nextPrompt, expandedCursor, capabilities),
       );
     },
     [
@@ -2103,6 +1859,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setPrompt,
       composerDraftTarget,
       composerTerminalContexts,
+      capabilities,
       setComposerDraftTerminalContexts,
     ],
   );
@@ -2143,7 +1900,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         setPrompt(next.text);
       }
       setComposerCursor(nextCursor);
-      setComposerTrigger(detectComposerTrigger(next.text, nextExpandedCursor));
+      setComposerTrigger(
+        detectComposerTriggerForCapabilities(next.text, nextExpandedCursor, capabilities),
+      );
       if (options?.focusEditorAfterReplace !== false) {
         window.requestAnimationFrame(() => {
           composerEditorRef.current?.focusAt(nextCursor);
@@ -2155,6 +1914,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activePendingProgress?.activeQuestion,
       activePendingUserInput,
       onChangeActivePendingUserInputCustomAnswer,
+      capabilities,
       promptRef,
       setPrompt,
     ],
@@ -2185,9 +1945,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const snapshot = readComposerSnapshot();
     return {
       snapshot,
-      trigger: detectComposerTrigger(snapshot.value, snapshot.expandedCursor),
+      trigger: detectComposerTriggerForCapabilities(
+        snapshot.value,
+        snapshot.expandedCursor,
+        capabilities,
+      ),
     };
-  }, [readComposerSnapshot]);
+  }, [capabilities, readComposerSnapshot]);
 
   const onSelectComposerItem = useCallback(
     (item: ComposerCommandItem) => {
@@ -2372,7 +2136,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
     event: KeyboardEvent,
   ) => {
-    if (key === "Tab" && event.shiftKey) {
+    if (key === "Tab" && event.shiftKey && capabilities.interactionControl) {
       toggleInteractionMode();
       return true;
     }
@@ -2406,6 +2170,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   const addComposerImages = (files: File[]) => {
     if (!activeThreadId || files.length === 0) return;
+    if (capabilities.attachments === null) {
+      toastManager.add({
+        type: "error",
+        title: "Attachments are not available for this composer.",
+      });
+      return;
+    }
     if (pendingUserInputs.length > 0) {
       toastManager.add({
         type: "error",
@@ -2417,16 +2188,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     let nextImageCount = composerImagesRef.current.length;
     let error: string | null = null;
     for (const file of files) {
-      if (!file.type.startsWith("image/")) {
+      if (!acceptsComposerAttachmentFile(capabilities.attachments, file)) {
         error = `Unsupported file type for '${file.name}'. Please attach image files only.`;
         continue;
       }
-      if (file.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-        error = `'${file.name}' exceeds the ${IMAGE_SIZE_LIMIT_LABEL} attachment limit.`;
+      if (file.size > capabilities.attachments.maxDecodedBytes) {
+        error = `'${file.name}' exceeds the ${formatAttachmentSizeLimit(
+          capabilities.attachments.maxDecodedBytes,
+        )} attachment limit.`;
         continue;
       }
-      if (nextImageCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
-        error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`;
+      if (nextImageCount >= capabilities.attachments.maxCount) {
+        error = `You can attach up to ${capabilities.attachments.maxCount} images per message.`;
         break;
       }
       const previewUrl = URL.createObjectURL(file);
@@ -2457,15 +2230,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Callbacks: paste / drag
   // ------------------------------------------------------------------
   const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
+    if (capabilities.attachments === null) return;
     const files = Array.from(event.clipboardData.files);
     if (files.length === 0) return;
-    const imageFiles = files.filter((file) => file.type.startsWith("image/"));
+    const imageFiles = files.filter((file) =>
+      acceptsComposerAttachmentFile(capabilities.attachments, file),
+    );
     if (imageFiles.length === 0) return;
     event.preventDefault();
     addComposerImages(imageFiles);
   };
 
   const onComposerDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
+    if (capabilities.attachments === null) return;
     if (!event.dataTransfer.types.includes("Files")) return;
     event.preventDefault();
     dragDepthRef.current += 1;
@@ -2473,6 +2250,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
 
   const onComposerDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    if (capabilities.attachments === null) return;
     if (!event.dataTransfer.types.includes("Files")) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "copy";
@@ -2480,6 +2258,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
 
   const onComposerDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    if (capabilities.attachments === null) return;
     if (!event.dataTransfer.types.includes("Files")) return;
     event.preventDefault();
     const nextTarget = event.relatedTarget;
@@ -2491,6 +2270,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
 
   const onComposerDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    if (capabilities.attachments === null) return;
     if (!event.dataTransfer.types.includes("Files")) return;
     event.preventDefault();
     dragDepthRef.current = 0;
@@ -2596,9 +2376,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         setComposerCursor(cursor);
         setComposerTrigger(
           options?.detectTrigger
-            ? detectComposerTrigger(
+            ? detectComposerTriggerForCapabilities(
                 promptForState,
                 expandCollapsedComposerCursor(promptForState, cursor),
+                capabilities,
               )
             : null,
         );
@@ -2633,7 +2414,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (!inserted) return;
         promptRef.current = insertion.prompt;
         setComposerCursor(nextCollapsedCursor);
-        setComposerTrigger(detectComposerTrigger(insertion.prompt, insertion.cursor));
+        setComposerTrigger(
+          detectComposerTriggerForCapabilities(insertion.prompt, insertion.cursor, capabilities),
+        );
         window.requestAnimationFrame(() => {
           composerEditorRef.current?.focusAt(nextCollapsedCursor);
         });
@@ -2660,6 +2443,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }),
     [
       activeThread,
+      capabilities,
       composerDraftTarget,
       composerCursor,
       composerTerminalContexts,
@@ -3049,7 +2833,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     ? composerTerminalContexts
                     : []
                 }
-                skills={selectedProviderStatus?.skills ?? []}
+                skills={capabilities.slashCommands ? (selectedProviderStatus?.skills ?? []) : []}
                 {...(showMobilePendingAnswerActions ? { className: "max-sm:pb-11" } : {})}
                 onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                 onChange={onPromptChange}
@@ -3070,7 +2854,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             ? "Send a follow-up to resume this Jarvis session"
                             : phase === "disconnected"
                               ? "Ask for follow-up changes or attach images"
-                              : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                              : idleComposerPlaceholder
                 }
                 disabled={
                   isConnecting ||
@@ -3155,56 +2939,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onInstanceModelChange={onProviderModelSelect}
                   />
 
-                  {isComposerFooterCompact ? (
+                  {isComposerFooterCompact && showCompactComposerControlsMenu ? (
                     <CompactComposerControlsMenu
                       activePlan={showPlanSidebarToggle}
                       interactionMode={interactionMode}
                       planSidebarLabel={planSidebarLabel}
                       planSidebarOpen={planSidebarOpen}
                       runtimeMode={runtimeMode}
-                      showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
+                      showInteractionModeToggle={showComposerInteractionModeToggle}
+                      showRuntimeModeControl={showRuntimeModeControl}
                       traitsMenuContent={providerTraitsMenuContent}
                       onToggleInteractionMode={toggleInteractionMode}
                       onTogglePlanSidebar={togglePlanSidebar}
                       onRuntimeModeChange={handleRuntimeModeChange}
-                      jarvisMenuContent={
-                        canRouteJarvisStart ? (
-                          <ComposerJarvisRoutingMenuContent
-                            selectedProject={selectedJarvisProject}
-                            selectedRepo={selectedJarvisRepoEntry}
-                            environmentProjects={environmentProjects}
-                            workers={jarvisWorkers}
-                            selectedEngine={selectedJarvisEngine}
-                            selectedWorkerOverrideId={selectedWorkerOverrideIdForDispatch}
-                            defaultWorkerId={jarvisDefaultWorkerId}
-                            routingSummary={jarvisRoutingSummary}
-                            compatibilityWarning={jarvisCompatibilityWarning}
-                            onProjectSelect={handleJarvisProjectSelect}
-                            onRepoSelect={setSelectedJarvisRepoRemote}
-                            onWorkerOverrideChange={setSelectedWorkerOverrideId}
-                          />
-                        ) : undefined
-                      }
                     />
                   ) : (
                     <>
-                      {canRouteJarvisStart ? (
-                        <ComposerJarvisRoutingControls
-                          selectedProject={selectedJarvisProject}
-                          selectedRepo={selectedJarvisRepoEntry}
-                          environmentProjects={environmentProjects}
-                          workers={jarvisWorkers}
-                          workersPending={jarvisSnapshotQuery.isPending}
-                          selectedEngine={selectedJarvisEngine}
-                          selectedWorkerOverrideId={selectedWorkerOverrideIdForDispatch}
-                          defaultWorkerId={jarvisDefaultWorkerId}
-                          routingSummary={jarvisRoutingSummary}
-                          compatibilityWarning={jarvisCompatibilityWarning}
-                          onProjectSelect={handleJarvisProjectSelect}
-                          onRepoSelect={setSelectedJarvisRepoRemote}
-                          onWorkerOverrideChange={setSelectedWorkerOverrideId}
-                        />
-                      ) : null}
                       {providerTraitsPicker ? (
                         <>
                           <Separator
@@ -3215,9 +2965,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         </>
                       ) : null}
                       <ComposerFooterModeControls
-                        showInteractionModeToggle={
-                          composerProviderControls.showInteractionModeToggle
-                        }
+                        showRuntimeModeControl={showRuntimeModeControl}
+                        showInteractionModeToggle={showComposerInteractionModeToggle}
                         interactionMode={interactionMode}
                         runtimeMode={runtimeMode}
                         showPlanToggle={showPlanSidebarToggle}
@@ -3264,6 +3013,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             </>
           )}
         </div>
+        {canRouteJarvisStart && !isComposerCollapsedMobile && !activePendingApproval ? (
+          <ComposerOverridesStrip
+            compact={isComposerFooterCompact}
+            selectedProject={selectedJarvisProject}
+            selectedRepo={selectedJarvisRepoEntry}
+            environmentProjects={environmentProjects}
+            workers={jarvisWorkers}
+            workersPending={jarvisSnapshotQuery.isPending}
+            selectedEngine={selectedJarvisEngine}
+            selectedWorkerOverrideId={selectedWorkerOverrideIdForDispatch}
+            defaultWorkerId={jarvisDefaultWorkerId}
+            routingSummary={jarvisRoutingSummary}
+            compatibilityWarning={jarvisCompatibilityWarning}
+            onProjectSelect={handleJarvisProjectSelect}
+            onRepoSelect={handleJarvisRepoSelect}
+            onWorkerOverrideChange={handleJarvisWorkerOverrideChange}
+          />
+        ) : null}
       </div>
     </form>
   );

@@ -33,6 +33,10 @@ describe("composer capabilities", () => {
     });
   });
 
+  it("allows draft Jarvis routing to be disabled by caller context", () => {
+    expect(draftComposerCapabilities({ jarvisRouting: false }).jarvisRouting).toBe(false);
+  });
+
   it("builds running-thread composer capabilities with fixed routing and engine", () => {
     expect(threadComposerCapabilities()).toEqual({
       attachments: {

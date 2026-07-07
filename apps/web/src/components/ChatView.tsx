@@ -205,6 +205,10 @@ import {
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import {
+  draftComposerCapabilities,
+  threadComposerCapabilities,
+} from "./composer/composerCapabilities";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
@@ -1647,6 +1651,15 @@ function ChatViewContent(props: ChatViewProps) {
     ? (activeEnvironment?.serverConfig ?? null)
     : (primaryEnvironment?.serverConfig ?? null);
   const activeIsJarvisCockpitEnvironment = isJarvisCockpitEnvironment(serverConfig ?? undefined);
+  const composerCapabilities = useMemo(
+    () =>
+      routeKind === "draft"
+        ? draftComposerCapabilities({
+            jarvisRouting: activeIsJarvisCockpitEnvironment,
+          })
+        : threadComposerCapabilities(),
+    [activeIsJarvisCockpitEnvironment, routeKind],
+  );
   const versionMismatch = resolveServerConfigVersionMismatch(serverConfig);
   const versionMismatchDismissKey =
     versionMismatch && activeThread
@@ -5244,6 +5257,7 @@ function ChatViewContent(props: ChatViewProps) {
                   <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
                   <div className="relative z-10">
                     <ChatComposer
+                      capabilities={composerCapabilities}
                       composerRef={composerRef}
                       composerDraftTarget={composerDraftTarget}
                       environmentId={environmentId}

@@ -40,7 +40,9 @@ const PROJECT_CONVERSATION_IMAGE_ATTACHMENT_CAPABILITY: ComposerAttachmentCapabi
   mimeTypes: PROJECT_TURN_ATTACHMENT_IMAGE_MIME_TYPES,
 };
 
-export function draftComposerCapabilities(): ComposerCapabilities {
+export function draftComposerCapabilities(input?: {
+  readonly jarvisRouting?: boolean;
+}): ComposerCapabilities {
   return {
     attachments: PROVIDER_IMAGE_ATTACHMENT_CAPABILITY,
     engineControl: true,
@@ -48,7 +50,7 @@ export function draftComposerCapabilities(): ComposerCapabilities {
     interactionControl: true,
     mentions: true,
     slashCommands: true,
-    jarvisRouting: true,
+    jarvisRouting: input?.jarvisRouting ?? true,
     enterToSend: true,
   };
 }
