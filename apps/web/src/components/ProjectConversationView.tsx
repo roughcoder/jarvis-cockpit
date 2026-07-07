@@ -37,6 +37,7 @@ import { type EnvironmentQueryView, useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
 import { cn, randomUUID } from "../lib/utils";
+import { readFileAsDataUrl } from "../lib/fileAttachments";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import {
@@ -96,6 +97,11 @@ interface ProjectConversationViewProps {
 }
 
 type LocalTurn = ProjectConversationLocalTurnView;
+
+const PROJECT_CONVERSATION_FILE_DATA_URL_READ_MESSAGES = {
+  nonStringResult: "File reader returned a non-string data URL.",
+  readFailure: "File read failed.",
+};
 
 interface ComposerImageAttachmentDraft extends JarvisTurnAttachment {
   readonly id: string;
@@ -379,7 +385,7 @@ export function ProjectConversationView({
 
       let dataUrl: string;
       try {
-        dataUrl = await readFileAsDataUrl(file);
+        dataUrl = await readFileAsDataUrl(file, PROJECT_CONVERSATION_FILE_DATA_URL_READ_MESSAGES);
       } catch (error) {
         showAttachmentError(
           error instanceof Error && error.message.trim().length > 0
@@ -1021,21 +1027,6 @@ function formatProjectConversationSendFailure(error: unknown): string {
     return `Jarvis rejected the turn attachments: ${message}`;
   }
   return message;
-}
-
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener("load", () => {
-      if (typeof reader.result === "string") {
-        resolve(reader.result);
-        return;
-      }
-      reject(new Error("File reader returned a non-string data URL."));
-    });
-    reader.addEventListener("error", () => reject(reader.error ?? new Error("File read failed.")));
-    reader.readAsDataURL(file);
-  });
 }
 
 function dragEventHasFiles(event: DragEvent<HTMLDivElement>): boolean {

@@ -1,7 +1,6 @@
 import type {
   ApprovalRequestId,
   EnvironmentId,
-  JarvisProject,
   JarvisStartWorkInput,
   JarvisWorkerProfile,
   ModelSelection,
@@ -46,7 +45,8 @@ import {
   expandCollapsedComposerCursor,
   replaceTextRange,
 } from "../../composer-logic";
-import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
+import { deriveComposerSendState } from "../ChatView.logic";
+import { readFileAsDataUrl } from "../../lib/fileAttachments";
 import {
   type ComposerImageAttachment,
   type DraftId,
@@ -147,6 +147,21 @@ import type { ReviewCommentContext } from "../../reviewCommentContext";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentQuery } from "../../state/query";
 import { buildStartWorkRoutingSummary, type StartWorkRoutingSummary } from "../startWork.logic";
+import {
+  WORKER_AUTO_VALUE,
+  type ComposerJarvisProject,
+  type ComposerJarvisRepo,
+  jarvisEngineForComposerSelection,
+  jarvisRepoForProject,
+  jarvisRepoLabel,
+  lastPathSegment,
+  shortProjectLabel,
+  sortWorkers,
+  workerCanStartRepo,
+  workerIsHealthyEnough,
+  workerLabel,
+  workerSupportsEngine,
+} from "../composer/composerJarvisRouting.logic";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -179,81 +194,6 @@ const COMPOSER_FLOATING_LAYER_SELECTOR = [
   '[data-slot="combobox-popup"]',
   '[data-slot="autocomplete-popup"]',
 ].join(",");
-
-const WORKER_AUTO_VALUE = "__auto__";
-type ComposerJarvisProject = Pick<JarvisProject, "id" | "name" | "repos">;
-type ComposerJarvisRepo = ComposerJarvisProject["repos"][number];
-
-function jarvisEngineForComposerSelection(input: {
-  selectedProvider: ProviderDriverKind;
-  selectedInstanceId: ProviderInstanceId;
-  selectedModel: string;
-}): string {
-  const model = input.selectedModel.trim().toLowerCase();
-  if (model === "codex" || model === "claude") {
-    return model;
-  }
-  const instanceId = String(input.selectedInstanceId).trim().toLowerCase();
-  if (input.selectedProvider === "claudeAgent" || instanceId === "claudeagent") {
-    return "claude";
-  }
-  if (input.selectedProvider === "claude" || instanceId.startsWith("claude")) {
-    return "claude";
-  }
-  return "codex";
-}
-
-function jarvisRepoForProject(project: ComposerJarvisProject | null): string | null {
-  const repo = project?.repos.find((candidate) => candidate.default) ?? project?.repos[0];
-  return repo?.remote ?? null;
-}
-
-function jarvisRepoLabel(repo: ComposerJarvisRepo | null | undefined): string {
-  return repo?.remote?.trim() || repo?.name?.trim() || "No repo";
-}
-
-function lastPathSegment(path: string): string | undefined {
-  return path.split(/[\\/]/u).findLast((segment) => segment.length > 0);
-}
-
-function workerSupportsEngine(worker: JarvisWorkerProfile, engine: string): boolean {
-  return worker.engines.some(
-    (candidate) =>
-      candidate.engine.trim().toLowerCase() === engine &&
-      (candidate.status === "available" || candidate.status === "degraded"),
-  );
-}
-
-function workerCanStartRepo(worker: JarvisWorkerProfile, repo: string | null): boolean {
-  const repositories = worker.repositories ?? [];
-  if (repositories.length === 0 || repo === null) {
-    return true;
-  }
-  const selected = repo.trim().toLowerCase();
-  const selectedSegment = lastPathSegment(selected);
-  return repositories.some((repository) => {
-    if (!repository.can_start_work) return false;
-    const workerRepo = repository.repo.trim().toLowerCase();
-    return workerRepo === selected || workerRepo === selectedSegment;
-  });
-}
-
-function workerIsHealthyEnough(worker: JarvisWorkerProfile): boolean {
-  return worker.status !== "offline" && worker.health !== "unhealthy";
-}
-
-function sortWorkers(workers: ReadonlyArray<JarvisWorkerProfile>): JarvisWorkerProfile[] {
-  return [...workers].sort((left, right) => left.display_name.localeCompare(right.display_name));
-}
-
-function workerLabel(worker: JarvisWorkerProfile | null | undefined): string {
-  return worker?.display_name?.trim() || worker?.worker_id || "Unknown worker";
-}
-
-function shortProjectLabel(project: ComposerJarvisProject | null): string {
-  if (!project) return "Project";
-  return project.name || "Project";
-}
 
 function ComposerJarvisRoutingControls(props: {
   selectedProject: ComposerJarvisProject | null;

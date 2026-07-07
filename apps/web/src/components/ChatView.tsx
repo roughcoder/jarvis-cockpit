@@ -232,13 +232,13 @@ import {
   PullRequestDialogState,
   cloneComposerImageForRetry,
   deriveLockedProvider,
-  readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   waitForStartedServerThread,
 } from "./ChatView.logic";
+import { readFileAsDataUrl } from "../lib/fileAttachments";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
