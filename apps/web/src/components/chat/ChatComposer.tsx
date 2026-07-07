@@ -568,6 +568,7 @@ export interface ChatComposerProps {
   resolvedTheme: "light" | "dark";
   settings: UnifiedSettings;
   keybindings: ResolvedKeybindingsConfig;
+  belowComposer?: React.ReactNode;
   idlePlaceholder?: string;
   terminalOpen: boolean;
   gitCwd: string | null;
@@ -659,6 +660,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     resolvedTheme,
     settings,
     keybindings,
+    belowComposer,
     idlePlaceholder,
     terminalOpen,
     gitCwd,
@@ -3061,6 +3063,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             onWorkerOverrideChange={handleJarvisWorkerOverrideChange}
           />
         ) : null}
+        {belowComposer}
       </div>
     </form>
   );

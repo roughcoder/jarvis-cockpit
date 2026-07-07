@@ -6,8 +6,10 @@ import type {
   JarvisProjectThreadMessage,
   JarvisProjectThread,
   JarvisProjectThreadTurnResult,
+  JarvisTurnWorkspaceInput,
   ThreadId,
 } from "@t3tools/contracts";
+import type { JarvisThreadTurnMergedItem } from "./jarvisThreadToolEvents.logic";
 
 export type ProjectConversationSendStatus =
   | "idle"
@@ -39,6 +41,8 @@ export interface ProjectConversationLocalTurnView {
   readonly id: string;
   readonly prompt: string;
   readonly response: string;
+  readonly toolItems?: ReadonlyArray<JarvisThreadTurnMergedItem>;
+  readonly workspaceInput?: JarvisTurnWorkspaceInput | null;
   readonly status: ProjectConversationSendStatus;
   readonly error: string | null;
   readonly createdAt: string;
@@ -53,8 +57,11 @@ export interface ProjectConversationMessageView {
   readonly source: "history" | "local";
   readonly status: ProjectConversationSendStatus;
   readonly error: string | null;
+  readonly toolItems: ReadonlyArray<JarvisThreadTurnMergedItem>;
+  readonly workspaceProvisionRequested: boolean;
   readonly localTurnId: string | null;
   readonly retryPrompt: string | null;
+  readonly retryWorkspace: JarvisTurnWorkspaceInput | null;
 }
 
 export interface ProjectConversationRouteInput {
@@ -263,8 +270,11 @@ function historyMessageView(
     source: "history",
     status: "completed",
     error: null,
+    toolItems: [],
+    workspaceProvisionRequested: false,
     localTurnId: null,
     retryPrompt: null,
+    retryWorkspace: null,
   };
 }
 
@@ -283,17 +293,21 @@ function localTurnMessages(
       source: "local",
       status: turn.status,
       error: null,
+      toolItems: [],
+      workspaceProvisionRequested: false,
       localTurnId: turn.id,
       retryPrompt: null,
+      retryWorkspace: null,
     });
   }
 
   const response = turn.response.trim();
+  const hasToolItems = (turn.toolItems?.length ?? 0) > 0;
   if (turn.status === "pending" || turn.status === "streaming") {
     messages.push(localAssistantMessage(turn, response));
   } else if (turn.status === "failed") {
     messages.push(localAssistantMessage(turn, turn.error?.trim() ?? ""));
-  } else if (response.length > 0) {
+  } else if (response.length > 0 || hasToolItems) {
     messages.push(localAssistantMessage(turn, response));
   }
 
@@ -313,8 +327,11 @@ function localAssistantMessage(
     source: "local",
     status: turn.status,
     error: turn.error,
+    toolItems: turn.toolItems ?? [],
+    workspaceProvisionRequested: turn.workspaceInput !== undefined && turn.workspaceInput !== null,
     localTurnId: turn.id,
     retryPrompt: turn.prompt,
+    retryWorkspace: turn.workspaceInput ?? null,
   };
 }
 
