@@ -30,6 +30,7 @@ import { serverEnvironment } from "../../state/server";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { cn } from "../../lib/utils";
+import { textToBase64 } from "../../lib/fileAttachments";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
@@ -89,15 +90,6 @@ function parseConclusionIds(input: string): ReadonlyArray<string> | undefined {
     .map((id) => id.trim())
     .filter((id) => id.length > 0);
   return ids.length > 0 ? ids : undefined;
-}
-
-function textToBase64(input: string): string {
-  const bytes = new TextEncoder().encode(input);
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return window.btoa(binary);
 }
 
 function jsonResultSummary(result: JsonObject | undefined): string | undefined {
