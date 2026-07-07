@@ -77,17 +77,29 @@ export type JarvisWorkerSessionStatus = typeof JarvisWorkerSessionStatus.Type;
 export const JarvisWorkerSessionAuthority = Schema.Literal("jarvis");
 export type JarvisWorkerSessionAuthority = typeof JarvisWorkerSessionAuthority.Type;
 
-export const JarvisSupportedControl = Schema.Literals([
+export const JarvisKnownSupportedControl = Schema.Literals([
   "turn",
   "input",
   "approval",
   "interrupt",
   "stop",
   "archive",
+  "unarchive",
+  "rename",
   "delete",
   "close",
   "checkpoint_restore",
 ]);
+export type JarvisKnownSupportedControl = typeof JarvisKnownSupportedControl.Type;
+
+/**
+ * Jarvis may add controls independently of this client (the 2026-07-07 brain
+ * release added "rename"/"unarchive" and broke strict decodes). The wire layer
+ * accepts any non-empty control name; dispatch narrows against
+ * `JarvisKnownSupportedControl` via simple membership checks. (Same
+ * forward-compat pattern as `JarvisSessionEventType`.)
+ */
+export const JarvisSupportedControl = TrimmedNonEmptyString;
 export type JarvisSupportedControl = typeof JarvisSupportedControl.Type;
 
 export const JarvisWorkerStatus = Schema.Literals(["online", "offline", "degraded", "unknown"]);
@@ -591,7 +603,9 @@ export type JarvisConversationWorkspace = typeof JarvisConversationWorkspace.Typ
 export const JarvisProjectThread = Schema.Struct({
   thread_id: JarvisProjectThreadId,
   project_id: JarvisProjectId,
-  parent_chat_id: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  // Root threads report `parent_chat_id: ""` (not null) on the wire; accept the
+  // empty string and let UI mappers normalize it to "no parent".
+  parent_chat_id: OptionalPossiblyEmptyPublicString,
   session_id: TrimmedNonEmptyString,
   title: TrimmedNonEmptyString,
   // Enrichment fields (2026-07-07 brain release). Optional so older deployments still decode.
@@ -720,10 +734,13 @@ export type JarvisWorkerGitAuthState = typeof JarvisWorkerGitAuthState.Type;
 export const JarvisWorkerGitIdentity = Schema.Struct({
   provider: OptionalPossiblyEmptyPublicString,
   login: OptionalPossiblyEmptyPublicString,
-  auth_state: Schema.optional(JarvisWorkerGitAuthState),
-  connected: Schema.optional(Schema.Boolean),
-  authenticated: Schema.optional(Schema.Boolean),
-  auth_fresh: Schema.optional(Schema.Boolean),
+  // Live workers report null (not absent) for unknown auth facts; accept both.
+  // auth_state stays a tolerant string on the wire so future states can't fail
+  // the whole snapshot decode; UI narrows against JarvisWorkerGitAuthState.
+  auth_state: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  connected: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  authenticated: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  auth_fresh: Schema.optional(Schema.NullOr(Schema.Boolean)),
   git_user_name: OptionalPossiblyEmptyPublicString,
   git_user_email: OptionalPossiblyEmptyPublicString,
   checked_at: Schema.optional(Schema.NullOr(Schema.Number)),
@@ -733,13 +750,13 @@ export type JarvisWorkerGitIdentity = typeof JarvisWorkerGitIdentity.Type;
 
 export const JarvisWorkerRepoAccess = Schema.Struct({
   repo: OptionalPossiblyEmptyPublicString,
-  accessible: Schema.optional(Schema.Boolean),
-  public: Schema.optional(Schema.Boolean),
+  accessible: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  public: Schema.optional(Schema.NullOr(Schema.Boolean)),
   reason_code: OptionalPossiblyEmptyPublicString,
   reason: OptionalPossiblyEmptyPublicString,
   checked_at: Schema.optional(Schema.NullOr(Schema.Number)),
   ttl_s: Schema.optional(Schema.NullOr(NonNegativeInt)),
-  cached: Schema.optional(Schema.Boolean),
+  cached: Schema.optional(Schema.NullOr(Schema.Boolean)),
 });
 export type JarvisWorkerRepoAccess = typeof JarvisWorkerRepoAccess.Type;
 
@@ -790,7 +807,8 @@ export const JarvisRun = Schema.Struct({
   objective: OptionalPublicString,
   status: JarvisRunStatus,
   phase: OptionalPublicString,
-  engine: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  // Live snapshots report `engine: ""` for runs without a resolved engine; accept it.
+  engine: OptionalPossiblyEmptyPublicString,
   repo: OptionalPossiblyEmptyPublicString,
   branch: OptionalPossiblyEmptyPublicString,
   session_count: NonNegativeInt,

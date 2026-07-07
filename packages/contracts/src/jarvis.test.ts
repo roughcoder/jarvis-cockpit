@@ -11,6 +11,7 @@ import {
   JarvisDeleteInput,
   JarvisLifecycleResult,
   JarvisProjectThreadDetailResponse,
+  JarvisProjectThreadsResponse,
   JarvisProjectThreadTurnInput,
   JarvisRestoreCheckpointInput,
   JarvisRunsSnapshot,
@@ -1056,5 +1057,103 @@ it.effect("decodes SSE event envelopes with cursor-bearing payloads", () =>
 
     assert.strictEqual(parsed.cursor, "evt_124");
     assert.strictEqual(parsed.type, "session.event");
+  }),
+);
+
+it.effect(
+  "tolerates 2026-07-07 live brain wire quirks (new controls, empty labels, null auth facts)",
+  () =>
+    Effect.gen(function* () {
+      const parsed = yield* decodeSnapshot({
+        api_version: "v1",
+        schema_version: 1,
+        cursor: "evt_200",
+        generated_at: generatedAt,
+        sync: { mode: "probe", status: "fresh", synced_at: generatedAt, errors: [] },
+        runs: [
+          {
+            run_id: runId,
+            title: "Legacy run without engine",
+            status: "completed",
+            // Live snapshots report "" (not null/absent) for unresolved engines.
+            engine: "",
+            // 2026-07-07 release added controls unknown to older clients.
+            supported_controls: ["archive", "rename"],
+            session_count: 0,
+            created_at: generatedAt,
+            updated_at: generatedAt,
+          },
+        ],
+        sessions: [
+          {
+            ...sessionFixture,
+            supported_controls: [
+              "turn",
+              "interrupt",
+              "stop",
+              "close",
+              "archive",
+              "unarchive",
+              "rename",
+            ],
+          },
+        ],
+        workers: [
+          {
+            worker_id: "macbook-worker",
+            display_name: "MacBook Pro",
+            status: "online",
+            health: "healthy",
+            last_seen_at: generatedAt,
+            capabilities: [],
+            engines: [],
+            capacity: { max_sessions: 4, active_sessions: 0, queued_sessions: 0 },
+            // Live workers report null (not absent) for unknown auth facts.
+            git_identity: {
+              provider: "github",
+              login: "",
+              auth_state: null,
+              connected: null,
+              authenticated: null,
+              auth_fresh: null,
+              detail: "",
+            },
+            repo_access: [{ repo: "roughcoder/jarvis", accessible: null, cached: null }],
+            public_metadata: {},
+          },
+        ],
+        artifacts: [],
+      });
+
+      assert.strictEqual(parsed.runs[0]?.engine, "");
+      assert.deepStrictEqual(parsed.runs[0]?.supported_controls, ["archive", "rename"]);
+      assert.strictEqual(parsed.sessions[0]?.supported_controls.includes("unarchive"), true);
+      assert.strictEqual(parsed.workers[0]?.git_identity?.authenticated, null);
+      assert.strictEqual(parsed.workers[0]?.repo_access?.at(0)?.accessible, null);
+    }),
+);
+
+it.effect("decodes root project threads that report empty parent_chat_id", () =>
+  Effect.gen(function* () {
+    const parsed = yield* Schema.decodeUnknownEffect(JarvisProjectThreadsResponse)({
+      api_version: "v1",
+      schema_version: 1,
+      project_id: "jarvis",
+      threads: [
+        {
+          thread_id: "thread_root",
+          project_id: "jarvis",
+          session_id: "project:jarvis:orchestrator:thread_root",
+          title: "Planning",
+          // Root threads report "" (not null) for parent_chat_id on the wire.
+          chat_id: "thread_root",
+          parent_chat_id: "",
+          created_at: generatedAt,
+          updated_at: generatedAt,
+        },
+      ],
+    });
+
+    assert.strictEqual(parsed.threads[0]?.parent_chat_id, "");
   }),
 );
