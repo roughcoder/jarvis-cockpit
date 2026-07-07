@@ -378,6 +378,9 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverGetJarvisProjectThread, AuthOrchestrationReadScope],
   [WS_METHODS.serverValidateJarvisWork, AuthOrchestrationReadScope],
   [WS_METHODS.serverPruneJarvisWorkerWorktrees, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverCloseJarvisSession, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverDeleteJarvisSession, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverDeleteJarvisRun, AuthOrchestrationOperateScope],
   [WS_METHODS.serverCreateJarvisProject, AuthOrchestrationOperateScope],
   [WS_METHODS.serverUpdateJarvisProject, AuthOrchestrationOperateScope],
   [WS_METHODS.serverArchiveJarvisProject, AuthOrchestrationOperateScope],
@@ -1760,6 +1763,78 @@ const makeWsRpcLayer = (
                       error instanceof Error && error.message.trim().length > 0
                         ? error.message
                         : "Jarvis project update failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverCloseJarvisSession]: ({ sessionRef, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverCloseJarvisSession,
+            jarvisClient.closeSession(sessionRef, input).pipe(
+              Effect.map((result) => ({
+                ok: true,
+                result,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis session close failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverDeleteJarvisSession]: ({ sessionRef, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverDeleteJarvisSession,
+            jarvisClient.deleteSession(sessionRef, input).pipe(
+              Effect.map((result) => ({
+                ok: true,
+                result,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis session delete failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverDeleteJarvisRun]: ({ runId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverDeleteJarvisRun,
+            jarvisClient.deleteRun(runId, input).pipe(
+              Effect.map((result) => ({
+                ok: true,
+                result,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis run delete failed.",
                   },
                 }),
               ),

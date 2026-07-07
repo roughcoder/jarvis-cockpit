@@ -14,6 +14,7 @@ import {
   SquarePenIcon,
   TerminalIcon,
   TriangleAlertIcon,
+  TrashIcon,
 } from "lucide-react";
 import {
   ChangeRequestStatusIcon,
@@ -127,7 +128,14 @@ import {
   isJarvisCockpitEnvironment,
   isJarvisProjectId,
   isJarvisStartProjectId,
+  JARVIS_PROJECT_ID_PREFIX,
+  JARVIS_THREAD_ID_PREFIX,
 } from "../jarvisCockpit";
+import {
+  formatJarvisReclamationToast,
+  jarvisLifecycleActionCopy,
+  type JarvisLifecycleTargetKind,
+} from "../jarvisLifecycle.logic";
 import {
   buildThreadRouteParams,
   resolveThreadRouteRef,
@@ -154,6 +162,15 @@ import {
   shouldToastDesktopUpdateActionResult,
 } from "./desktopUpdate.logic";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -274,6 +291,26 @@ const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> =
 const SIDEBAR_ICON_ACTION_BUTTON_CLASS =
   "inline-flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-md px-[calc(--spacing(1)-1px)] text-muted-foreground/60 hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring";
 
+type PendingJarvisWorkDelete = {
+  readonly targetKind: JarvisLifecycleTargetKind;
+  readonly environmentId: EnvironmentId;
+  readonly id: string;
+  readonly title: string;
+};
+
+function jarvisRunIdFromSidebarProjectId(projectId: ProjectId | string): string | null {
+  const value = String(projectId);
+  return value.startsWith(JARVIS_PROJECT_ID_PREFIX)
+    ? value.slice(JARVIS_PROJECT_ID_PREFIX.length)
+    : null;
+}
+
+function jarvisSessionRefFromSidebarThreadId(threadId: string): string | null {
+  return threadId.startsWith(JARVIS_THREAD_ID_PREFIX)
+    ? threadId.slice(JARVIS_THREAD_ID_PREFIX.length)
+    : null;
+}
+
 function SidebarThreadDetailPrewarmer({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
   useEnvironmentThread(threadRef.environmentId, threadRef.threadId);
   return null;
@@ -383,6 +420,10 @@ interface SidebarThreadRowProps {
   ) => Promise<void>;
   cancelRename: () => void;
   attemptArchiveThread: (threadRef: ScopedThreadRef) => Promise<void>;
+  onDeleteJarvisWorkSession: (input: {
+    readonly thread: SidebarThreadSummary;
+    readonly sessionRef: string;
+  }) => void;
   openPrLink: (event: React.MouseEvent<HTMLElement>, prUrl: string) => void;
 }
 
@@ -409,6 +450,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     commitRename,
     cancelRename,
     attemptArchiveThread,
+    onDeleteJarvisWorkSession,
     openPrLink,
     thread,
   } = props;
@@ -500,13 +542,14 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && !isThreadRunning;
+  const jarvisSessionRef = jarvisSessionRefFromSidebarThreadId(thread.id);
   const archiveActionClassName =
     isActive || isSelected
       ? "pointer-events-auto opacity-100"
       : "pointer-events-none opacity-0 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100";
   const threadMetaClassName = isConfirmingArchive
     ? "pointer-events-none opacity-0"
-    : !isThreadRunning
+    : !isThreadRunning || jarvisSessionRef !== null
       ? "pointer-events-none transition-opacity duration-150 max-sm:pr-6 group-hover/menu-sub-item:opacity-0 group-focus-within/menu-sub-item:opacity-0"
       : "pointer-events-none";
   const clearConfirmingArchive = useCallback(() => {
@@ -702,6 +745,15 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     },
     [attemptArchiveThread, threadRef],
   );
+  const handleDeleteJarvisWorkSessionClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      if (jarvisSessionRef === null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onDeleteJarvisWorkSession({ thread, sessionRef: jarvisSessionRef });
+    },
+    [jarvisSessionRef, onDeleteJarvisWorkSession, thread],
+  );
   const rowButtonRender = useMemo(() => <div role="button" tabIndex={0} />, []);
 
   return (
@@ -816,7 +868,30 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               isRemoteThread ? "max-sm:min-w-24" : "max-sm:min-w-20"
             }`}
           >
-            {isConfirmingArchive ? (
+            {jarvisSessionRef !== null ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <div
+                      className={`absolute top-1/2 right-0.5 z-20 -translate-y-1/2 transition-opacity duration-150 ${archiveActionClassName}`}
+                    >
+                      <button
+                        type="button"
+                        data-thread-selection-safe
+                        data-testid={`jarvis-session-delete-${thread.id}`}
+                        aria-label={`Delete ${thread.title}`}
+                        className={SIDEBAR_ICON_ACTION_BUTTON_CLASS}
+                        onPointerDown={stopPropagationOnPointerDown}
+                        onClick={handleDeleteJarvisWorkSessionClick}
+                      >
+                        <TrashIcon className="size-3.5" />
+                      </button>
+                    </div>
+                  }
+                />
+                <TooltipPopup side="top">Delete</TooltipPopup>
+              </Tooltip>
+            ) : isConfirmingArchive ? (
               <button
                 ref={handleConfirmArchiveRef}
                 type="button"
@@ -971,6 +1046,10 @@ interface SidebarProjectThreadListProps {
   ) => Promise<void>;
   cancelRename: () => void;
   attemptArchiveThread: (threadRef: ScopedThreadRef) => Promise<void>;
+  onDeleteJarvisWorkSession: (input: {
+    readonly thread: SidebarThreadSummary;
+    readonly sessionRef: string;
+  }) => void;
   openPrLink: (event: React.MouseEvent<HTMLElement>, prUrl: string) => void;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
@@ -1417,6 +1496,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     commitRename,
     cancelRename,
     attemptArchiveThread,
+    onDeleteJarvisWorkSession,
     openPrLink,
     expandThreadListForProject,
     collapseThreadListForProject,
@@ -1482,6 +1562,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
               commitRename={commitRename}
               cancelRename={cancelRename}
               attemptArchiveThread={attemptArchiveThread}
+              onDeleteJarvisWorkSession={onDeleteJarvisWorkSession}
               openPrLink={openPrLink}
             />
           );
@@ -1544,6 +1625,7 @@ interface SidebarProjectItemProps {
   dragHandleProps: SortableProjectHandleProps | null;
   isJarvisCockpitMode: boolean;
   surfaceCopy: SidebarSurfaceCopy;
+  refreshJarvisSnapshot: () => void;
 }
 
 const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjectItemProps) {
@@ -1567,6 +1649,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     dragHandleProps,
     isJarvisCockpitMode,
     surfaceCopy,
+    refreshJarvisSnapshot,
   } = props;
   const threadSortOrder = useClientSettings<SidebarThreadSortOrder>(
     (settings) => settings.sidebarThreadSortOrder,
@@ -1580,6 +1663,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const serverConfigs = useServerConfigs();
   const deleteProject = useAtomCommand(projectEnvironment.delete, {
+    reportFailure: false,
+  });
+  const deleteJarvisRun = useAtomCommand(serverEnvironment.deleteJarvisRun, {
+    reportFailure: false,
+  });
+  const deleteJarvisSession = useAtomCommand(serverEnvironment.deleteJarvisSession, {
     reportFailure: false,
   });
   const updateProject = useAtomCommand(projectEnvironment.update, {
@@ -1685,6 +1774,21 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const [projectGroupingSelection, setProjectGroupingSelection] = useState<
     SidebarProjectGroupingMode | "inherit"
   >("inherit");
+  const [pendingJarvisDelete, setPendingJarvisDelete] = useState<PendingJarvisWorkDelete | null>(
+    null,
+  );
+  const [deletingJarvisWork, setDeletingJarvisWork] = useState(false);
+  const pendingJarvisDeleteCopy = useMemo(
+    () =>
+      pendingJarvisDelete
+        ? jarvisLifecycleActionCopy({
+            action: "delete",
+            targetKind: pendingJarvisDelete.targetKind,
+            title: pendingJarvisDelete.title,
+          })
+        : null,
+    [pendingJarvisDelete],
+  );
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const confirmArchiveButtonRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -2528,6 +2632,102 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [isMobile, project.environmentId, project.jarvisRegistryProjectId, router, setOpenMobile],
   );
 
+  const handleDeleteJarvisRunClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const runId = jarvisRunIdFromSidebarProjectId(project.id);
+      if (runId === null) {
+        return;
+      }
+      setPendingJarvisDelete({
+        targetKind: "run",
+        environmentId: project.environmentId,
+        id: runId,
+        title: project.displayName,
+      });
+    },
+    [project.displayName, project.environmentId, project.id],
+  );
+
+  const openDeleteJarvisWorkSessionDialog = useCallback(
+    (input: { readonly thread: SidebarThreadSummary; readonly sessionRef: string }) => {
+      setPendingJarvisDelete({
+        targetKind: "session",
+        environmentId: input.thread.environmentId,
+        id: input.sessionRef,
+        title: input.thread.title,
+      });
+    },
+    [],
+  );
+
+  const confirmJarvisWorkDelete = useCallback(async () => {
+    if (pendingJarvisDelete === null) {
+      return;
+    }
+    setDeletingJarvisWork(true);
+    const result =
+      pendingJarvisDelete.targetKind === "session"
+        ? await deleteJarvisSession({
+            environmentId: pendingJarvisDelete.environmentId,
+            input: {
+              sessionRef: pendingJarvisDelete.id,
+            },
+          })
+        : await deleteJarvisRun({
+            environmentId: pendingJarvisDelete.environmentId,
+            input: {
+              runId: pendingJarvisDelete.id,
+            },
+          });
+    setDeletingJarvisWork(false);
+
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title:
+              pendingJarvisDelete.targetKind === "session"
+                ? "Could not delete work session"
+                : "Could not delete run",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+      return;
+    }
+
+    if (result.value.ok !== true || result.value.result === undefined) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title:
+            pendingJarvisDelete.targetKind === "session"
+              ? "Could not delete work session"
+              : "Could not delete run",
+          description: result.value.error?.message ?? "Jarvis did not return a delete result.",
+        }),
+      );
+      return;
+    }
+
+    const lifecycleResult = result.value.result;
+    toastManager.add({
+      type: "success",
+      title: formatJarvisReclamationToast({
+        targetKind: pendingJarvisDelete.targetKind,
+        deleted: lifecycleResult.deleted,
+        reclamation: lifecycleResult.reclamation,
+      }),
+      description: pendingJarvisDelete.title,
+    });
+    setPendingJarvisDelete(null);
+    refreshJarvisSnapshot();
+  }, [deleteJarvisRun, deleteJarvisSession, pendingJarvisDelete, refreshJarvisSnapshot]);
+
   const attemptArchiveThread = useCallback(
     async (threadRef: ScopedThreadRef) => {
       const result = await archiveThread(threadRef);
@@ -2871,6 +3071,24 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               <TooltipPopup side="top">Orchestration chat</TooltipPopup>
             </Tooltip>
           </div>
+        ) : project.sidebarSourceKind === "jarvis-work-artifact" ? (
+          <div className="pointer-events-none absolute top-[calc(50%+1px)] right-1 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label={`Delete run ${project.displayName}`}
+                    className={SIDEBAR_ICON_ACTION_BUTTON_CLASS}
+                    onClick={handleDeleteJarvisRunClick}
+                  >
+                    <TrashIcon className="size-3.5" />
+                  </button>
+                }
+              />
+              <TooltipPopup side="top">Delete run</TooltipPopup>
+            </Tooltip>
+          </div>
         ) : null}
         {/* Environment badge – visible by default, crossfades with the
             "new thread" button on hover using the same pointer-events +
@@ -2962,6 +3180,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         commitRename={commitRename}
         cancelRename={cancelRename}
         attemptArchiveThread={attemptArchiveThread}
+        onDeleteJarvisWorkSession={openDeleteJarvisWorkSessionDialog}
         openPrLink={openPrLink}
         expandThreadListForProject={expandThreadListForProject}
         collapseThreadListForProject={collapseThreadListForProject}
@@ -3085,6 +3304,37 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           </DialogFooter>
         </DialogPopup>
       </Dialog>
+
+      <AlertDialog
+        open={pendingJarvisDelete !== null}
+        onOpenChange={(open) => {
+          if (!open && !deletingJarvisWork) {
+            setPendingJarvisDelete(null);
+          }
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{pendingJarvisDeleteCopy?.title ?? "Delete work?"}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingJarvisDeleteCopy?.description ??
+                "Delete permanently removes Jarvis records and owned worker state."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />} disabled={deletingJarvisWork}>
+              Cancel
+            </AlertDialogClose>
+            <Button
+              variant="destructive"
+              onClick={() => void confirmJarvisWorkDelete()}
+              disabled={deletingJarvisWork}
+            >
+              {pendingJarvisDeleteCopy?.confirmLabel ?? "Delete"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
     </>
   );
 });
@@ -3506,6 +3756,7 @@ interface SidebarProjectsContentProps {
   attachProjectListAutoAnimateRef: (node: HTMLElement | null) => void;
   projectsLength: number;
   jarvisRegistryState: "disabled" | "pending" | "failed" | "empty" | "ready";
+  refreshJarvisSnapshot: () => void;
 }
 
 const SidebarProjectsContent = memo(function SidebarProjectsContent(
@@ -3561,6 +3812,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     attachProjectListAutoAnimateRef,
     projectsLength,
     jarvisRegistryState,
+    refreshJarvisSnapshot,
   } = props;
   const primaryProjects = useMemo(
     () => sortedProjects.filter((project) => project.sidebarSourceKind !== "jarvis-work-artifact"),
@@ -3742,6 +3994,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         dragHandleProps={dragHandleProps}
                         isJarvisCockpitMode={isJarvisCockpitMode}
                         surfaceCopy={surfaceCopy}
+                        refreshJarvisSnapshot={refreshJarvisSnapshot}
                       />
                     )}
                   </SortableProjectItem>
@@ -3775,6 +4028,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 dragHandleProps={null}
                 isJarvisCockpitMode={isJarvisCockpitMode}
                 surfaceCopy={surfaceCopy}
+                refreshJarvisSnapshot={refreshJarvisSnapshot}
               />
             ))}
           </SidebarMenu>
@@ -3816,6 +4070,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                   dragHandleProps={null}
                   isJarvisCockpitMode={isJarvisCockpitMode}
                   surfaceCopy={surfaceCopy}
+                  refreshJarvisSnapshot={refreshJarvisSnapshot}
                 />
               ))}
             </SidebarMenu>
@@ -3899,6 +4154,14 @@ export default function Sidebar() {
       ? serverEnvironment.jarvisProjects({
           environmentId: jarvisEnvironmentId,
           input: { includeArchived: false },
+        })
+      : null,
+  );
+  const jarvisSnapshotQuery = useEnvironmentQuery(
+    isJarvisCockpitMode && jarvisEnvironmentId !== null
+      ? serverEnvironment.jarvisSnapshot({
+          environmentId: jarvisEnvironmentId,
+          input: {},
         })
       : null,
   );
@@ -4539,6 +4802,7 @@ export default function Sidebar() {
               ).length
             }
             jarvisRegistryState={jarvisRegistryState}
+            refreshJarvisSnapshot={jarvisSnapshotQuery.refresh}
           />
 
           <SidebarSeparator />

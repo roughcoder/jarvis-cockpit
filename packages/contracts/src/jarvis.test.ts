@@ -8,6 +8,8 @@ import {
   JarvisCockpitCatalog,
   JarvisCockpitEvent,
   JarvisControlResult,
+  JarvisDeleteInput,
+  JarvisLifecycleResult,
   JarvisProjectThreadDetailResponse,
   JarvisProjectThreadTurnInput,
   JarvisRestoreCheckpointInput,
@@ -41,7 +43,9 @@ const decodeApproval = Schema.decodeUnknownEffect(JarvisApprovalInput);
 const decodeUserInput = Schema.decodeUnknownEffect(JarvisUserInputInput);
 const decodeRestoreCheckpoint = Schema.decodeUnknownEffect(JarvisRestoreCheckpointInput);
 const decodeArchive = Schema.decodeUnknownEffect(JarvisArchiveInput);
+const decodeDelete = Schema.decodeUnknownEffect(JarvisDeleteInput);
 const decodeControlResult = Schema.decodeUnknownEffect(JarvisControlResult);
+const decodeLifecycleResult = Schema.decodeUnknownEffect(JarvisLifecycleResult);
 const decodeSseEvent = Schema.decodeUnknownEffect(JarvisCockpitEvent);
 const decodeProjectThreadDetail = Schema.decodeUnknownEffect(JarvisProjectThreadDetailResponse);
 const decodeProjectThreadTurn = Schema.decodeUnknownEffect(JarvisProjectThreadTurnInput);
@@ -894,6 +898,28 @@ it.effect("accepts documented write success and failure response projections", (
     assert.strictEqual(success.session?.session_ref, sessionRef);
     assert.strictEqual(success.events?.[0]?.type, "turn.started");
     assert.strictEqual(failure.error?.code, "session_active");
+  }),
+);
+
+it.effect("decodes lifecycle delete inputs and reclamation responses", () =>
+  Effect.gen(function* () {
+    const input = yield* decodeDelete({});
+    const result = yield* decodeLifecycleResult({
+      ok: true,
+      deleted: true,
+      reclamation: {
+        records: 1,
+        events: 42,
+        worktrees: 2,
+        bytes: 5_557_453,
+      },
+    });
+
+    assert.deepStrictEqual(input.metadata, { surface: "jarvis-cockpit" });
+    assert.strictEqual(result.deleted, true);
+    assert.strictEqual(result.reclamation.records, 1);
+    assert.strictEqual(result.reclamation.events, 42);
+    assert.strictEqual(result.reclamation.worktrees, 2);
   }),
 );
 
