@@ -3,13 +3,14 @@ import type {
   JarvisProject,
   JarvisProjectFile,
   JarvisProjectMemoryResult,
+  JarvisTurnAttachment,
   ThreadId,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ClipboardEvent, type DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import * as Schema from "effect/Schema";
 import {
   ArchiveIcon,
@@ -18,6 +19,7 @@ import {
   CheckIcon,
   FileTextIcon,
   GitBranchIcon,
+  ImagePlusIcon,
   MessageSquareIcon,
   PanelRightCloseIcon,
   PanelRightOpenIcon,
@@ -62,6 +64,16 @@ import {
   type ProjectConversationMessageView,
 } from "../jarvisProjectConversations.logic";
 import {
+  buildProjectTurnImageAttachment,
+  decodedBytesFromProjectTurnAttachmentDataUrl,
+  formatAttachmentBytes,
+  isProjectTurnImageMimeType,
+  PROJECT_TURN_ATTACHMENT_IMAGE_MIME_TYPES,
+  projectConversationSupportsImageAttachments,
+  validateProjectTurnAttachmentCount,
+  validateProjectTurnImageAttachment,
+} from "./projectConversationComposer.logic";
+import {
   buildProjectConversationRenameInput,
   PROJECT_CONTEXT_PANEL_COLLAPSED_STORAGE_KEY,
   resolveProjectConversationHeaderStatus,
@@ -84,6 +96,11 @@ interface ProjectConversationViewProps {
 }
 
 type LocalTurn = ProjectConversationLocalTurnView;
+
+interface ComposerImageAttachmentDraft extends JarvisTurnAttachment {
+  readonly id: string;
+  readonly decodedBytes: number;
+}
 
 export function ProjectConversationView({
   environmentId,
@@ -118,6 +135,12 @@ export function ProjectConversationView({
     serverEnvironment.jarvisProjectFiles({
       environmentId,
       input: { projectId, includeRetracted: false },
+    }),
+  );
+  const capabilitiesQuery = useEnvironmentQuery(
+    serverEnvironment.jarvisCapabilities({
+      environmentId,
+      input: {},
     }),
   );
   const sendTurn = useAtomCommand(serverEnvironment.sendJarvisProjectThreadTurn, {
@@ -160,6 +183,8 @@ export function ProjectConversationView({
     [filesQuery.data],
   );
   const [draft, setDraft] = useState("");
+  const [attachments, setAttachments] = useState<ComposerImageAttachmentDraft[]>([]);
+  const [dragOverComposer, setDragOverComposer] = useState(false);
   const [turns, setTurns] = useState<LocalTurn[]>([]);
   const messages = useMemo(
     () => projectConversationMergedMessages({ historyMessages, localTurns: turns }),
@@ -175,6 +200,7 @@ export function ProjectConversationView({
     Schema.Boolean,
   );
   const turnCounter = useRef(0);
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const sendBusy = turns.some((turn) => turn.status === "pending" || turn.status === "streaming");
   const projectName = project?.name ?? projectId;
   const archived = isProjectConversationArchived(conversation);
@@ -187,6 +213,10 @@ export function ProjectConversationView({
     endedReason: conversation?.ended_reason,
   });
   const contextPanelToggleState = resolveProjectContextPanelToggleState(contextPanelCollapsed);
+  const attachmentsSupported = projectConversationSupportsImageAttachments({
+    catalog: capabilitiesQuery.data?.catalog ?? null,
+    engine: conversation?.engine,
+  });
   const detailFallback =
     threadDetailQuery.data?.ok === false &&
     isProjectConversationDetailRouteGap(threadDetailQuery.data.error?.message)
@@ -196,7 +226,14 @@ export function ProjectConversationView({
   useEffect(() => {
     setRenamingConversation(false);
     setRenameDraft("");
+    setAttachments([]);
   }, [threadId]);
+
+  useEffect(() => {
+    if (!attachmentsSupported && attachments.length > 0) {
+      setAttachments([]);
+    }
+  }, [attachments.length, attachmentsSupported]);
 
   const refreshConversationData = () => {
     threadsQuery.refresh();
@@ -294,9 +331,128 @@ export function ProjectConversationView({
     );
   };
 
+  const showAttachmentError = (description: string) => {
+    toastManager.add({
+      type: "error",
+      title: "Could not attach image",
+      description,
+    });
+  };
+
+  const addImageFiles = async (fileList: FileList | readonly File[]) => {
+    if (!attachmentsSupported) return;
+    const files = Array.from(fileList);
+    if (files.length === 0) return;
+
+    const nextAttachments = [...attachments];
+    let reportedLimit = false;
+    for (const file of files) {
+      const countValidation = validateProjectTurnAttachmentCount(nextAttachments.length, 1);
+      if (!countValidation.ok) {
+        if (!reportedLimit) {
+          showAttachmentError(countValidation.message);
+          reportedLimit = true;
+        }
+        continue;
+      }
+
+      const mimeType = file.type;
+      const sizeValidation = validateProjectTurnImageAttachment({
+        name: file.name,
+        mimeType,
+        decodedBytes: file.size,
+      });
+      if (!sizeValidation.ok) {
+        showAttachmentError(sizeValidation.message);
+        continue;
+      }
+      if (!isProjectTurnImageMimeType(mimeType)) {
+        showAttachmentError("Attach PNG, JPEG, WEBP, or GIF images.");
+        continue;
+      }
+
+      let dataUrl: string;
+      try {
+        dataUrl = await readFileAsDataUrl(file);
+      } catch (error) {
+        showAttachmentError(
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : `${file.name || "Image"} could not be read.`,
+        );
+        continue;
+      }
+      const decodedBytes = decodedBytesFromProjectTurnAttachmentDataUrl(dataUrl);
+      if (decodedBytes === null) {
+        showAttachmentError(`${file.name || "Image"} could not be encoded as a data URL.`);
+        continue;
+      }
+      const dataUrlValidation = validateProjectTurnImageAttachment({
+        name: file.name,
+        mimeType,
+        decodedBytes,
+      });
+      if (!dataUrlValidation.ok) {
+        showAttachmentError(dataUrlValidation.message);
+        continue;
+      }
+      const base64Data = dataUrl.slice(dataUrl.indexOf(",") + 1);
+      nextAttachments.push({
+        ...buildProjectTurnImageAttachment({
+          name: file.name || `image-${nextAttachments.length + 1}`,
+          mimeType,
+          base64Data,
+        }),
+        id: `project-image-${Date.now()}-${randomUUID()}`,
+        decodedBytes,
+      });
+    }
+
+    if (nextAttachments.length !== attachments.length) {
+      setAttachments(nextAttachments);
+    }
+  };
+
+  const removeAttachment = (attachmentId: string) => {
+    setAttachments((existing) => existing.filter((attachment) => attachment.id !== attachmentId));
+  };
+
+  const handleComposerPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!attachmentsSupported || sendBusy || archived) return;
+    const files = Array.from(event.clipboardData.files).filter((file) =>
+      file.type.startsWith("image/"),
+    );
+    if (files.length === 0) return;
+    event.preventDefault();
+    void addImageFiles(files);
+  };
+
+  const handleComposerDragOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!attachmentsSupported || sendBusy || archived || !dragEventHasFiles(event)) return;
+    event.preventDefault();
+    setDragOverComposer(true);
+  };
+
+  const handleComposerDragLeave = (event: DragEvent<HTMLDivElement>) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      setDragOverComposer(false);
+    }
+  };
+
+  const handleComposerDrop = (event: DragEvent<HTMLDivElement>) => {
+    if (!attachmentsSupported || sendBusy || archived || !dragEventHasFiles(event)) return;
+    event.preventDefault();
+    setDragOverComposer(false);
+    void addImageFiles(event.dataTransfer.files);
+  };
+
+  const sendAttachments = (): JarvisTurnAttachment[] =>
+    attachments.map(({ id: _id, decodedBytes: _decodedBytes, ...attachment }) => attachment);
+
   const sendPrompt = async (prompt: string, existingTurnId?: string) => {
     const text = prompt.trim();
     if (text.length === 0 || sendBusy || archived) return;
+    const turnAttachments = existingTurnId ? [] : sendAttachments();
 
     const turnId = existingTurnId ?? `project-turn-${Date.now()}-${turnCounter.current++}`;
     if (existingTurnId) {
@@ -321,12 +477,15 @@ export function ProjectConversationView({
       input: {
         projectId,
         threadId: String(threadId),
-        input: { text },
+        input: {
+          text,
+          ...(turnAttachments.length > 0 ? { attachments: turnAttachments } : {}),
+        },
       },
     });
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
-        const message = formatProjectConversationFailure("send", squashAtomCommandFailure(result));
+        const message = formatProjectConversationSendFailure(squashAtomCommandFailure(result));
         markTurn(turnId, { status: "failed", error: message });
         setDraft(text);
         toastManager.add({
@@ -338,8 +497,7 @@ export function ProjectConversationView({
       return;
     }
     if (!result.value.ok || !result.value.result) {
-      const message = formatProjectConversationFailure(
-        "send",
+      const message = formatProjectConversationSendFailure(
         result.value.error?.message ?? "Jarvis did not return a project conversation turn result.",
       );
       markTurn(turnId, { status: "failed", error: message });
@@ -354,6 +512,9 @@ export function ProjectConversationView({
 
     const reply = extractProjectConversationReply(result.value.result);
     markTurn(turnId, { status: "completed", response: reply, error: null });
+    if (!existingTurnId) {
+      setAttachments([]);
+    }
     refreshConversationData();
   };
 
@@ -673,10 +834,56 @@ export function ProjectConversationView({
             </div>
             <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-2">
               <div className="mx-auto w-full max-w-3xl px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:px-5">
-                <div className="pointer-events-auto rounded-t-2xl border border-border/70 bg-background/95 p-2 shadow-lg shadow-black/5 backdrop-blur">
+                <div
+                  className={cn(
+                    "pointer-events-auto rounded-t-2xl border border-border/70 bg-background/95 p-2 shadow-lg shadow-black/5 backdrop-blur",
+                    dragOverComposer && "border-primary/60 bg-primary/5",
+                  )}
+                  onDragOver={handleComposerDragOver}
+                  onDragLeave={handleComposerDragLeave}
+                  onDrop={handleComposerDrop}
+                >
+                  {attachments.length > 0 ? (
+                    <div className="mb-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      {attachments.map((attachment) => (
+                        <div
+                          key={attachment.id}
+                          className="group relative min-w-0 rounded-md border border-border bg-card p-1.5"
+                        >
+                          <div className="aspect-video overflow-hidden rounded-sm bg-muted">
+                            <img
+                              src={attachment.data_url}
+                              alt={attachment.name}
+                              className="size-full object-cover"
+                            />
+                          </div>
+                          <div className="mt-1 min-w-0">
+                            <div className="truncate text-xs font-medium text-foreground">
+                              {attachment.name}
+                            </div>
+                            <div className="text-[11px] text-muted-foreground">
+                              {formatAttachmentBytes(attachment.decodedBytes)}
+                            </div>
+                          </div>
+                          <Button
+                            type="button"
+                            size="icon-xs"
+                            variant="secondary"
+                            className="absolute right-2 top-2 size-6 opacity-90"
+                            aria-label={`Remove ${attachment.name}`}
+                            disabled={sendBusy}
+                            onClick={() => removeAttachment(attachment.id)}
+                          >
+                            <XIcon className="size-3.5" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                   <Textarea
                     value={draft}
                     onChange={(event) => setDraft(event.currentTarget.value)}
+                    onPaste={handleComposerPaste}
                     placeholder={
                       archived
                         ? "Unarchive this conversation to send a turn"
@@ -687,13 +894,56 @@ export function ProjectConversationView({
                     className="border-transparent shadow-none before:shadow-none"
                   />
                   <div className="mt-2 flex items-center justify-between gap-3">
-                    <span className="text-xs text-muted-foreground">
-                      {archived
-                        ? "Archived conversations are read-only"
-                        : sendBusy
-                          ? "Sending to Jarvis"
-                          : "Jarvis project context attached"}
-                    </span>
+                    <div className="flex min-w-0 items-center gap-2">
+                      {attachmentsSupported ? (
+                        <>
+                          <input
+                            ref={attachmentInputRef}
+                            type="file"
+                            accept={PROJECT_TURN_ATTACHMENT_IMAGE_MIME_TYPES.join(",")}
+                            multiple
+                            className="hidden"
+                            aria-hidden="true"
+                            tabIndex={-1}
+                            onChange={(event) => {
+                              const files = event.currentTarget.files;
+                              if (files) {
+                                void addImageFiles(files);
+                              }
+                              event.currentTarget.value = "";
+                            }}
+                          />
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <Button
+                                  type="button"
+                                  size="icon-sm"
+                                  variant="ghost"
+                                  aria-label="Attach image"
+                                  disabled={conversation === null || sendBusy || archived}
+                                  onClick={() => attachmentInputRef.current?.click()}
+                                >
+                                  <ImagePlusIcon className="size-4" />
+                                </Button>
+                              }
+                            />
+                            <TooltipPopup side="top">Attach image</TooltipPopup>
+                          </Tooltip>
+                        </>
+                      ) : null}
+                      <span className="truncate text-xs text-muted-foreground">
+                        {archived
+                          ? "Archived conversations are read-only"
+                          : sendBusy
+                            ? "Sending to Jarvis"
+                            : attachments.length > 0
+                              ? `${attachments.length} image${
+                                  attachments.length === 1 ? "" : "s"
+                                } attached`
+                              : "Jarvis project context attached"}
+                      </span>
+                    </div>
                     <Button
                       size="sm"
                       onClick={() => void sendPrompt(draft)}
@@ -757,6 +1007,33 @@ function formatProjectConversationRenameFailure(error: unknown): string {
     return "Jarvis denied the project conversation rename.";
   }
   return message;
+}
+
+function formatProjectConversationSendFailure(error: unknown): string {
+  const message = formatProjectConversationFailure("send", error);
+  if (/validation[_ -]?failed/i.test(message)) {
+    return `Jarvis rejected the turn attachments: ${message}`;
+  }
+  return message;
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+      reject(new Error("File reader returned a non-string data URL."));
+    });
+    reader.addEventListener("error", () => reject(reader.error ?? new Error("File read failed.")));
+    reader.readAsDataURL(file);
+  });
+}
+
+function dragEventHasFiles(event: DragEvent<HTMLDivElement>): boolean {
+  return Array.from(event.dataTransfer.types).includes("Files");
 }
 
 function ProjectConversationMessageRow({

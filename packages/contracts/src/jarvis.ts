@@ -162,6 +162,7 @@ export const JarvisCapabilitySupport = Schema.Struct({
   approval_requests: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   input_requests: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   checkpoints: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  attachments: Schema.optionalKey(Schema.Boolean),
 });
 export type JarvisCapabilitySupport = typeof JarvisCapabilitySupport.Type;
 
@@ -331,6 +332,7 @@ export const JarvisCapabilitiesResult = Schema.Struct({
   ok: Schema.Boolean,
   checked_at: IsoDateTime,
   routes: Schema.Array(JarvisRouteCapability),
+  catalog: Schema.optionalKey(JarvisCockpitCatalog),
   error: Schema.optionalKey(
     Schema.Struct({
       message: Schema.String,
@@ -613,8 +615,25 @@ export type JarvisProjectCreateThreadInput = typeof JarvisProjectCreateThreadInp
 export const JarvisProjectThreadArchiveInput = JarvisArchiveInputBase;
 export type JarvisProjectThreadArchiveInput = typeof JarvisProjectThreadArchiveInput.Type;
 
+export const JarvisTurnAttachmentMimeType = Schema.Literals([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+]);
+export type JarvisTurnAttachmentMimeType = typeof JarvisTurnAttachmentMimeType.Type;
+
+export const JarvisTurnAttachment = Schema.Struct({
+  kind: Schema.Literal("image"),
+  mime_type: JarvisTurnAttachmentMimeType,
+  name: TrimmedNonEmptyString,
+  data_url: TrimmedNonEmptyString,
+});
+export type JarvisTurnAttachment = typeof JarvisTurnAttachment.Type;
+
 export const JarvisProjectThreadTurnInput = Schema.Struct({
   text: TrimmedNonEmptyString,
+  attachments: Schema.optionalKey(Schema.Array(JarvisTurnAttachment)),
   idempotency_key: Schema.optional(TrimmedNonEmptyString),
   metadata: Schema.optionalKey(JarvisWriteMetadata).pipe(
     Schema.withDecodingDefault(Effect.succeed({ surface: "jarvis-cockpit" })),
