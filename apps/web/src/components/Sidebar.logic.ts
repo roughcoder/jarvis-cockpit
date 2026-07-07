@@ -81,6 +81,11 @@ export type SidebarProjectSourceKind = "default" | "jarvis-registry" | "jarvis-w
 export interface SidebarProjectView extends SidebarProjectSnapshot {
   sidebarSourceKind: SidebarProjectSourceKind;
   jarvisRegistryProjectId: string | null;
+  // For a "jarvis-work-artifact" project (a dispatched run), the registry project its work is
+  // linked to (from the run/session project_id carried on thread shells). Null when the work is
+  // not linked to a known registry project — such work stays in the standalone "Recent work"
+  // section instead of nesting under a project. Always null for registry/default projects.
+  linkedRegistryProjectId: string | null;
   sidebarBadges: readonly string[];
 }
 
@@ -148,6 +153,7 @@ export function buildJarvisRegistrySidebarProject(input: {
     remoteEnvironmentLabels: [],
     sidebarSourceKind: "jarvis-registry",
     jarvisRegistryProjectId: input.project.id,
+    linkedRegistryProjectId: null,
     sidebarBadges: badge ? [badge] : [],
   };
 }
@@ -155,13 +161,21 @@ export function buildJarvisRegistrySidebarProject(input: {
 export function markSidebarProjectsWithSourceKind(
   projects: readonly SidebarProjectSnapshot[],
   sourceKind: SidebarProjectSourceKind,
+  resolveWorkRegistryLink?: (project: SidebarProjectSnapshot) => string | null,
 ): SidebarProjectView[] {
-  return projects.map((project) => ({
-    ...project,
-    sidebarSourceKind: sourceKind,
-    jarvisRegistryProjectId: null,
-    sidebarBadges: sourceKind === "jarvis-work-artifact" ? ["Recent work"] : [],
-  }));
+  return projects.map((project) => {
+    const linkedRegistryProjectId =
+      sourceKind === "jarvis-work-artifact" && resolveWorkRegistryLink
+        ? resolveWorkRegistryLink(project)
+        : null;
+    return {
+      ...project,
+      sidebarSourceKind: sourceKind,
+      jarvisRegistryProjectId: null,
+      linkedRegistryProjectId,
+      sidebarBadges: sourceKind === "jarvis-work-artifact" ? ["Recent work"] : [],
+    };
+  });
 }
 
 export function buildJarvisProjectFirstSidebarProjects(input: {
@@ -170,6 +184,10 @@ export function buildJarvisProjectFirstSidebarProjects(input: {
   environmentId: EnvironmentId | null;
   nowIso: string;
   makeProjectId: (value: string) => ProjectId;
+  // Resolves a dispatched work-artifact project to the registry project id its work belongs to
+  // (from thread-shell project linkage), or null when unlinked. Optional so callers without the
+  // linkage still get the flat, unnested layout.
+  resolveWorkRegistryLink?: (project: SidebarProjectSnapshot) => string | null;
 }): SidebarProjectView[] {
   if (input.registryProjects === null || input.environmentId === null) {
     return [];
@@ -184,9 +202,24 @@ export function buildJarvisProjectFirstSidebarProjects(input: {
       makeProjectId: input.makeProjectId,
     }),
   );
+  // Only nest work under a registry project that actually exists in this snapshot; work linked to
+  // an unknown/absent registry project falls back to the standalone "Recent work" section.
+  const knownRegistryProjectIds = new Set(input.registryProjects.map((project) => project.id));
+  const resolveWorkRegistryLink = input.resolveWorkRegistryLink;
+  const resolveKnownLink = resolveWorkRegistryLink
+    ? (project: SidebarProjectSnapshot): string | null => {
+        const linked = resolveWorkRegistryLink(project);
+        return linked && knownRegistryProjectIds.has(linked) ? linked : null;
+      }
+    : undefined;
+
   return [
     ...registryProjects,
-    ...markSidebarProjectsWithSourceKind(input.projectedWorkProjects, "jarvis-work-artifact"),
+    ...markSidebarProjectsWithSourceKind(
+      input.projectedWorkProjects,
+      "jarvis-work-artifact",
+      resolveKnownLink,
+    ),
   ];
 }
 
