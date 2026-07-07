@@ -15,6 +15,7 @@ import {
   SendIcon,
   ServerIcon,
   TriangleAlertIcon,
+  Trash2Icon,
   XCircleIcon,
 } from "lucide-react";
 import type { JarvisWorkerProfile, JarvisWorkerSession } from "@t3tools/contracts";
@@ -34,11 +35,13 @@ import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import {
   buildWorkerTestJobStartTurnInput,
+  formatWorkerWorktreePruneResult,
   NOT_REPORTED,
   resolveWorkerTestJobStatus,
   workerIdentityAccessSummary,
   workerReadinessRows,
   workerWarmCheckouts,
+  type WorkerGitAuthStatePresentation,
   type WorkerReadinessStatus,
   type WorkerTestJobStatus,
 } from "./JarvisWorkers.logic";
@@ -68,6 +71,9 @@ function sessionVariant(session: JarvisWorkerSession): "success" | "warning" | "
 }
 
 function sessionProgressLabel(session: JarvisWorkerSession): string {
+  if (session.provision_phase) {
+    return session.provision_phase.replaceAll("-", " ");
+  }
   const phase = session.status.replaceAll("_", " ");
   if (TERMINAL_SESSION_STATUSES.has(session.status)) {
     return `Terminal: ${phase}`;
@@ -97,6 +103,15 @@ function readinessIcon(status: WorkerReadinessStatus) {
   if (status === "reported-healthy") return <CheckCircle2Icon className="size-3.5" />;
   if (status === "reported-unhealthy") return <XCircleIcon className="size-3.5" />;
   return <HelpCircleIcon className="size-3.5" />;
+}
+
+function gitAuthVariant(
+  status: WorkerGitAuthStatePresentation,
+): "success" | "warning" | "error" | "outline" {
+  if (status === "valid") return "success";
+  if (status === "expired") return "warning";
+  if (status === "unconfigured") return "error";
+  return "outline";
 }
 
 function absoluteTime(isoDate: string): string {
@@ -235,7 +250,9 @@ function WarmCheckouts({ worker }: { readonly worker: JarvisWorkerProfile }) {
 
 function WorkerRow({
   fixtureMode,
+  onPruneWorktrees,
   onSendTestJob,
+  pendingPrune,
   pendingTestJob,
   sessions,
   testJobStatus,
@@ -244,8 +261,10 @@ function WorkerRow({
   readonly worker: JarvisWorkerProfile;
   readonly sessions: ReadonlyArray<JarvisWorkerSession>;
   readonly fixtureMode: boolean;
+  readonly pendingPrune: boolean;
   readonly pendingTestJob: boolean;
   readonly testJobStatus: WorkerTestJobStatus | null | undefined;
+  readonly onPruneWorktrees: (worker: JarvisWorkerProfile) => void;
   readonly onSendTestJob: (worker: JarvisWorkerProfile) => void;
 }) {
   const engines = worker.engines.length > 0 ? worker.engines : [];
@@ -320,6 +339,15 @@ function WorkerRow({
             {pendingTestJob ? <Spinner className="size-3" /> : <SendIcon className="size-3" />}
             {fixtureMode ? "Simulate test job" : "Send test job"}
           </Button>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={pendingPrune}
+            onClick={() => onPruneWorktrees(worker)}
+          >
+            {pendingPrune ? <Spinner className="size-3" /> : <Trash2Icon className="size-3" />}
+            Prune stale worktrees
+          </Button>
           {fixtureMode ? (
             <p className="max-w-72 text-right text-[11px] text-muted-foreground">
               Fixture mode simulates this dispatch; no live worker is contacted.
@@ -336,8 +364,8 @@ function WorkerRow({
             Identity & Access
           </div>
           <div className="grid gap-1.5">
-            <InfoRow label="Git identity" value={identity.gitIdentity} />
-            <InfoRow label="Repo access summary" value={identity.repoAccess} />
+            <GitIdentityRow identity={identity.gitIdentity} />
+            <RepoAccessRows access={identity.repoAccess} />
             <InfoRow label="Worktree inventory" value={identity.worktreeInventory} />
           </div>
         </div>
@@ -448,6 +476,87 @@ function WorkerRow({
   );
 }
 
+function GitIdentityRow({
+  identity,
+}: {
+  readonly identity: ReturnType<typeof workerIdentityAccessSummary>["gitIdentity"];
+}) {
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-2 rounded-md border bg-background/50 px-2 py-1.5">
+      <div className="min-w-0">
+        <span className="block text-xs text-muted-foreground">Git identity</span>
+        <span
+          className={cn(
+            "block truncate text-xs font-medium",
+            identity.label === NOT_REPORTED ? "text-muted-foreground" : "text-foreground",
+          )}
+          title={identity.detail}
+        >
+          {identity.label}
+        </span>
+      </div>
+      <Badge variant={gitAuthVariant(identity.authState)} size="sm" className="shrink-0">
+        {identity.authState === "not-reported" ? NOT_REPORTED : identity.authState}
+      </Badge>
+    </div>
+  );
+}
+
+function RepoAccessRows({
+  access,
+}: {
+  readonly access: ReturnType<typeof workerIdentityAccessSummary>["repoAccess"];
+}) {
+  return (
+    <div className="rounded-md border bg-background/50 px-2 py-1.5">
+      <div className="mb-1 flex min-w-0 items-center justify-between gap-2">
+        <span className="text-xs text-muted-foreground">Repo access</span>
+        <span
+          className={cn(
+            "min-w-0 truncate text-right text-xs font-medium",
+            access.reported ? "text-foreground" : "text-muted-foreground",
+          )}
+        >
+          {access.summary}
+        </span>
+      </div>
+      {access.rows.length > 0 ? (
+        <div className="space-y-1">
+          {access.rows.map((row) => (
+            <div key={`${row.repo}:${row.reasonCode}`} className="min-w-0 text-[11px]">
+              <div className="flex min-w-0 items-center justify-between gap-2">
+                <span className="truncate text-foreground">{row.repo}</span>
+                <Badge
+                  variant={
+                    row.accessible === true
+                      ? "success"
+                      : row.accessible === false
+                        ? "error"
+                        : "outline"
+                  }
+                  size="sm"
+                  className="shrink-0"
+                  title={row.reason ?? row.reasonCode}
+                >
+                  {row.accessible === true
+                    ? "accessible"
+                    : row.accessible === false
+                      ? "denied"
+                      : NOT_REPORTED}
+                  {row.reasonCode !== NOT_REPORTED ? ` / ${row.reasonCode}` : ""}
+                </Badge>
+              </div>
+              {row.remediation ? (
+                <div className="mt-0.5 text-muted-foreground">{row.remediation}</div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function InfoRow({ label, value }: { readonly label: string; readonly value: string }) {
   return (
     <div className="flex min-w-0 items-center justify-between gap-2 rounded-md border bg-background/50 px-2 py-1.5">
@@ -468,9 +577,13 @@ export function JarvisWorkersPanel() {
   const primaryEnvironment = usePrimaryEnvironment();
   const fixtureMode = useAtomValue(primaryServerConfigAtom)?.jarvisBrain?.fixtureMode === true;
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  const pruneWorkerWorktrees = useAtomCommand(serverEnvironment.pruneJarvisWorkerWorktrees, {
+    reportFailure: false,
+  });
   const [testJobStatuses, setTestJobStatuses] = useState<
     Partial<Record<string, WorkerTestJobStatus>>
   >({});
+  const [pendingPrunes, setPendingPrunes] = useState<Partial<Record<string, boolean>>>({});
   const snapshotQuery = useEnvironmentQuery(
     primaryEnvironment
       ? serverEnvironment.jarvisSnapshot({
@@ -585,6 +698,55 @@ export function JarvisWorkersPanel() {
     [fixtureMode, primaryEnvironment, snapshotQuery, startThreadTurn],
   );
 
+  const pruneWorktrees = useCallback(
+    (worker: JarvisWorkerProfile) => {
+      setPendingPrunes((current) => ({ ...current, [worker.worker_id]: true }));
+      if (!primaryEnvironment) {
+        setPendingPrunes((current) => ({ ...current, [worker.worker_id]: false }));
+        toastManager.add({
+          type: "error",
+          title: "Worktree prune failed",
+          description: "No primary environment is available for Jarvis worker cleanup.",
+        });
+        return;
+      }
+      void (async () => {
+        const result = await pruneWorkerWorktrees({
+          environmentId: primaryEnvironment.environmentId,
+          input: { input: { workerId: worker.worker_id } },
+        });
+        setPendingPrunes((current) => ({ ...current, [worker.worker_id]: false }));
+        if (result._tag === "Success" && result.value.ok && result.value.result) {
+          toastManager.add({
+            type: "success",
+            title: "Stale worktrees pruned",
+            description: formatWorkerWorktreePruneResult(result.value.result),
+          });
+          snapshotQuery.refresh();
+          return;
+        }
+        if (!isAtomCommandInterrupted(result)) {
+          const error =
+            result._tag === "Success"
+              ? result.value.error?.message
+              : squashAtomCommandFailure(result);
+          const description =
+            error instanceof Error
+              ? error.message
+              : typeof error === "string" && error.trim().length > 0
+                ? error
+                : "Jarvis did not prune worktrees.";
+          toastManager.add({
+            type: "error",
+            title: "Worktree prune failed",
+            description,
+          });
+        }
+      })();
+    },
+    [primaryEnvironment, pruneWorkerWorktrees, snapshotQuery],
+  );
+
   return (
     <SettingsPageContainer className="max-w-5xl">
       <SettingsSection
@@ -657,8 +819,10 @@ export function JarvisWorkersPanel() {
             worker={worker}
             sessions={sessionsByWorker.get(worker.worker_id) ?? []}
             fixtureMode={fixtureMode}
+            pendingPrune={pendingPrunes[worker.worker_id] === true}
             pendingTestJob={testJobStatuses[worker.worker_id]?.state === "pending"}
             testJobStatus={testJobStatuses[worker.worker_id]}
+            onPruneWorktrees={pruneWorktrees}
             onSendTestJob={sendTestJob}
           />
         ))}

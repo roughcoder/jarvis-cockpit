@@ -3,6 +3,7 @@ import { JarvisWorkerId, MessageId, ThreadId, type JarvisWorkerProfile } from "@
 
 import {
   buildWorkerTestJobStartTurnInput,
+  formatWorkerWorktreePruneResult,
   NOT_REPORTED,
   resolveWorkerTestJobStatus,
   workerIdentityAccessSummary,
@@ -102,28 +103,100 @@ describe("workerReadinessRows", () => {
 describe("workerIdentityAccessSummary", () => {
   it("keeps git identity, repo access, and worktree inventory honest until reported", () => {
     expect(workerIdentityAccessSummary(worker())).toEqual({
-      gitIdentity: NOT_REPORTED,
-      repoAccess: NOT_REPORTED,
+      gitIdentity: {
+        label: NOT_REPORTED,
+        detail: NOT_REPORTED,
+        authState: "not-reported",
+      },
+      repoAccess: {
+        summary: NOT_REPORTED,
+        rows: [],
+        reported: false,
+      },
       worktreeInventory: NOT_REPORTED,
     });
   });
 
-  it("uses future snapshot metadata when Jarvis starts reporting it", () => {
+  it("uses reported snapshot fields when Jarvis provides identity, access, and inventory", () => {
     expect(
       workerIdentityAccessSummary(
         worker({
-          public_metadata: {
-            git_identity: { login: "octocat" },
-            repo_access_summary: "12 private repos + public",
-            worktree_inventory: { count: 3, disk_usage: "2.4 GB", stale_count: 1 },
+          git_identity: {
+            provider: "github",
+            login: "octocat",
+            auth_state: "valid",
+            detail: "gh user probe succeeded",
           },
+          repo_access: [
+            {
+              repo: "roughcoder/jarvis",
+              accessible: true,
+              reason_code: "accessible",
+            },
+            {
+              repo: "roughcoder/private",
+              accessible: false,
+              reason_code: "identity-lacks-repo-access",
+              reason: "Worker identity cannot read this repo.",
+            },
+          ],
+          worktree_inventory: { count: 3, disk_bytes: 123456, stale_count: 1 },
         }),
       ),
     ).toEqual({
-      gitIdentity: "octocat",
-      repoAccess: "12 private repos + public",
-      worktreeInventory: "3 worktrees / 2.4 GB / 1 stale",
+      gitIdentity: {
+        label: "octocat / valid",
+        detail: "gh user probe succeeded",
+        authState: "valid",
+      },
+      repoAccess: {
+        summary: "1/2 accessible",
+        rows: [
+          {
+            repo: "roughcoder/jarvis",
+            accessible: true,
+            reasonCode: "accessible",
+            reason: null,
+            remediation: null,
+          },
+          {
+            repo: "roughcoder/private",
+            accessible: false,
+            reasonCode: "identity-lacks-repo-access",
+            reason: "Worker identity cannot read this repo.",
+            remediation: "Grant this worker identity access to the repository.",
+          },
+        ],
+        reported: true,
+      },
+      worktreeInventory: "3 worktrees / 121 KB / 1 stale",
     });
+  });
+});
+
+describe("formatWorkerWorktreePruneResult", () => {
+  it("formats reclaimed count and bytes for successful prunes", () => {
+    expect(
+      formatWorkerWorktreePruneResult({
+        ok: true,
+        worktrees: 1,
+        bytes: 1536,
+        pruned: [{ name: "old", bytes: 1536 }],
+        refused: [],
+      }),
+    ).toBe("Pruned 1 worktree, reclaimed 1.5 KB.");
+  });
+
+  it("keeps refused worktrees visible in the summary", () => {
+    expect(
+      formatWorkerWorktreePruneResult({
+        ok: false,
+        worktrees: 0,
+        bytes: 0,
+        pruned: [],
+        refused: [{ target: "live", reason: "live session uses this worktree" }],
+      }),
+    ).toBe("Pruned 0 worktrees, reclaimed 0 B; 1 refused.");
   });
 });
 

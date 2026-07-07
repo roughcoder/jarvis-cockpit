@@ -4,6 +4,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   type JarvisWorkerProfile,
+  type JarvisWorkerWorktreePruneResponse,
   type MessageId,
   ProjectId,
   ProviderInstanceId,
@@ -34,9 +35,31 @@ export interface WorkerWarmCheckout {
 }
 
 export interface WorkerIdentityAccessSummary {
-  readonly gitIdentity: string;
-  readonly repoAccess: string;
+  readonly gitIdentity: WorkerGitIdentityPresentation;
+  readonly repoAccess: WorkerRepoAccessPresentation;
   readonly worktreeInventory: string;
+}
+
+export type WorkerGitAuthStatePresentation = "valid" | "expired" | "unconfigured" | "not-reported";
+
+export interface WorkerGitIdentityPresentation {
+  readonly label: string;
+  readonly detail: string;
+  readonly authState: WorkerGitAuthStatePresentation;
+}
+
+export interface WorkerRepoAccessRow {
+  readonly repo: string;
+  readonly accessible: boolean | null;
+  readonly reasonCode: string;
+  readonly reason: string | null;
+  readonly remediation: string | null;
+}
+
+export interface WorkerRepoAccessPresentation {
+  readonly summary: string;
+  readonly rows: ReadonlyArray<WorkerRepoAccessRow>;
+  readonly reported: boolean;
 }
 
 export type WorkerTestJobState = "pending" | "dispatched" | "failed";
@@ -156,20 +179,35 @@ export function workerIdentityAccessSummary(
   worker: JarvisWorkerProfile,
 ): WorkerIdentityAccessSummary {
   return {
-    gitIdentity:
-      metadataText(worker, ["git_identity", "gitIdentity", "github_identity", "githubIdentity"]) ??
-      NOT_REPORTED,
-    repoAccess:
-      metadataText(worker, [
-        "repo_access_summary",
-        "repoAccessSummary",
-        "access_summary",
-        "accessSummary",
-      ]) ?? NOT_REPORTED,
+    gitIdentity: formatGitIdentity(
+      worker.git_identity ??
+        metadataValue(worker, ["git_identity", "gitIdentity", "github_identity", "githubIdentity"]),
+    ),
+    repoAccess: formatRepoAccess(
+      worker.repo_access ??
+        metadataValue(worker, [
+          "repo_access",
+          "repoAccess",
+          "repo_access_summary",
+          "repoAccessSummary",
+          "access_summary",
+          "accessSummary",
+        ]),
+    ),
     worktreeInventory: formatWorktreeInventory(
-      metadataValue(worker, ["worktree_inventory", "worktreeInventory"]),
+      worker.worktree_inventory ??
+        metadataValue(worker, ["worktree_inventory", "worktreeInventory"]),
     ),
   };
+}
+
+export function formatWorkerWorktreePruneResult(result: JarvisWorkerWorktreePruneResponse): string {
+  const reclaimed = formatBytes(result.bytes);
+  const pruned = `${result.worktrees} worktree${result.worktrees === 1 ? "" : "s"}`;
+  if (result.refused.length > 0) {
+    return `Pruned ${pruned}, reclaimed ${reclaimed}; ${result.refused.length} refused.`;
+  }
+  return `Pruned ${pruned}, reclaimed ${reclaimed}.`;
 }
 
 export function selectWorkerTestJobRepo(worker: JarvisWorkerProfile): string | null {
@@ -308,20 +346,99 @@ function capabilityIncludes(capability: string, needle: string): boolean {
   return capability.includes(normalize(needle));
 }
 
-function metadataText(worker: JarvisWorkerProfile, keys: ReadonlyArray<string>): string | null {
-  const value = metadataValue(worker, keys);
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
+function formatGitIdentity(value: unknown): WorkerGitIdentityPresentation {
+  if (!isRecord(value)) {
+    return {
+      label: NOT_REPORTED,
+      detail: NOT_REPORTED,
+      authState: "not-reported",
+    };
   }
-  if (isRecord(value)) {
-    const label = [value["label"], value["display_name"], value["name"], value["login"]].find(
-      (candidate): candidate is string =>
-        typeof candidate === "string" && candidate.trim().length > 0,
-    );
-    return label?.trim() ?? null;
+  const login = stringValue(value["login"]);
+  const provider = stringValue(value["provider"]) ?? "git";
+  const authState = resolveGitAuthState(value);
+  const detail = stringValue(value["detail"]);
+  const label = login ?? metadataTextFromRecord(value) ?? NOT_REPORTED;
+  return {
+    label:
+      label === NOT_REPORTED
+        ? NOT_REPORTED
+        : `${label} / ${authState === "not-reported" ? "auth state not reported" : authState}`,
+    detail: detail ?? (label === NOT_REPORTED ? NOT_REPORTED : `${provider} worker identity`),
+    authState,
+  };
+}
+
+function resolveGitAuthState(value: Record<string, unknown>): WorkerGitAuthStatePresentation {
+  const explicit = stringValue(value["auth_state"]);
+  if (explicit === "valid" || explicit === "expired" || explicit === "unconfigured") {
+    return explicit;
   }
-  return null;
+  const authenticated = booleanValue(value["authenticated"]);
+  const authFresh = booleanValue(value["auth_fresh"]);
+  const connected = booleanValue(value["connected"]);
+  if (authenticated === true && authFresh !== false) return "valid";
+  if (authenticated === true && authFresh === false) return "expired";
+  if (connected === false || authenticated === false) return "unconfigured";
+  return "not-reported";
+}
+
+function formatRepoAccess(value: unknown): WorkerRepoAccessPresentation {
+  if (Array.isArray(value)) {
+    const rows = value.filter(isRecord).map(formatRepoAccessRow);
+    const accessibleCount = rows.filter((row) => row.accessible === true).length;
+    return {
+      summary:
+        rows.length === 0 ? "0 repos reported" : `${accessibleCount}/${rows.length} accessible`,
+      rows,
+      reported: true,
+    };
+  }
+  const legacySummary = typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+  return {
+    summary: legacySummary ?? NOT_REPORTED,
+    rows: [],
+    reported: legacySummary !== null,
+  };
+}
+
+function formatRepoAccessRow(value: Record<string, unknown>): WorkerRepoAccessRow {
+  const accessible = booleanValue(value["accessible"]);
+  const reasonCode = stringValue(value["reason_code"]) ?? NOT_REPORTED;
+  return {
+    repo: stringValue(value["repo"]) ?? NOT_REPORTED,
+    accessible,
+    reasonCode,
+    reason: stringValue(value["reason"]),
+    remediation: accessible === false ? repoAccessRemediation(reasonCode) : null,
+  };
+}
+
+function repoAccessRemediation(reasonCode: string): string {
+  if (reasonCode === "worker-not-connected-to-github") {
+    return "Connect GitHub on the worker device.";
+  }
+  if (reasonCode === "identity-lacks-repo-access") {
+    return "Grant this worker identity access to the repository.";
+  }
+  if (reasonCode === "repo-access-probe-failed") {
+    return "Retry after checking worker network and GitHub CLI auth.";
+  }
+  if (reasonCode === "repo-reference-unsupported") {
+    return "Use an org/name repository reference.";
+  }
+  return "Check worker GitHub credentials and repository permissions.";
+}
+
+function metadataTextFromRecord(value: Record<string, unknown>): string | null {
+  return (
+    [value["label"], value["display_name"], value["name"], value["login"]]
+      .find(
+        (candidate): candidate is string =>
+          typeof candidate === "string" && candidate.trim().length > 0,
+      )
+      ?.trim() ?? null
+  );
 }
 
 function metadataValue(worker: JarvisWorkerProfile, keys: ReadonlyArray<string>): unknown {
@@ -339,7 +456,9 @@ function metadataValue(worker: JarvisWorkerProfile, keys: ReadonlyArray<string>)
 function formatWorktreeInventory(value: unknown): string {
   if (!isRecord(value)) return NOT_REPORTED;
   const count = numberValue(value["count"]);
+  const diskBytes = numberValue(value["disk_bytes"]) ?? numberValue(value["diskBytes"]);
   const disk =
+    (diskBytes !== null ? formatBytes(diskBytes) : null) ??
     stringValue(value["disk"]) ??
     stringValue(value["disk_usage"]) ??
     stringValue(value["diskUsage"]);
@@ -352,6 +471,19 @@ function formatWorktreeInventory(value: unknown): string {
   if (disk) parts.push(disk);
   if (stale !== null) parts.push(`${stale} stale`);
   return parts.length > 0 ? parts.join(" / ") : NOT_REPORTED;
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"] as const;
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  const precision = value >= 10 || unitIndex === 0 ? 0 : 1;
+  return `${value.toFixed(precision)} ${units[unitIndex]}`;
 }
 
 function normalize(value: string): string {
@@ -368,4 +500,8 @@ function stringValue(value: unknown): string | null {
 
 function numberValue(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function booleanValue(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
 }
