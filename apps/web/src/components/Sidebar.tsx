@@ -49,6 +49,7 @@ import {
   type ContextMenuItem,
   DEFAULT_SERVER_SETTINGS,
   type EnvironmentId,
+  type JarvisProjectThread,
   ProjectId,
   type ScopedThreadRef,
   type ResolvedKeybindingsConfig,
@@ -245,6 +246,7 @@ import {
   type SidebarSurfaceCopy,
 } from "./Sidebar.logic";
 import { buildProjectRouteParams } from "./ProjectView.logic";
+import { buildChatTree, type ChatTreeNode } from "./chatTree.logic";
 import { sortThreads } from "../lib/threadSort";
 import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -1071,6 +1073,9 @@ function SidebarJarvisProjectConversations({
   const { isMobile, setOpenMobile } = useSidebar();
   const [showArchived, setShowArchived] = useState(false);
   const [confirmingArchiveThreadId, setConfirmingArchiveThreadId] = useState<string | null>(null);
+  const [collapsedConversationIds, setCollapsedConversationIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const createThread = useAtomCommand(serverEnvironment.createJarvisProjectThread, {
     reportFailure: false,
   });
@@ -1085,8 +1090,20 @@ function SidebarJarvisProjectConversations({
   );
   const conversations =
     projectThreadsQuery.data?.ok === true ? (projectThreadsQuery.data.threads ?? []) : [];
+  const conversationTree = useMemo(() => buildChatTree(conversations), [conversations]);
   const showPending = !projectThreadsQuery.data && projectThreadsQuery.isPending;
   const showFailed = projectThreadsQuery.error !== null || projectThreadsQuery.data?.ok === false;
+  const toggleConversationExpanded = useCallback((threadId: string) => {
+    setCollapsedConversationIds((current) => {
+      const next = new Set(current);
+      if (next.has(threadId)) {
+        next.delete(threadId);
+      } else {
+        next.add(threadId);
+      }
+      return next;
+    });
+  }, []);
   const navigateToProjectConversation = useCallback(
     (conversation: { readonly thread_id: string }) => {
       if (isMobile) {
@@ -1246,31 +1263,94 @@ function SidebarJarvisProjectConversations({
         onCreate={() => void handleCreateProjectConversation()}
         disabled={false}
       />
-      {conversations.map((conversation) => (
-        <SidebarProjectConversationRow
-          key={conversation.thread_id}
-          title={conversation.title}
-          engineIconKey={resolveJarvisProjectConversationEngineIconKey(conversation.engine)}
-          modelLabel={resolveJarvisProjectConversationModelLabel(conversation.model)}
-          statusPill={resolveJarvisProjectConversationStatusPill(conversation.status)}
-          archived={isProjectConversationArchived(conversation)}
-          isActive={activeThreadId === conversation.thread_id}
-          onClick={() => navigateToProjectConversation(conversation)}
-          confirmingArchive={confirmingArchiveThreadId === conversation.thread_id}
-          onStartArchiveConfirmation={() => setConfirmingArchiveThreadId(conversation.thread_id)}
-          onCancelArchiveConfirmation={() =>
-            setConfirmingArchiveThreadId((current) =>
-              current === conversation.thread_id ? null : current,
-            )
-          }
-          onArchive={() => void handleArchiveProjectConversation(conversation)}
-        />
-      ))}
+      {conversationTree.map((node) =>
+        renderProjectConversationTreeNode({
+          node,
+          depth: 0,
+          activeThreadId,
+          confirmingArchiveThreadId,
+          collapsedConversationIds,
+          navigateToProjectConversation,
+          setConfirmingArchiveThreadId,
+          toggleConversationExpanded,
+          handleArchiveProjectConversation,
+        }),
+      )}
       <SidebarProjectConversationArchivedToggle
         showArchived={showArchived}
         onToggle={() => setShowArchived((value) => !value)}
       />
     </>
+  );
+}
+
+function renderProjectConversationTreeNode({
+  node,
+  depth,
+  activeThreadId,
+  confirmingArchiveThreadId,
+  collapsedConversationIds,
+  navigateToProjectConversation,
+  setConfirmingArchiveThreadId,
+  toggleConversationExpanded,
+  handleArchiveProjectConversation,
+}: {
+  readonly node: ChatTreeNode<JarvisProjectThread>;
+  readonly depth: number;
+  readonly activeThreadId: string | null;
+  readonly confirmingArchiveThreadId: string | null;
+  readonly collapsedConversationIds: ReadonlySet<string>;
+  readonly navigateToProjectConversation: (conversation: { readonly thread_id: string }) => void;
+  readonly setConfirmingArchiveThreadId: React.Dispatch<React.SetStateAction<string | null>>;
+  readonly toggleConversationExpanded: (threadId: string) => void;
+  readonly handleArchiveProjectConversation: (conversation: {
+    readonly thread_id: string;
+    readonly title: string;
+  }) => void;
+}) {
+  const conversation = node.conversation;
+  const hasChildren = node.children.length > 0;
+  const isExpanded = hasChildren && !collapsedConversationIds.has(conversation.thread_id);
+
+  return (
+    <React.Fragment key={conversation.thread_id}>
+      <SidebarProjectConversationRow
+        title={conversation.title}
+        engineIconKey={resolveJarvisProjectConversationEngineIconKey(conversation.engine)}
+        modelLabel={resolveJarvisProjectConversationModelLabel(conversation.model)}
+        statusPill={resolveJarvisProjectConversationStatusPill(conversation.status)}
+        archived={isProjectConversationArchived(conversation)}
+        depth={depth}
+        hasChildren={hasChildren}
+        isExpanded={isExpanded}
+        isActive={activeThreadId === conversation.thread_id}
+        onClick={() => navigateToProjectConversation(conversation)}
+        onToggleExpanded={() => toggleConversationExpanded(conversation.thread_id)}
+        confirmingArchive={confirmingArchiveThreadId === conversation.thread_id}
+        onStartArchiveConfirmation={() => setConfirmingArchiveThreadId(conversation.thread_id)}
+        onCancelArchiveConfirmation={() =>
+          setConfirmingArchiveThreadId((current) =>
+            current === conversation.thread_id ? null : current,
+          )
+        }
+        onArchive={() => handleArchiveProjectConversation(conversation)}
+      />
+      {isExpanded
+        ? node.children.map((childNode) =>
+            renderProjectConversationTreeNode({
+              node: childNode,
+              depth: depth + 1,
+              activeThreadId,
+              confirmingArchiveThreadId,
+              collapsedConversationIds,
+              navigateToProjectConversation,
+              setConfirmingArchiveThreadId,
+              toggleConversationExpanded,
+              handleArchiveProjectConversation,
+            }),
+          )
+        : null}
+    </React.Fragment>
   );
 }
 
@@ -1301,8 +1381,12 @@ function SidebarProjectConversationRow({
   modelLabel,
   statusPill,
   archived,
+  depth,
+  hasChildren,
+  isExpanded,
   isActive,
   onClick,
+  onToggleExpanded,
   confirmingArchive,
   onStartArchiveConfirmation,
   onCancelArchiveConfirmation,
@@ -1313,8 +1397,12 @@ function SidebarProjectConversationRow({
   readonly modelLabel: string | null;
   readonly statusPill: ThreadStatusPill | null;
   readonly archived: boolean;
+  readonly depth: number;
+  readonly hasChildren: boolean;
+  readonly isExpanded: boolean;
   readonly isActive: boolean;
   readonly onClick: () => void;
+  readonly onToggleExpanded: () => void;
   readonly confirmingArchive: boolean;
   readonly onStartArchiveConfirmation: () => void;
   readonly onCancelArchiveConfirmation: () => void;
@@ -1351,6 +1439,14 @@ function SidebarProjectConversationRow({
     },
     [onArchive],
   );
+  const handleToggleExpanded = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onToggleExpanded();
+    },
+    [onToggleExpanded],
+  );
 
   return (
     <SidebarMenuSubItem
@@ -1363,8 +1459,26 @@ function SidebarProjectConversationRow({
         size="sm"
         isActive={isActive}
         className={`${resolveThreadRowClassName({ isActive, isSelected: false })} relative isolate gap-1.5 pr-8`}
+        style={{ paddingLeft: `${0.5 + depth * 0.875}rem` }}
+        aria-expanded={hasChildren ? isExpanded : undefined}
         onClick={onClick}
       >
+        {hasChildren ? (
+          <button
+            type="button"
+            data-thread-selection-safe
+            aria-label={isExpanded ? `Collapse ${title}` : `Expand ${title}`}
+            className="inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground/70 hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring/45"
+            onPointerDown={stopPropagationOnPointerDown}
+            onClick={handleToggleExpanded}
+          >
+            <ChevronRightIcon
+              className={`size-3 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+            />
+          </button>
+        ) : (
+          <span className="size-4 shrink-0" aria-hidden="true" />
+        )}
         {archived ? (
           <ArchiveIcon
             className={`size-3 shrink-0 ${isActive ? "text-foreground/72" : "text-muted-foreground/60"}`}
