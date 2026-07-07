@@ -214,9 +214,26 @@ export function projectConversationMergedMessages(input: {
     message,
     claimed: false,
   }));
-  const localMessages = input.localTurns
-    .flatMap(localTurnMessages)
-    .filter((message) => !isConfirmedByHistory(message, historyMatches));
+  const localMessages: ProjectConversationMessageView[] = [];
+  for (const message of input.localTurns.flatMap(localTurnMessages)) {
+    const match = claimHistoryEcho(message, historyMatches);
+    if (match === null) {
+      localMessages.push(message);
+      continue;
+    }
+    // The history echo replaces the local copy, but history rows carry no tool
+    // metadata — graft the local turn's tool items onto the confirming history
+    // message so ThreadToolCallRow rendering survives the history refresh.
+    if (message.toolItems.length > 0 && match.message.toolItems.length === 0) {
+      const grafted: ProjectConversationMessageView = {
+        ...match.message,
+        toolItems: message.toolItems,
+        workspaceProvisionRequested: message.workspaceProvisionRequested,
+      };
+      historyMessages[match.index] = grafted;
+      match.message = grafted;
+    }
+  }
 
   return [...historyMessages, ...localMessages].sort(compareProjectConversationMessages);
 }
@@ -335,26 +352,34 @@ function localAssistantMessage(
   };
 }
 
-function isConfirmedByHistory(
+interface HistoryEchoMatch {
+  readonly index: number;
+  message: ProjectConversationMessageView;
+  claimed: boolean;
+}
+
+/**
+ * Finds and claims the history message that echoes a local message, so the
+ * local copy can be dropped (and, for assistant turns, its tool metadata
+ * grafted onto the history row). Returns null when the local message should
+ * be kept.
+ */
+function claimHistoryEcho(
   localMessage: ProjectConversationMessageView,
-  historyMatches: Array<{
-    readonly index: number;
-    readonly message: ProjectConversationMessageView;
-    claimed: boolean;
-  }>,
-): boolean {
+  historyMatches: Array<HistoryEchoMatch>,
+): HistoryEchoMatch | null {
   if (localMessage.source !== "local") {
-    return false;
+    return null;
   }
   if (
     localMessage.role === "assistant" &&
     localMessage.status !== "completed" &&
     localMessage.status !== "streaming"
   ) {
-    return false;
+    return null;
   }
   if (localMessage.content.trim().length === 0) {
-    return false;
+    return null;
   }
 
   const match = historyMatches.find(
@@ -362,10 +387,10 @@ function isConfirmedByHistory(
       !candidate.claimed && isHistoryEchoOfLocalMessage(candidate.message, localMessage),
   );
   if (!match) {
-    return false;
+    return null;
   }
   match.claimed = true;
-  return true;
+  return match;
 }
 
 function isHistoryEchoOfLocalMessage(

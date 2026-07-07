@@ -100,10 +100,20 @@ export function buildTurnWorkspaceInput(
 
 export function shouldPollProjectConversationWorkspace(input: {
   readonly turnInFlight: boolean;
+  /**
+   * True when the in-flight turn itself staged a `workspace` (initial escalation
+   * OR adding repos to an already-running workspace). Without this, an add-repo
+   * turn on a workspace whose phase is already "running" would never poll, so
+   * the stepper and worktree list would stay stale until the turn finished.
+   */
+  readonly turnRequestedWorkspace?: boolean;
   readonly workspace: Pick<JarvisConversationWorkspace, "provision_phase"> | null | undefined;
 }): boolean {
   if (!input.turnInFlight) {
     return false;
+  }
+  if (input.turnRequestedWorkspace === true) {
+    return true;
   }
   const phase = input.workspace?.provision_phase?.trim().toLowerCase();
   return phase !== "running";

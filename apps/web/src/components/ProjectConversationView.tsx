@@ -277,8 +277,13 @@ export function ProjectConversationView({
     isProjectConversationDetailRouteGap(threadDetailQuery.data.error?.message)
       ? formatProjectConversationFailure("detail", threadDetailQuery.data.error?.message)
       : null;
+  const turnRequestedWorkspace = turns.some(
+    (turn) =>
+      (turn.status === "pending" || turn.status === "streaming") && turn.workspaceInput != null,
+  );
   const pollWorkspaceProvision = shouldPollProjectConversationWorkspace({
     turnInFlight: sendBusy,
+    turnRequestedWorkspace,
     workspace: conversationWorkspace,
   });
 
@@ -585,9 +590,12 @@ export function ProjectConversationView({
     if (!existingTurnId) {
       clearComposerContent(composerDraftTarget);
       composerRef.current?.resetCursorState({ cursor: 0, prompt: "" });
-      if (turnWorkspace !== undefined) {
-        clearWorkspaceRepoStaging();
-      }
+    }
+    // Clear staged repos on ANY successful turn that carried a workspace —
+    // including retries via `existingTurnId` — so the strip stops showing the
+    // repo as staged and the next follow-up doesn't re-send it.
+    if (turnWorkspace !== undefined) {
+      clearWorkspaceRepoStaging();
     }
     refreshConversationData();
   };
