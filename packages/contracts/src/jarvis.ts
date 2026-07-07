@@ -555,6 +555,7 @@ export type JarvisEndedReason = typeof JarvisEndedReason.Type;
 export const JarvisProjectThread = Schema.Struct({
   thread_id: JarvisProjectThreadId,
   project_id: JarvisProjectId,
+  parent_chat_id: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   session_id: TrimmedNonEmptyString,
   title: TrimmedNonEmptyString,
   // Enrichment fields (2026-07-07 brain release). Optional so older deployments still decode.
