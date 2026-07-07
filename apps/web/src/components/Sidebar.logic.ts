@@ -11,7 +11,7 @@ import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import type { JarvisWorkerSessionStatus } from "@t3tools/contracts";
+import type { JarvisProjectThreadStatus } from "@t3tools/contracts";
 import type { SidebarProjectGroupMember, SidebarProjectSnapshot } from "../sidebarProjectGrouping";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
@@ -198,6 +198,8 @@ export interface ThreadStatusPill {
     | "Working"
     | "Connecting"
     | "Completed"
+    | "Failed"
+    | "Idle"
     | "Pending Approval"
     | "Awaiting Input"
     | "Plan Ready";
@@ -237,10 +239,22 @@ const THREAD_STATUS_PILLS: Record<ThreadStatusPill["label"], ThreadStatusPill> =
     dotClass: "bg-violet-500 dark:bg-violet-300/90",
     pulse: false,
   },
+  Idle: {
+    label: "Idle",
+    colorClass: "text-muted-foreground/70",
+    dotClass: "bg-muted-foreground/45",
+    pulse: false,
+  },
   Completed: {
     label: "Completed",
     colorClass: "text-emerald-600 dark:text-emerald-300/90",
     dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
+    pulse: false,
+  },
+  Failed: {
+    label: "Failed",
+    colorClass: "text-destructive/85",
+    dotClass: "bg-destructive/80",
     pulse: false,
   },
 };
@@ -248,10 +262,12 @@ const THREAD_STATUS_PILLS: Record<ThreadStatusPill["label"], ThreadStatusPill> =
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   "Pending Approval": 5,
   "Awaiting Input": 4,
+  Failed: 4,
   Working: 3,
   Connecting: 3,
   "Plan Ready": 2,
   Completed: 1,
+  Idle: 0,
 };
 
 type ThreadStatusInput = Pick<
@@ -623,33 +639,6 @@ export function resolveThreadStatusPill(input: {
 
 export type JarvisProjectConversationEngineIconKey = "codex" | "claude" | "jarvis";
 
-export interface JarvisProjectConversationSessionMetadata {
-  engineIconKey: JarvisProjectConversationEngineIconKey | null;
-  statusPill: ThreadStatusPill | null;
-  joinKey: "session_id" | "session_ref";
-}
-
-interface JarvisProjectConversationThreadJoinInput {
-  readonly thread_id: string;
-  readonly session_id: string;
-}
-
-interface JarvisProjectConversationWorkerSessionJoinInput {
-  readonly session_id: string;
-  readonly session_ref: string;
-  readonly engine: string;
-  readonly status: JarvisWorkerSessionStatus;
-}
-
-type UniqueLookupValue<T> =
-  | {
-      readonly kind: "single";
-      readonly value: T;
-    }
-  | {
-      readonly kind: "duplicate";
-    };
-
 export function resolveJarvisProjectConversationEngineIconKey(
   engine: string | null | undefined,
 ): JarvisProjectConversationEngineIconKey | null {
@@ -677,109 +666,35 @@ export function resolveJarvisProjectConversationEngineIconKey(
 }
 
 export function resolveJarvisProjectConversationStatusPill(
-  status: JarvisWorkerSessionStatus | null | undefined,
+  status: JarvisProjectThreadStatus | null | undefined,
 ): ThreadStatusPill | null {
   switch (status) {
     case "created":
-    case "waiting_provider":
-      return THREAD_STATUS_PILLS.Connecting;
+      return THREAD_STATUS_PILLS.Idle;
     case "running":
       return THREAD_STATUS_PILLS.Working;
-    case "needs_input":
-      return THREAD_STATUS_PILLS["Awaiting Input"];
-    case "needs_approval":
-      return THREAD_STATUS_PILLS["Pending Approval"];
     case "completed":
       return THREAD_STATUS_PILLS.Completed;
     case "failed":
-    case "interrupted":
-    case "stopped":
+      return THREAD_STATUS_PILLS.Failed;
     case null:
     case undefined:
       return null;
   }
 }
 
-function buildUniqueLookup<T>(
-  items: readonly T[],
-  keyForItem: (item: T) => string,
-): ReadonlyMap<string, UniqueLookupValue<T>> {
-  const lookup = new Map<string, UniqueLookupValue<T>>();
-  for (const item of items) {
-    const key = keyForItem(item).trim();
-    if (!key) {
-      continue;
-    }
-    if (lookup.has(key)) {
-      lookup.set(key, { kind: "duplicate" });
-      continue;
-    }
-    lookup.set(key, { kind: "single", value: item });
+export function resolveJarvisProjectConversationModelLabel(
+  model: string | null | undefined,
+): string | null {
+  const normalized = model?.trim();
+  if (!normalized) {
+    return null;
   }
-  return lookup;
-}
-
-function lookupSingle<T>(lookup: ReadonlyMap<string, UniqueLookupValue<T>>, key: string): T | null {
-  const value = lookup.get(key.trim());
-  return value?.kind === "single" ? value.value : null;
-}
-
-function isDuplicateLookup<T>(
-  lookup: ReadonlyMap<string, UniqueLookupValue<T>>,
-  key: string,
-): boolean {
-  return lookup.get(key.trim())?.kind === "duplicate";
-}
-
-function isSameJarvisWorkerSession(
-  left: JarvisProjectConversationWorkerSessionJoinInput,
-  right: JarvisProjectConversationWorkerSessionJoinInput,
-): boolean {
-  return left.session_id === right.session_id && left.session_ref === right.session_ref;
-}
-
-export function buildJarvisProjectConversationSessionMetadataByThreadId(input: {
-  threads: readonly JarvisProjectConversationThreadJoinInput[];
-  sessions: readonly JarvisProjectConversationWorkerSessionJoinInput[];
-}): ReadonlyMap<string, JarvisProjectConversationSessionMetadata> {
-  const sessionBySessionId = buildUniqueLookup(input.sessions, (session) => session.session_id);
-  const sessionBySessionRef = buildUniqueLookup(input.sessions, (session) => session.session_ref);
-  const metadataByThreadId = new Map<string, JarvisProjectConversationSessionMetadata>();
-
-  for (const thread of input.threads) {
-    if (
-      isDuplicateLookup(sessionBySessionId, thread.session_id) ||
-      isDuplicateLookup(sessionBySessionRef, thread.session_id)
-    ) {
-      continue;
-    }
-
-    const sessionIdMatch = lookupSingle(sessionBySessionId, thread.session_id);
-    const sessionRefMatch = lookupSingle(sessionBySessionRef, thread.session_id);
-    if (sessionIdMatch !== null && sessionRefMatch !== null) {
-      if (!isSameJarvisWorkerSession(sessionIdMatch, sessionRefMatch)) {
-        continue;
-      }
-      metadataByThreadId.set(thread.thread_id, {
-        engineIconKey: resolveJarvisProjectConversationEngineIconKey(sessionIdMatch.engine),
-        statusPill: resolveJarvisProjectConversationStatusPill(sessionIdMatch.status),
-        joinKey: "session_id",
-      });
-      continue;
-    }
-
-    const matchedSession = sessionIdMatch ?? sessionRefMatch;
-    if (matchedSession === null) {
-      continue;
-    }
-    metadataByThreadId.set(thread.thread_id, {
-      engineIconKey: resolveJarvisProjectConversationEngineIconKey(matchedSession.engine),
-      statusPill: resolveJarvisProjectConversationStatusPill(matchedSession.status),
-      joinKey: sessionIdMatch !== null ? "session_id" : "session_ref",
-    });
+  const lower = normalized.toLowerCase();
+  if (lower === "unknown" || lower === "default" || lower === "n/a" || lower === "none") {
+    return null;
   }
-
-  return metadataByThreadId;
+  return normalized;
 }
 
 export function resolveProjectStatusIndicator(

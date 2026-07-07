@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
-  buildJarvisProjectConversationSessionMetadataByThreadId,
   buildJarvisProjectFirstSidebarProjects,
   createThreadJumpHintVisibilityController,
   getSidebarThreadIdsToPrewarm,
@@ -21,6 +20,7 @@ import {
   resolveSidebarSurfaceCopy,
   jarvisRegistryProjectWorkspaceRoot,
   resolveJarvisProjectConversationEngineIconKey,
+  resolveJarvisProjectConversationModelLabel,
   resolveJarvisProjectConversationStatusPill,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
@@ -841,6 +841,16 @@ describe("resolveJarvisProjectConversationEngineIconKey", () => {
     expect(resolveJarvisProjectConversationEngineIconKey("brain")).toBe("jarvis");
   });
 
+  it("maps a project thread engine directly to the row icon key", () => {
+    const thread = {
+      thread_id: "thread_1",
+      session_id: "memory-session-not-worker-session",
+      engine: "jarvis",
+    };
+
+    expect(resolveJarvisProjectConversationEngineIconKey(thread.engine)).toBe("jarvis");
+  });
+
   it("returns null for unknown or empty engines", () => {
     expect(resolveJarvisProjectConversationEngineIconKey("local-agent")).toBeNull();
     expect(resolveJarvisProjectConversationEngineIconKey("")).toBeNull();
@@ -849,14 +859,10 @@ describe("resolveJarvisProjectConversationEngineIconKey", () => {
 });
 
 describe("resolveJarvisProjectConversationStatusPill", () => {
-  it("maps active worker statuses to the existing compact sidebar status labels", () => {
+  it("maps project-thread statuses to existing compact sidebar status labels", () => {
     expect(resolveJarvisProjectConversationStatusPill("created")).toMatchObject({
-      label: "Connecting",
-      pulse: true,
-    });
-    expect(resolveJarvisProjectConversationStatusPill("waiting_provider")).toMatchObject({
-      label: "Connecting",
-      pulse: true,
+      label: "Idle",
+      pulse: false,
     });
     expect(resolveJarvisProjectConversationStatusPill("running")).toMatchObject({
       label: "Working",
@@ -864,88 +870,34 @@ describe("resolveJarvisProjectConversationStatusPill", () => {
     });
   });
 
-  it("maps blocked and completed worker statuses to existing status pills", () => {
-    expect(resolveJarvisProjectConversationStatusPill("needs_input")).toMatchObject({
-      label: "Awaiting Input",
-      pulse: false,
-    });
-    expect(resolveJarvisProjectConversationStatusPill("needs_approval")).toMatchObject({
-      label: "Pending Approval",
-      pulse: false,
-    });
+  it("maps terminal project-thread statuses to done and error pills", () => {
     expect(resolveJarvisProjectConversationStatusPill("completed")).toMatchObject({
       label: "Completed",
       pulse: false,
     });
+    expect(resolveJarvisProjectConversationStatusPill("failed")).toMatchObject({
+      label: "Failed",
+      pulse: false,
+    });
   });
 
-  it("does not render a status for terminal/error states without a legacy equivalent", () => {
-    expect(resolveJarvisProjectConversationStatusPill("failed")).toBeNull();
-    expect(resolveJarvisProjectConversationStatusPill("interrupted")).toBeNull();
-    expect(resolveJarvisProjectConversationStatusPill("stopped")).toBeNull();
+  it("does not render a status when the thread status is missing", () => {
     expect(resolveJarvisProjectConversationStatusPill(null)).toBeNull();
   });
 });
 
-describe("buildJarvisProjectConversationSessionMetadataByThreadId", () => {
-  const codexSession = {
-    session_id: "sess_codex",
-    session_ref: "sessref_worker_sess_codex",
-    engine: "codex",
-    status: "running" as const,
-  };
-  const claudeSession = {
-    session_id: "sess_claude",
-    session_ref: "sessref_worker_sess_claude",
-    engine: "claudeAgent",
-    status: "completed" as const,
-  };
-
-  it("joins project conversations to worker sessions by session_id", () => {
-    const metadataByThreadId = buildJarvisProjectConversationSessionMetadataByThreadId({
-      threads: [{ thread_id: "thread_1", session_id: "sess_codex" }],
-      sessions: [codexSession],
-    });
-
-    expect(metadataByThreadId.get("thread_1")).toMatchObject({
-      engineIconKey: "codex",
-      joinKey: "session_id",
-      statusPill: { label: "Working" },
-    });
+describe("resolveJarvisProjectConversationModelLabel", () => {
+  it("returns compact model labels from meaningful project-thread model values", () => {
+    expect(resolveJarvisProjectConversationModelLabel("fast")).toBe("fast");
+    expect(resolveJarvisProjectConversationModelLabel("  gpt-5.5  ")).toBe("gpt-5.5");
   });
 
-  it("falls back to session_ref when session_id does not match", () => {
-    const metadataByThreadId = buildJarvisProjectConversationSessionMetadataByThreadId({
-      threads: [{ thread_id: "thread_1", session_id: "sessref_worker_sess_claude" }],
-      sessions: [claudeSession],
-    });
-
-    expect(metadataByThreadId.get("thread_1")).toMatchObject({
-      engineIconKey: "claude",
-      joinKey: "session_ref",
-      statusPill: { label: "Completed" },
-    });
-  });
-
-  it("leaves unmatched conversations without metadata", () => {
-    const metadataByThreadId = buildJarvisProjectConversationSessionMetadataByThreadId({
-      threads: [{ thread_id: "thread_1", session_id: "project:jarvis:orchestrator:thread_1" }],
-      sessions: [codexSession],
-    });
-
-    expect(metadataByThreadId.has("thread_1")).toBe(false);
-  });
-
-  it("leaves ambiguous conversations without metadata", () => {
-    const metadataByThreadId = buildJarvisProjectConversationSessionMetadataByThreadId({
-      threads: [{ thread_id: "thread_1", session_id: "shared-key" }],
-      sessions: [
-        { ...codexSession, session_id: "shared-key" },
-        { ...claudeSession, session_ref: "shared-key" },
-      ],
-    });
-
-    expect(metadataByThreadId.has("thread_1")).toBe(false);
+  it("suppresses empty and placeholder model values", () => {
+    expect(resolveJarvisProjectConversationModelLabel("")).toBeNull();
+    expect(resolveJarvisProjectConversationModelLabel("   ")).toBeNull();
+    expect(resolveJarvisProjectConversationModelLabel("default")).toBeNull();
+    expect(resolveJarvisProjectConversationModelLabel("unknown")).toBeNull();
+    expect(resolveJarvisProjectConversationModelLabel(null)).toBeNull();
   });
 });
 
