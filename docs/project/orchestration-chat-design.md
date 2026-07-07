@@ -64,47 +64,90 @@ rather than the cockpit faking it through transcripts. This works across engines
   engines via ACP, with reparenting lifecycle. The shipped project conversation becomes a
   special case (a root chat with no children).
 
-## Build phasing (proposed)
+## Decisions (Neil, 2026-07-07) — this is a JARVIS-OWNED capability
 
-1. **Tree data model + sidebar nesting.** Add `parent_chat_id` to the cockpit chat model;
-   render nested disclosure; implement reparent-on-close/archive (promotion). No ACP yet —
-   parent/child is just structural, children are ordinary sessions. Ships visible value fast
-   and nails the lifecycle rules.
-2. **Spawn-from-chat + notify-on-complete.** A chat can start a child work session (existing
-   `/v1/work/start`) tagged with its `parent_chat_id`; child status changes notify the
-   parent in-chat. Parent can close child + clean worktree (existing session stop/archive +
-   worktree cleanup).
-3. **ACP inter-agent comms via acpx.** Orchestrator ↔ child over ACP sessions; cross-engine
-   (Codex/Claude/…); orchestrator can query/steer children. Strong-model orchestrator config.
-4. **Review affordances.** On child completion: surface PR link, diff, "review / bring up /
-   follow up / close" actions inline.
+1. **Jarvis owns the state.** `parent_chat_id` and the whole chat tree are **Jarvis-first**;
+   Jarvis is the source of truth. Nothing about orchestration lives at "cockpit level" (i.e.
+   inside the cockpit app). The cockpit is a **rendering + control surface only**: it draws
+   the tree, sends operator turns, shows child status, and offers review/close actions — all
+   backed by Jarvis APIs. This is the load-bearing decision and it re-homes almost all of the
+   work below into roughcoder/jarvis.
+2. **Orchestrator is powered by Jarvis**, not a cockpit-side model. It's a Jarvis session
+   with a strong model + project context + spawn/talk capability.
+3. **Autonomy: yes.** The orchestrator may spawn, close, and clean up worktrees **without
+   per-action operator confirmation**. (Cockpit may still show what it did; approval is not
+   required.)
+4. **Client-agnostic.** Because orchestration is a Jarvis capability driven over the API, any
+   client can use it — including a **voice chat** that spawns agents. So the capability must
+   be API-first and must NOT be coupled to cockpit UI. Reinforces decision 1.
+5. **ACP placement: pending — see recommendation below.** Neil deferred to us; requirement is
+   cross-worker/cross-machine agent-to-agent communication.
 
-Phase 1 is independently useful and low-risk; ACP (phase 3) is the ambitious core.
+## Recommended ACP placement (for Neil's sign-off)
 
-## Open questions for Neil
+Requirement: an orchestrator on machine X must talk to child agents that may run on other
+workers/machines (e.g. laptop orchestrator ↔ Mac mini worker). `acpx` is a Node ACP **client**
+(stdio to local agents; HTTP/WS to remote, WS still WIP).
 
-1. **Where does `parent_chat_id` live** — cockpit-local, or does Jarvis need to own the tree
-   (durable across clients)? Leaning: cockpit-local first (phase 1), propose a Jarvis field
-   later if it must be durable/shared.
-2. **Autonomy vs guardrails:** can the orchestrator spawn/close/clean-worktree without
-   per-action confirmation, or is each destructive step operator-approved?
-3. **ACP runtime placement:** does `acpx` run in the cockpit server (Node), on the worker, or
-   the brain? Cross-machine ACP (orchestrator on laptop, child on Mac mini) implies remote
-   ACP transport (HTTP/WS — noted WIP in ACP).
-4. **Strong-model orchestrator:** which model, and is it a cockpit-side model or a Jarvis
-   engine? (Neil: "better model than the models that build the code.")
-5. **Worktree cleanup ownership:** cockpit asks Jarvis/worker to prune, or direct? Ties to
-   the repo-access/provisioning worktree-inventory work (that already surfaces stale
-   worktrees on worker cards).
+**Recommendation: brain-brokered ACP, never cockpit-hosted.**
 
-## Dependencies / API asks this raises
+- **Each worker** runs its coding agents and exposes them as **ACP servers** (local stdio
+  agent ↔ worker-local ACP endpoint). The worker already runs Jarvis worker code; ACP sits
+  beside it.
+- **The brain (Jarvis)** is the ACP **hub/router**: it holds the chat tree, spawns agents on
+  workers, and routes agent-to-agent ACP frames between them — tunneled over the brain's
+  existing worker protocol/relay rather than requiring every worker to reach every other
+  worker directly (avoids NAT/firewall/trust problems, keeps Jarvis the authority and the
+  auditor of who talked to whom).
+- **The cockpit** never runs `acpx`. It calls Jarvis APIs to spawn/steer/read and renders the
+  conversation + child tree. A voice client would call the same APIs.
 
-- Possible Jarvis fields: durable `parent_chat_id` / child-linkage in session/thread packets;
-  a spawned-by relationship in the reconciliation packet.
-- Worktree cleanup/prune API on the worker (also wanted by Phase 6 hygiene).
-- Event push channel (existing ask #2) — notify-on-complete is much better pushed than polled.
-- ACP transport: confirm whether workers/brain can host ACP endpoints for remote agent comms.
-- Rename API (ask #5b) — orchestrator will rename child chats as work evolves.
+Rationale: decisions 1–4 all say "Jarvis owns it, any client drives it." Putting the ACP
+runtime in the cockpit would break the voice-client case and duplicate routing/trust the
+brain already owns. The brain is also the only component that sees all workers, so it's the
+natural relay for cross-machine comms.
+
+Trade-off to confirm: brain-brokered adds a relay hop vs direct worker-to-worker ACP. For
+agent chatter that's fine; if very high-bandwidth agent-to-agent streaming is ever needed,
+the brain could hand out a direct WS with a short-lived token. Start brokered.
+
+## Build phasing (now mostly Jarvis-side; cockpit renders)
+
+1. **Jarvis: chat tree state.** `parent_chat_id` on sessions/threads, tree read in the
+   snapshot/detail packets, reparent-on-close/archive semantics (promotion, never cascade
+   delete). **Cockpit: render the nested tree** in the sidebar from that data. This is the
+   first shippable slice and it's blocked on the Jarvis field.
+2. **Jarvis: spawn + notify + cleanup.** Orchestrator (Jarvis session) can spawn child work
+   sessions tagged with `parent_chat_id`, is notified on child completion, and can close
+   children + prune worktrees autonomously. **Cockpit: show child status, surface
+   notify-on-complete, offer review/close actions** (which call Jarvis).
+3. **Jarvis: ACP hub + worker ACP servers** (per recommendation) for cross-engine,
+   cross-machine agent-to-agent comms. **Cockpit: unchanged** beyond rendering agent turns.
+4. **Review affordances (cockpit):** on child completion, surface PR link/diff and
+   review/bring-up/follow-up/close actions.
+
+Cockpit can build the _render_ side of phase 1 against a fixture as soon as the Jarvis tree
+shape is agreed; real behaviour needs the Jarvis field live.
+
+## Jarvis API asks this raises (for the handover)
+
+These are substantial and belong in roughcoder/jarvis (added to `jarvis-api-asks` as a
+grouped orchestration ask):
+
+- **Chat tree:** `parent_chat_id` on session/thread; tree exposed in snapshot + detail;
+  reparent-on-close/archive (children promote to root, never cascade-delete).
+- **Spawn-from-session:** a session (the orchestrator) can call `work/start`-equivalent to
+  spawn a child tagged with its parent id, and the reconciliation packet reflects the linkage.
+- **Notify-on-complete:** child terminal-state events attributed to the parent (best over the
+  push channel, ask #2).
+- **Autonomous lifecycle:** orchestrator may close children + prune worktrees without
+  operator confirmation (authority model must permit session-initiated writes).
+- **Worktree cleanup/prune** API (also wanted by Phase 6 hygiene).
+- **ACP hub + worker ACP servers:** brain routes agent-to-agent ACP across workers; confirm
+  workers can host ACP endpoints.
+- **Strong-model orchestrator session type/config** (better model than build workers).
+- **Rename** (ask #5b) — orchestrator renames child chats as work evolves.
+- Client-agnostic: all of the above must be API-driven so a voice client can orchestrate too.
 
 ## References
 
