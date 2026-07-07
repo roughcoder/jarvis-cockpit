@@ -234,6 +234,12 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:validate-jarvis-work",
       tag: WS_METHODS.serverValidateJarvisWork,
     }),
+    pruneJarvisWorkerWorktrees: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:prune-jarvis-worker-worktrees",
+      tag: WS_METHODS.serverPruneJarvisWorkerWorktrees,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     createJarvisProject: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:create-jarvis-project",
       tag: WS_METHODS.serverCreateJarvisProject,

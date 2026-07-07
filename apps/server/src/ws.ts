@@ -377,6 +377,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverGetJarvisProjectThreads, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetJarvisProjectThread, AuthOrchestrationReadScope],
   [WS_METHODS.serverValidateJarvisWork, AuthOrchestrationReadScope],
+  [WS_METHODS.serverPruneJarvisWorkerWorktrees, AuthOrchestrationOperateScope],
   [WS_METHODS.serverCreateJarvisProject, AuthOrchestrationOperateScope],
   [WS_METHODS.serverUpdateJarvisProject, AuthOrchestrationOperateScope],
   [WS_METHODS.serverArchiveJarvisProject, AuthOrchestrationOperateScope],
@@ -1687,6 +1688,30 @@ const makeWsRpcLayer = (
                       error instanceof Error && error.message.trim().length > 0
                         ? error.message
                         : "Jarvis work validation failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverPruneJarvisWorkerWorktrees]: ({ input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverPruneJarvisWorkerWorktrees,
+            jarvisClient.pruneWorkerWorktrees(input.workerId).pipe(
+              Effect.map((result) => ({
+                ok: result.ok,
+                result,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis worker worktree prune failed.",
                   },
                 }),
               ),

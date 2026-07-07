@@ -673,6 +673,42 @@ export const JarvisWorkerRepository = Schema.Struct({
 });
 export type JarvisWorkerRepository = typeof JarvisWorkerRepository.Type;
 
+export const JarvisWorkerGitAuthState = Schema.Literals(["valid", "expired", "unconfigured"]);
+export type JarvisWorkerGitAuthState = typeof JarvisWorkerGitAuthState.Type;
+
+export const JarvisWorkerGitIdentity = Schema.Struct({
+  provider: OptionalPossiblyEmptyPublicString,
+  login: OptionalPossiblyEmptyPublicString,
+  auth_state: Schema.optional(JarvisWorkerGitAuthState),
+  connected: Schema.optional(Schema.Boolean),
+  authenticated: Schema.optional(Schema.Boolean),
+  auth_fresh: Schema.optional(Schema.Boolean),
+  git_user_name: OptionalPossiblyEmptyPublicString,
+  git_user_email: OptionalPossiblyEmptyPublicString,
+  checked_at: Schema.optional(Schema.NullOr(Schema.Number)),
+  detail: OptionalPossiblyEmptyPublicString,
+});
+export type JarvisWorkerGitIdentity = typeof JarvisWorkerGitIdentity.Type;
+
+export const JarvisWorkerRepoAccess = Schema.Struct({
+  repo: OptionalPossiblyEmptyPublicString,
+  accessible: Schema.optional(Schema.Boolean),
+  public: Schema.optional(Schema.Boolean),
+  reason_code: OptionalPossiblyEmptyPublicString,
+  reason: OptionalPossiblyEmptyPublicString,
+  checked_at: Schema.optional(Schema.NullOr(Schema.Number)),
+  ttl_s: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  cached: Schema.optional(Schema.Boolean),
+});
+export type JarvisWorkerRepoAccess = typeof JarvisWorkerRepoAccess.Type;
+
+export const JarvisWorkerWorktreeInventory = Schema.Struct({
+  count: Schema.optional(NonNegativeInt),
+  disk_bytes: Schema.optional(NonNegativeInt),
+  stale_count: Schema.optional(NonNegativeInt),
+});
+export type JarvisWorkerWorktreeInventory = typeof JarvisWorkerWorktreeInventory.Type;
+
 export const JarvisWorkerProfile = Schema.Struct({
   worker_id: JarvisWorkerId,
   display_name: TrimmedNonEmptyString,
@@ -689,6 +725,9 @@ export const JarvisWorkerProfile = Schema.Struct({
   repositories: Schema.optionalKey(Schema.Array(JarvisWorkerRepository)).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  git_identity: Schema.optionalKey(JarvisWorkerGitIdentity),
+  repo_access: Schema.optionalKey(Schema.Array(JarvisWorkerRepoAccess)),
+  worktree_inventory: Schema.optionalKey(JarvisWorkerWorktreeInventory),
   system: Schema.optionalKey(JsonObject).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   public_metadata: Schema.optionalKey(JsonObject).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
@@ -743,6 +782,7 @@ export const JarvisWorkerSession = Schema.Struct({
   authority: JarvisWorkerSessionAuthority,
   supported_controls: Schema.Array(JarvisSupportedControl),
   status: JarvisWorkerSessionStatus,
+  provision_phase: OptionalPossiblyEmptyPublicString,
   repo: OptionalPossiblyEmptyPublicString,
   branch: OptionalPossiblyEmptyPublicString,
   cwd_label: OptionalPublicString,
@@ -969,6 +1009,43 @@ export const JarvisProjectThreadTurnRpcResult = Schema.Struct({
   error: Schema.optionalKey(JarvisReadError),
 });
 export type JarvisProjectThreadTurnRpcResult = typeof JarvisProjectThreadTurnRpcResult.Type;
+
+export const JarvisWorkerWorktreePruneInput = Schema.Struct({
+  workerId: JarvisWorkerId,
+});
+export type JarvisWorkerWorktreePruneInput = typeof JarvisWorkerWorktreePruneInput.Type;
+
+export const JarvisWorkerWorktreePrunedItem = Schema.Struct({
+  name: OptionalPossiblyEmptyPublicString,
+  bytes: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+});
+export type JarvisWorkerWorktreePrunedItem = typeof JarvisWorkerWorktreePrunedItem.Type;
+
+export const JarvisWorkerWorktreePruneRefusal = Schema.Struct({
+  target: OptionalPossiblyEmptyPublicString,
+  reason: OptionalPossiblyEmptyPublicString,
+});
+export type JarvisWorkerWorktreePruneRefusal = typeof JarvisWorkerWorktreePruneRefusal.Type;
+
+export const JarvisWorkerWorktreePruneResponse = Schema.Struct({
+  ok: Schema.Boolean,
+  worktrees: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  bytes: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  pruned: Schema.Array(JarvisWorkerWorktreePrunedItem).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  refused: Schema.Array(JarvisWorkerWorktreePruneRefusal).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+});
+export type JarvisWorkerWorktreePruneResponse = typeof JarvisWorkerWorktreePruneResponse.Type;
+
+export const JarvisWorkerWorktreePruneResult = Schema.Struct({
+  ok: Schema.Boolean,
+  result: Schema.optionalKey(JarvisWorkerWorktreePruneResponse),
+  error: Schema.optionalKey(JarvisReadError),
+});
+export type JarvisWorkerWorktreePruneResult = typeof JarvisWorkerWorktreePruneResult.Type;
 
 export const JarvisSessionDetailResponse = Schema.Struct({
   session: JarvisWorkerSession,

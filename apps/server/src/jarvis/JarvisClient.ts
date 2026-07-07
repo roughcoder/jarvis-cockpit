@@ -57,6 +57,7 @@ import {
   JarvisUserInputInput,
   JarvisWorkerSession,
   JarvisWorkerSessionId,
+  JarvisWorkerWorktreePruneResponse,
   type ServerSettings,
   type ServerSettingsError,
 } from "@t3tools/contracts";
@@ -213,6 +214,9 @@ export interface JarvisClient {
   readonly validateWork: (
     input: JarvisStartWorkInput,
   ) => Effect.Effect<JarvisStartWorkValidationResult, JarvisClientError>;
+  readonly pruneWorkerWorktrees: (
+    workerId: string,
+  ) => Effect.Effect<JarvisWorkerWorktreePruneResponse, JarvisClientError>;
   readonly sendTurn: (
     sessionRef: string,
     input: JarvisTurnInput,
@@ -385,6 +389,9 @@ const decodeSessionRequestsResponse = Schema.decodeUnknownEffect(JarvisSessionRe
 const decodeSessionCheckpointsPage = Schema.decodeUnknownEffect(JarvisSessionCheckpointsPage);
 const decodeSessionCheckpointsResponse = Schema.decodeUnknownEffect(
   JarvisSessionCheckpointsResponse,
+);
+const decodeWorkerWorktreePruneResponse = Schema.decodeUnknownEffect(
+  JarvisWorkerWorktreePruneResponse,
 );
 
 const mapDecodeError = (operation: string) => (cause: unknown) =>
@@ -1068,6 +1075,14 @@ export function makeJarvisCockpitClient(input: {
       postJson("work.validate", "/v1/work/validate", withSurfaceMetadata(workInput)).pipe(
         Effect.flatMap(decodeFor("work.validate", decodeStartWorkValidationResult)),
       ),
+    pruneWorkerWorktrees: (workerId) =>
+      postJson(
+        "workers.worktrees.prune",
+        `/v1/workers/${encodeURIComponent(workerId)}/worktrees/prune`,
+        {},
+      ).pipe(
+        Effect.flatMap(decodeFor("workers.worktrees.prune", decodeWorkerWorktreePruneResponse)),
+      ),
     sendTurn: (sessionRef, turnInput) =>
       postJson(
         "sessions.turn",
@@ -1263,6 +1278,8 @@ export function makeJarvisClient(config: {
         withClient("sessions.checkpoints", (client) => client.getCheckpoints(sessionRef, options)),
       startWork: (input) => withClient("work.start", (client) => client.startWork(input)),
       validateWork: (input) => withClient("work.validate", (client) => client.validateWork(input)),
+      pruneWorkerWorktrees: (workerId) =>
+        withClient("workers.worktrees.prune", (client) => client.pruneWorkerWorktrees(workerId)),
       sendTurn: (sessionRef, input) =>
         withClient("sessions.turns", (client) => client.sendTurn(sessionRef, input)),
       respondApproval: (sessionRef, input) =>
@@ -1448,6 +1465,7 @@ function makeMissingConfigurationClient(message: string): JarvisClient {
     getCheckpoints: () => fail("jarvis.client.configure"),
     startWork: () => fail("jarvis.client.configure"),
     validateWork: () => fail("jarvis.client.configure"),
+    pruneWorkerWorktrees: () => fail("jarvis.client.configure"),
     sendTurn: () => fail("jarvis.client.configure"),
     respondApproval: () => fail("jarvis.client.configure"),
     respondInput: () => fail("jarvis.client.configure"),
@@ -1709,6 +1727,36 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
             can_start_work: true,
           },
         ],
+        git_identity: {
+          provider: "github",
+          login: "octocat",
+          auth_state: "valid",
+          connected: true,
+          authenticated: true,
+          auth_fresh: true,
+          detail: "Fixture GitHub identity",
+        },
+        repo_access: [
+          {
+            repo: "roughcoder/jarvis",
+            accessible: true,
+            public: false,
+            reason_code: "accessible",
+            reason: "Fixture worker identity can read this repo.",
+          },
+          {
+            repo: "roughcoder/jarvis-cockpit",
+            accessible: true,
+            public: false,
+            reason_code: "accessible",
+            reason: "Fixture worker identity can read this repo.",
+          },
+        ],
+        worktree_inventory: {
+          count: emptyProjects ? 1 : 3,
+          disk_bytes: emptyProjects ? 4096 : 123456,
+          stale_count: 1,
+        },
         public_metadata: {},
       },
       {
@@ -1756,6 +1804,36 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
             can_start_work: true,
           },
         ],
+        git_identity: {
+          provider: "github",
+          login: "fixture-mini",
+          auth_state: "expired",
+          connected: true,
+          authenticated: true,
+          auth_fresh: false,
+          detail: "Fixture GitHub auth needs refresh",
+        },
+        repo_access: [
+          {
+            repo: "roughcoder/jarvis",
+            accessible: true,
+            public: false,
+            reason_code: "accessible",
+            reason: "Fixture worker identity can read this repo.",
+          },
+          {
+            repo: "roughcoder/private",
+            accessible: false,
+            public: false,
+            reason_code: "identity-lacks-repo-access",
+            reason: "Fixture worker identity lacks access.",
+          },
+        ],
+        worktree_inventory: {
+          count: 2,
+          disk_bytes: 65536,
+          stale_count: 0,
+        },
         public_metadata: {},
       },
     ],
@@ -2901,6 +2979,14 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
         },
       });
     },
+    pruneWorkerWorktrees: () =>
+      Effect.succeed({
+        ok: true,
+        worktrees: 1,
+        bytes: 4096,
+        pruned: [{ name: "fixture-stale-worktree", bytes: 4096 }],
+        refused: [],
+      }),
     startWork: (workInput) => {
       const synthetic = synthesizeStartedWork(workInput);
       return Effect.succeed({
