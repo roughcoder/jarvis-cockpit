@@ -161,6 +161,39 @@ evolves. There is no title-write route today.
 **Acceptance.** Rename persists, appears in `GET .../threads` metadata and thread detail, and
 survives reload; unauthorized callers get 403 with authority detail.
 
+## 5c. Hierarchical agent chats + orchestration (LARGE — Jarvis-owned; from 2026-07-07)
+
+**Context.** Neil's vision (full design: `orchestration-chat-design.md`): a general hierarchy
+of agent chats where any chat can spawn children (nested tree, arbitrary depth), a long-lived
+strong-model orchestrator fires off worker agents, is notified when they finish, reviews
+PRs, closes children, and cleans worktrees — and agents talk to each other via ACP across
+Codex/Claude/etc. **Decision: Jarvis owns all of this state and logic; the cockpit only
+renders and controls; any client (incl. a voice chat) can drive it via the API.**
+
+**Ask (grouped; each can be its own issue).**
+
+- **Chat tree state:** `parent_chat_id` on session/thread, exposed in snapshot + detail;
+  reparent-on-close/archive — closing/archiving a parent PROMOTES its children to root chats,
+  never cascade-deletes.
+- **Spawn-from-session:** the orchestrator session can spawn child work sessions (a
+  `work/start` it initiates) tagged with its parent id; reconciliation packet carries the
+  linkage.
+- **Notify-on-complete:** child terminal events attributed to the parent (ideally over the
+  push channel, ask #2).
+- **Autonomous lifecycle:** a session may spawn/close children and prune worktrees WITHOUT
+  per-action operator confirmation (authority model must allow session-initiated writes).
+- **Worktree cleanup/prune** endpoint (shared with Phase 6 hygiene).
+- **ACP hub:** brain routes agent-to-agent ACP (Agent Client Protocol,
+  https://agentclientprotocol.com, lib `openclaw/acpx`) across workers; workers host ACP
+  servers for their agents. Recommended topology: brain-brokered (not cockpit-hosted, not
+  direct worker-to-worker) — see design doc for rationale. Confirm feasibility.
+- **Strong-model orchestrator** session type/config (better model than build workers).
+- **Client-agnostic:** all API-driven so non-cockpit clients (voice) can orchestrate.
+
+**Acceptance (phase 1 only, to start):** a session carries `parent_chat_id`; the snapshot
+exposes the tree; archiving a parent reparents children to root. Cockpit renders the nested
+tree from that data.
+
 ## 6. Session `unarchive` (parity with thread/project archive)
 
 **Problem.** `POST /v1/sessions/{ref}/archive` exists; unarchive is documented as
