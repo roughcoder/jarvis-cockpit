@@ -556,12 +556,16 @@ export const JarvisProjectThread = Schema.Struct({
   session_id: TrimmedNonEmptyString,
   title: TrimmedNonEmptyString,
   // Enrichment fields (2026-07-07 brain release). Optional so older deployments still decode.
+  // status/ended_reason are accepted as tolerant strings (not strict Literals) so a single
+  // future/unknown value from an evolving brain cannot fail the whole threads-list/detail
+  // decode; UI mappers narrow against the known JarvisProjectThreadStatus/JarvisEndedReason
+  // literals and fall back to neutral. (Same forward-compat pattern as JarvisSessionEventType.)
   engine: OptionalPossiblyEmptyPublicString,
   model: OptionalPossiblyEmptyPublicString,
   worker_id: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   host: OptionalPossiblyEmptyPublicString,
-  status: Schema.optional(Schema.NullOr(JarvisProjectThreadStatus)),
-  ended_reason: Schema.optional(Schema.NullOr(JarvisEndedReason)),
+  status: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  ended_reason: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   created_at: IsoDateTime,
   updated_at: IsoDateTime,
   created_by: OptionalPossiblyEmptyPublicString,
@@ -572,7 +576,10 @@ export const JarvisProjectThread = Schema.Struct({
 export type JarvisProjectThread = typeof JarvisProjectThread.Type;
 
 export const JarvisProjectThreadMessage = Schema.Struct({
-  role: Schema.Literals(["user", "assistant"]),
+  // Tolerant string (not a strict Literal) so an unknown role (e.g. a future "system"/"tool"
+  // message) cannot fail the whole thread-detail decode and drop all history; the UI maps
+  // "user" to the user side and everything else to the assistant side.
+  role: TrimmedNonEmptyString,
   peer_id: OptionalPossiblyEmptyPublicString,
   content: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   observed_at: IsoDateTime,

@@ -1,5 +1,3 @@
-import type { JarvisEndedReason, JarvisProjectThreadStatus } from "@t3tools/contracts";
-
 export const PROJECT_CONTEXT_PANEL_COLLAPSED_STORAGE_KEY =
   "t3code:project-conversation-context-panel-collapsed:v1";
 
@@ -79,8 +77,8 @@ export function resolveProjectConversationTitle(input: {
 }
 
 export function resolveProjectConversationHeaderStatus(input: {
-  readonly status: JarvisProjectThreadStatus | null | undefined;
-  readonly endedReason: JarvisEndedReason | null | undefined;
+  readonly status: string | null | undefined;
+  readonly endedReason: string | null | undefined;
 }): ProjectConversationHeaderStatus | null {
   const status = input.status ?? null;
   if (status === null) {
@@ -96,11 +94,11 @@ export function resolveProjectConversationHeaderStatus(input: {
   if (status === "failed") {
     return { label: "Failed", variant: "error", endedNote };
   }
-  return {
-    label: "Created",
-    variant: "outline",
-    endedNote,
-  };
+  if (status === "created") {
+    return { label: "Created", variant: "outline", endedNote };
+  }
+  // Unknown (future) status → no header badge rather than a misleading "Created".
+  return null;
 }
 
 export function resolveProjectContextPanelToggleState(collapsed: boolean): {
@@ -121,6 +119,6 @@ export function resolveProjectContextPanelToggleState(collapsed: boolean): {
       };
 }
 
-function formatEndedReason(reason: JarvisEndedReason): string {
+function formatEndedReason(reason: string): string {
   return reason.replaceAll("_", " ");
 }

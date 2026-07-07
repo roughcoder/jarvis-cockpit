@@ -111,6 +111,12 @@ describe("project conversation header status", () => {
   it("omits status when Jarvis did not provide one", () => {
     expect(resolveProjectConversationHeaderStatus({ status: null, endedReason: null })).toBeNull();
   });
+
+  it("omits the badge for an unknown (future) status rather than mislabelling it", () => {
+    expect(
+      resolveProjectConversationHeaderStatus({ status: "cancelled", endedReason: null }),
+    ).toBeNull();
+  });
 });
 
 describe("project context panel toggle state", () => {

@@ -11,7 +11,6 @@ import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import type { JarvisProjectThreadStatus } from "@t3tools/contracts";
 import type { SidebarProjectGroupMember, SidebarProjectSnapshot } from "../sidebarProjectGrouping";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
@@ -666,7 +665,7 @@ export function resolveJarvisProjectConversationEngineIconKey(
 }
 
 export function resolveJarvisProjectConversationStatusPill(
-  status: JarvisProjectThreadStatus | null | undefined,
+  status: string | null | undefined,
 ): ThreadStatusPill | null {
   switch (status) {
     case "created":
@@ -677,8 +676,8 @@ export function resolveJarvisProjectConversationStatusPill(
       return THREAD_STATUS_PILLS.Completed;
     case "failed":
       return THREAD_STATUS_PILLS.Failed;
-    case null:
-    case undefined:
+    default:
+      // null/undefined or an unknown (future) status → no pill.
       return null;
   }
 }
