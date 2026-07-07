@@ -1,16 +1,20 @@
+import { ProjectId } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   JarvisProject,
   JarvisProjectFile,
   JarvisProjectMemoryResult,
   JarvisTurnAttachment,
+  ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { type ClipboardEvent, type DragEvent, useEffect, useMemo, useRef, useState } from "react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useAtomValue } from "@effect/atom-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as Schema from "effect/Schema";
 import {
   ArchiveIcon,
@@ -19,27 +23,39 @@ import {
   CheckIcon,
   FileTextIcon,
   GitBranchIcon,
-  ImagePlusIcon,
   MessageSquareIcon,
   PanelRightCloseIcon,
   PanelRightOpenIcon,
   PencilIcon,
   RefreshCwIcon,
   RotateCcwIcon,
-  SendIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
 
 import { isElectron } from "../env";
-import { serverEnvironment } from "../state/server";
+import {
+  primaryServerKeybindingsAtom,
+  primaryServerProvidersAtom,
+  serverEnvironment,
+} from "../state/server";
 import { type EnvironmentQueryView, useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
 import { cn, randomUUID } from "../lib/utils";
 import { readFileAsDataUrl } from "../lib/fileAttachments";
 import { useLocalStorage } from "../hooks/useLocalStorage";
+import { useEnvironmentSettings } from "../hooks/useSettings";
+import { useTheme } from "../hooks/useTheme";
 import { formatRelativeTimeLabel } from "../timestampFormat";
+import {
+  type ComposerImageAttachment,
+  type PersistedComposerImageAttachment,
+  jarvisProjectThreadDraftId,
+  useComposerDraftStore,
+} from "../composerDraftStore";
+import type { TerminalContextDraft } from "../lib/terminalContext";
+import type { ElementContextDraft } from "../lib/elementContext";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -64,16 +80,8 @@ import {
   type ProjectConversationLocalTurnView,
   type ProjectConversationMessageView,
 } from "../jarvisProjectConversations.logic";
-import {
-  buildProjectTurnImageAttachment,
-  decodedBytesFromProjectTurnAttachmentDataUrl,
-  formatAttachmentBytes,
-  isProjectTurnImageMimeType,
-  PROJECT_TURN_ATTACHMENT_IMAGE_MIME_TYPES,
-  projectConversationSupportsImageAttachments,
-  validateProjectTurnAttachmentCount,
-  validateProjectTurnImageAttachment,
-} from "./projectConversationComposer.logic";
+import { buildProjectConversationTurnAttachments } from "./projectConversationComposer.logic";
+import { projectConversationCapabilities } from "./composer/composerCapabilities";
 import {
   buildProjectConversationRenameInput,
   PROJECT_CONTEXT_PANEL_COLLAPSED_STORAGE_KEY,
@@ -86,9 +94,10 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { Spinner } from "./ui/spinner";
-import { Textarea } from "./ui/textarea";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { toastManager } from "./ui/toast";
+import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 
 interface ProjectConversationViewProps {
   readonly environmentId: EnvironmentId;
@@ -102,11 +111,6 @@ const PROJECT_CONVERSATION_FILE_DATA_URL_READ_MESSAGES = {
   nonStringResult: "File reader returned a non-string data URL.",
   readFailure: "File read failed.",
 };
-
-interface ComposerImageAttachmentDraft extends JarvisTurnAttachment {
-  readonly id: string;
-  readonly decodedBytes: number;
-}
 
 export function ProjectConversationView({
   environmentId,
@@ -182,9 +186,25 @@ export function ProjectConversationView({
     () => visibleProjectFiles(filesQuery.data?.ok === true ? (filesQuery.data.files ?? []) : []),
     [filesQuery.data],
   );
-  const [draft, setDraft] = useState("");
-  const [attachments, setAttachments] = useState<ComposerImageAttachmentDraft[]>([]);
-  const [dragOverComposer, setDragOverComposer] = useState(false);
+  const providerStatuses = useAtomValue(primaryServerProvidersAtom);
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const settings = useEnvironmentSettings(environmentId);
+  const { resolvedTheme } = useTheme();
+  const composerDraftTarget = useMemo(
+    () => jarvisProjectThreadDraftId(environmentId, ProjectId.make(projectId), threadId),
+    [environmentId, projectId, threadId],
+  );
+  const routeThreadRef = useMemo(
+    () => scopeThreadRef(environmentId, threadId),
+    [environmentId, threadId],
+  );
+  const promptRef = useRef("");
+  const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
+  const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
+  const composerElementContextsRef = useRef<ElementContextDraft[]>([]);
+  const composerRef = useRef<ChatComposerHandle | null>(null);
+  const clearComposerContent = useComposerDraftStore((store) => store.clearComposerContent);
+  const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const [turns, setTurns] = useState<LocalTurn[]>([]);
   const messages = useMemo(
     () => projectConversationMergedMessages({ historyMessages, localTurns: turns }),
@@ -200,7 +220,6 @@ export function ProjectConversationView({
     Schema.Boolean,
   );
   const turnCounter = useRef(0);
-  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const sendBusy = turns.some((turn) => turn.status === "pending" || turn.status === "streaming");
   const projectName = project?.name ?? projectId;
   const archived = isProjectConversationArchived(conversation);
@@ -217,10 +236,20 @@ export function ProjectConversationView({
   // as attachment-capable without a catalog lookup — so we intentionally do NOT fetch the
   // (expensive, route-probing) capabilities here on every conversation mount. A worker-linked
   // thread with a non-brain engine would need a lightweight catalog read wired at that point.
-  const attachmentsSupported = projectConversationSupportsImageAttachments({
-    catalog: null,
-    engine: conversation?.engine,
-  });
+  const composerCapabilities = useMemo(
+    () =>
+      projectConversationCapabilities({
+        catalog: null,
+        engine: conversation?.engine,
+      }),
+    [conversation?.engine],
+  );
+  const composerDisabledReason =
+    conversation === null
+      ? "Project conversation unavailable"
+      : archived
+        ? "Unarchive this conversation to send a turn"
+        : null;
   const detailFallback =
     threadDetailQuery.data?.ok === false &&
     isProjectConversationDetailRouteGap(threadDetailQuery.data.error?.message)
@@ -229,21 +258,13 @@ export function ProjectConversationView({
 
   useEffect(() => {
     // Param-only navigation between conversations reuses this component, so reset all
-    // per-thread local state — otherwise the previous conversation's draft, attachments,
-    // and optimistic turns (and a busy composer) leak into the next one.
+    // per-thread local state — otherwise the previous conversation's optimistic turns
+    // and rename state leak into the next one. Composer content is keyed by thread.
     setRenamingConversation(false);
     setRenameDraft("");
-    setDraft("");
-    setAttachments([]);
     setTurns([]);
     turnCounter.current = 0;
   }, [threadId]);
-
-  useEffect(() => {
-    if (!attachmentsSupported && attachments.length > 0) {
-      setAttachments([]);
-    }
-  }, [attachments.length, attachmentsSupported]);
 
   const refreshConversationData = () => {
     threadsQuery.refresh();
@@ -349,133 +370,64 @@ export function ProjectConversationView({
     });
   };
 
-  const addImageFiles = async (fileList: FileList | readonly File[]) => {
-    if (!attachmentsSupported) return;
-    const files = Array.from(fileList);
-    if (files.length === 0) return;
-
-    const addedAttachments: ComposerImageAttachmentDraft[] = [];
-    let reportedLimit = false;
-    for (const file of files) {
-      const countValidation = validateProjectTurnAttachmentCount(
-        attachments.length + addedAttachments.length,
-        1,
-      );
-      if (!countValidation.ok) {
-        if (!reportedLimit) {
-          showAttachmentError(countValidation.message);
-          reportedLimit = true;
-        }
+  const prepareProjectTurnAttachments = async (input: {
+    images: ReadonlyArray<ComposerImageAttachment>;
+    persistedImages: ReadonlyArray<PersistedComposerImageAttachment>;
+  }): Promise<JarvisTurnAttachment[] | null> => {
+    if (input.images.length === 0) {
+      return [];
+    }
+    const persistedById = new Map(input.persistedImages.map((image) => [image.id, image]));
+    const preparedPersistedImages: PersistedComposerImageAttachment[] = [];
+    for (const image of input.images) {
+      const persisted = persistedById.get(image.id);
+      if (persisted) {
+        preparedPersistedImages.push(persisted);
         continue;
       }
-
-      const mimeType = file.type;
-      const sizeValidation = validateProjectTurnImageAttachment({
-        name: file.name,
-        mimeType,
-        decodedBytes: file.size,
-      });
-      if (!sizeValidation.ok) {
-        showAttachmentError(sizeValidation.message);
-        continue;
-      }
-      if (!isProjectTurnImageMimeType(mimeType)) {
-        showAttachmentError("Attach PNG, JPEG, WEBP, or GIF images.");
-        continue;
-      }
-
-      let dataUrl: string;
       try {
-        dataUrl = await readFileAsDataUrl(file, PROJECT_CONVERSATION_FILE_DATA_URL_READ_MESSAGES);
+        preparedPersistedImages.push({
+          id: image.id,
+          name: image.name,
+          mimeType: image.mimeType,
+          sizeBytes: image.sizeBytes,
+          dataUrl: await readFileAsDataUrl(
+            image.file,
+            PROJECT_CONVERSATION_FILE_DATA_URL_READ_MESSAGES,
+          ),
+        });
       } catch (error) {
         showAttachmentError(
           error instanceof Error && error.message.trim().length > 0
             ? error.message
-            : `${file.name || "Image"} could not be read.`,
+            : `${image.name || "Image"} could not be read.`,
         );
-        continue;
+        return null;
       }
-      const decodedBytes = decodedBytesFromProjectTurnAttachmentDataUrl(dataUrl);
-      if (decodedBytes === null) {
-        showAttachmentError(`${file.name || "Image"} could not be encoded as a data URL.`);
-        continue;
-      }
-      const dataUrlValidation = validateProjectTurnImageAttachment({
-        name: file.name,
-        mimeType,
-        decodedBytes,
-      });
-      if (!dataUrlValidation.ok) {
-        showAttachmentError(dataUrlValidation.message);
-        continue;
-      }
-      const base64Data = dataUrl.slice(dataUrl.indexOf(",") + 1);
-      addedAttachments.push({
-        ...buildProjectTurnImageAttachment({
-          name: file.name || `image-${attachments.length + addedAttachments.length + 1}`,
-          mimeType,
-          base64Data,
-        }),
-        id: `project-image-${Date.now()}-${randomUUID()}`,
-        decodedBytes,
-      });
     }
 
-    if (addedAttachments.length > 0) {
-      // Functional update + re-check the count against the latest state so concurrent
-      // adds (e.g. paste while a prior read is pending) accumulate instead of clobbering.
-      setAttachments((existing) => {
-        const merged = [...existing];
-        for (const attachment of addedAttachments) {
-          if (validateProjectTurnAttachmentCount(merged.length, 1).ok) {
-            merged.push(attachment);
-          }
-        }
-        return merged;
-      });
+    const result = buildProjectConversationTurnAttachments({
+      images: input.images,
+      persistedImages: preparedPersistedImages,
+    });
+    if (!result.ok) {
+      showAttachmentError(result.message);
+      return null;
     }
+    return result.attachments;
   };
 
-  const removeAttachment = (attachmentId: string) => {
-    setAttachments((existing) => existing.filter((attachment) => attachment.id !== attachmentId));
-  };
-
-  const handleComposerPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    if (!attachmentsSupported || sendBusy || archived) return;
-    const files = Array.from(event.clipboardData.files).filter((file) =>
-      file.type.startsWith("image/"),
-    );
-    if (files.length === 0) return;
-    event.preventDefault();
-    void addImageFiles(files);
-  };
-
-  const handleComposerDragOver = (event: DragEvent<HTMLDivElement>) => {
-    if (!attachmentsSupported || sendBusy || archived || !dragEventHasFiles(event)) return;
-    event.preventDefault();
-    setDragOverComposer(true);
-  };
-
-  const handleComposerDragLeave = (event: DragEvent<HTMLDivElement>) => {
-    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-      setDragOverComposer(false);
-    }
-  };
-
-  const handleComposerDrop = (event: DragEvent<HTMLDivElement>) => {
-    if (!attachmentsSupported || sendBusy || archived || !dragEventHasFiles(event)) return;
-    event.preventDefault();
-    setDragOverComposer(false);
-    void addImageFiles(event.dataTransfer.files);
-  };
-
-  const sendAttachments = (): JarvisTurnAttachment[] =>
-    attachments.map(({ id: _id, decodedBytes: _decodedBytes, ...attachment }) => attachment);
-
-  const sendPrompt = async (prompt: string, existingTurnId?: string) => {
+  const sendPrompt = async (
+    prompt: string,
+    options: {
+      readonly attachments?: ReadonlyArray<JarvisTurnAttachment>;
+      readonly existingTurnId?: string;
+    } = {},
+  ) => {
     const text = prompt.trim();
     if (text.length === 0 || sendBusy || archived) return;
-    const turnAttachments = existingTurnId ? [] : sendAttachments();
+    const existingTurnId = options.existingTurnId;
+    const turnAttachments = existingTurnId ? [] : (options.attachments ?? []);
 
     const turnId = existingTurnId ?? `project-turn-${Date.now()}-${turnCounter.current++}`;
     if (existingTurnId) {
@@ -493,7 +445,10 @@ export function ProjectConversationView({
         },
       ]);
     }
-    setDraft("");
+    if (!existingTurnId) {
+      setComposerDraftPrompt(composerDraftTarget, "");
+      composerRef.current?.resetCursorState({ cursor: 0, prompt: "" });
+    }
 
     const result = await sendTurn({
       environmentId,
@@ -510,7 +465,10 @@ export function ProjectConversationView({
       if (!isAtomCommandInterrupted(result)) {
         const message = formatProjectConversationSendFailure(squashAtomCommandFailure(result));
         markTurn(turnId, { status: "failed", error: message });
-        setDraft(text);
+        if (!existingTurnId) {
+          setComposerDraftPrompt(composerDraftTarget, text);
+          composerRef.current?.resetCursorState({ cursor: text.length, prompt: text });
+        }
         toastManager.add({
           type: "error",
           title: "Could not send project turn",
@@ -524,7 +482,10 @@ export function ProjectConversationView({
         result.value.error?.message ?? "Jarvis did not return a project conversation turn result.",
       );
       markTurn(turnId, { status: "failed", error: message });
-      setDraft(text);
+      if (!existingTurnId) {
+        setComposerDraftPrompt(composerDraftTarget, text);
+        composerRef.current?.resetCursorState({ cursor: text.length, prompt: text });
+      }
       toastManager.add({
         type: "error",
         title: "Could not send project turn",
@@ -536,9 +497,25 @@ export function ProjectConversationView({
     const reply = extractProjectConversationReply(result.value.result);
     markTurn(turnId, { status: "completed", response: reply, error: null });
     if (!existingTurnId) {
-      setAttachments([]);
+      clearComposerContent(composerDraftTarget);
+      composerRef.current?.resetCursorState({ cursor: 0, prompt: "" });
     }
     refreshConversationData();
+  };
+
+  const handleComposerSend = async (event?: { preventDefault: () => void }) => {
+    event?.preventDefault();
+    if (sendBusy || archived || conversation === null) return;
+    const sendContext = composerRef.current?.getSendContext();
+    if (!sendContext) return;
+    const attachments = await prepareProjectTurnAttachments({
+      images: sendContext.images,
+      persistedImages: sendContext.persistedImages,
+    });
+    if (attachments === null) {
+      return;
+    }
+    await sendPrompt(sendContext.prompt, { attachments });
   };
 
   const retryMessage = (message: ProjectConversationMessageView): (() => void) | undefined => {
@@ -547,7 +524,7 @@ export function ProjectConversationView({
     if (!retryPrompt || !localTurnId) {
       return undefined;
     }
-    return () => void sendPrompt(retryPrompt, localTurnId);
+    return () => void sendPrompt(retryPrompt, { existingTurnId: localTurnId });
   };
 
   const writeArchiveState = async (action: "archive" | "unarchive") => {
@@ -857,127 +834,85 @@ export function ProjectConversationView({
             </div>
             <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-2">
               <div className="mx-auto w-full max-w-3xl px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:px-5">
-                <div
-                  className={cn(
-                    "pointer-events-auto rounded-t-2xl border border-border/70 bg-background/95 p-2 shadow-lg shadow-black/5 backdrop-blur",
-                    dragOverComposer && "border-primary/60 bg-primary/5",
-                  )}
-                  onDragOver={handleComposerDragOver}
-                  onDragLeave={handleComposerDragLeave}
-                  onDrop={handleComposerDrop}
-                >
-                  {attachments.length > 0 ? (
-                    <div className="mb-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                      {attachments.map((attachment) => (
-                        <div
-                          key={attachment.id}
-                          className="group relative min-w-0 rounded-md border border-border bg-card p-1.5"
-                        >
-                          <div className="aspect-video overflow-hidden rounded-sm bg-muted">
-                            <img
-                              src={attachment.data_url}
-                              alt={attachment.name}
-                              className="size-full object-cover"
-                            />
-                          </div>
-                          <div className="mt-1 min-w-0">
-                            <div className="truncate text-xs font-medium text-foreground">
-                              {attachment.name}
-                            </div>
-                            <div className="text-[11px] text-muted-foreground">
-                              {formatAttachmentBytes(attachment.decodedBytes)}
-                            </div>
-                          </div>
-                          <Button
-                            type="button"
-                            size="icon-xs"
-                            variant="secondary"
-                            className="absolute right-2 top-2 size-6 opacity-90"
-                            aria-label={`Remove ${attachment.name}`}
-                            disabled={sendBusy}
-                            onClick={() => removeAttachment(attachment.id)}
-                          >
-                            <XIcon className="size-3.5" />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                  <Textarea
-                    value={draft}
-                    onChange={(event) => setDraft(event.currentTarget.value)}
-                    onPaste={handleComposerPaste}
-                    placeholder={
-                      archived
-                        ? "Unarchive this conversation to send a turn"
-                        : "Send a project conversation turn"
+                <div className="pointer-events-auto">
+                  <ChatComposer
+                    capabilities={composerCapabilities}
+                    composerRef={composerRef}
+                    composerDraftTarget={composerDraftTarget}
+                    environmentId={environmentId}
+                    routeKind="draft"
+                    routeThreadRef={routeThreadRef}
+                    draftId={composerDraftTarget}
+                    activeThreadId={conversation === null ? null : threadId}
+                    activeThreadEnvironmentId={environmentId}
+                    activeThread={undefined}
+                    isServerThread={false}
+                    isLocalDraftThread={false}
+                    isJarvisCockpitEnvironment={true}
+                    showJarvisResumeSendHint={false}
+                    phase="ready"
+                    isConnecting={false}
+                    isSendBusy={sendBusy}
+                    isPreparingWorktree={false}
+                    composerDisabledReason={composerDisabledReason}
+                    environmentUnavailable={null}
+                    activePendingApproval={null}
+                    pendingApprovals={[]}
+                    pendingUserInputs={[]}
+                    activePendingProgress={null}
+                    activePendingResolvedAnswers={null}
+                    activePendingIsResponding={false}
+                    activePendingDraftAnswers={{}}
+                    activePendingQuestionIndex={0}
+                    respondingRequestIds={[]}
+                    showPlanFollowUpPrompt={false}
+                    activeProposedPlan={null}
+                    activePlan={null}
+                    sidebarProposedPlan={null}
+                    planSidebarLabel="Plan"
+                    planSidebarOpen={false}
+                    runtimeMode="full-access"
+                    interactionMode="default"
+                    lockedProvider={null}
+                    providerStatuses={providerStatuses as ServerProvider[]}
+                    activeProjectDefaultModelSelection={null}
+                    activeThreadModelSelection={null}
+                    activeThreadActivities={undefined}
+                    resolvedTheme={resolvedTheme}
+                    settings={settings}
+                    keybindings={keybindings}
+                    idlePlaceholder="Send a project conversation turn"
+                    terminalOpen={false}
+                    gitCwd={null}
+                    promptRef={promptRef}
+                    composerImagesRef={composerImagesRef}
+                    composerTerminalContextsRef={composerTerminalContextsRef}
+                    composerElementContextsRef={composerElementContextsRef}
+                    onSend={(event) => void handleComposerSend(event)}
+                    onInterrupt={() => {}}
+                    onImplementPlanInNewThread={() => {}}
+                    onRespondToApproval={async () => undefined}
+                    onSelectActivePendingUserInputOption={() => {}}
+                    onAdvanceActivePendingUserInput={() => {}}
+                    onPreviousActivePendingUserInputQuestion={() => {}}
+                    onChangeActivePendingUserInputCustomAnswer={() => {}}
+                    onProviderModelSelect={() => {}}
+                    getModelDisabledReason={() => null}
+                    toggleInteractionMode={() => {}}
+                    handleRuntimeModeChange={() => {}}
+                    handleInteractionModeChange={() => {}}
+                    togglePlanSidebar={() => {}}
+                    focusComposer={() => composerRef.current?.focusAtEnd()}
+                    scheduleComposerFocus={() =>
+                      window.requestAnimationFrame(() => composerRef.current?.focusAtEnd())
                     }
-                    aria-label="Project conversation message"
-                    disabled={conversation === null || sendBusy || archived}
-                    className="border-transparent shadow-none before:shadow-none"
-                  />
-                  <div className="mt-2 flex items-center justify-between gap-3">
-                    <div className="flex min-w-0 items-center gap-2">
-                      {attachmentsSupported ? (
-                        <>
-                          <input
-                            ref={attachmentInputRef}
-                            type="file"
-                            accept={PROJECT_TURN_ATTACHMENT_IMAGE_MIME_TYPES.join(",")}
-                            multiple
-                            className="hidden"
-                            aria-hidden="true"
-                            tabIndex={-1}
-                            onChange={(event) => {
-                              const files = event.currentTarget.files;
-                              if (files) {
-                                void addImageFiles(files);
-                              }
-                              event.currentTarget.value = "";
-                            }}
-                          />
-                          <Tooltip>
-                            <TooltipTrigger
-                              render={
-                                <Button
-                                  type="button"
-                                  size="icon-sm"
-                                  variant="ghost"
-                                  aria-label="Attach image"
-                                  disabled={conversation === null || sendBusy || archived}
-                                  onClick={() => attachmentInputRef.current?.click()}
-                                >
-                                  <ImagePlusIcon className="size-4" />
-                                </Button>
-                              }
-                            />
-                            <TooltipPopup side="top">Attach image</TooltipPopup>
-                          </Tooltip>
-                        </>
-                      ) : null}
-                      <span className="truncate text-xs text-muted-foreground">
-                        {archived
-                          ? "Archived conversations are read-only"
-                          : sendBusy
-                            ? "Sending to Jarvis"
-                            : attachments.length > 0
-                              ? `${attachments.length} image${
-                                  attachments.length === 1 ? "" : "s"
-                                } attached`
-                              : "Jarvis project context attached"}
-                      </span>
-                    </div>
-                    <Button
-                      size="sm"
-                      onClick={() => void sendPrompt(draft)}
-                      disabled={
-                        conversation === null || draft.trim().length === 0 || sendBusy || archived
+                    setThreadError={(_threadId, error) => {
+                      if (error) {
+                        showAttachmentError(error);
                       }
-                    >
-                      {sendBusy ? <Spinner className="size-4" /> : <SendIcon className="size-4" />}
-                      Send
-                    </Button>
-                  </div>
+                    }}
+                    onExpandImage={(_preview: ExpandedImagePreview) => {}}
+                  />
                 </div>
               </div>
             </div>
@@ -1038,10 +973,6 @@ function formatProjectConversationSendFailure(error: unknown): string {
     return `Jarvis rejected the turn attachments: ${message}`;
   }
   return message;
-}
-
-function dragEventHasFiles(event: DragEvent<HTMLDivElement>): boolean {
-  return Array.from(event.dataTransfer.types).includes("Files");
 }
 
 function ProjectConversationMessageRow({

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildProjectConversationTurnAttachments,
   buildProjectTurnImageAttachmentDataUrl,
   decodedBytesFromProjectTurnAttachmentDataUrl,
   PROJECT_TURN_ATTACHMENT_MAX_COUNT,
@@ -57,6 +58,88 @@ describe("project conversation image attachments", () => {
     expect(decodedBytesFromProjectTurnAttachmentDataUrl("https://example.test/image.png")).toBe(
       null,
     );
+  });
+
+  it("maps persisted composer image data URLs to Jarvis turn attachments", () => {
+    const dataUrl = buildProjectTurnImageAttachmentDataUrl("image/png", "aGVsbG8=");
+
+    expect(
+      buildProjectConversationTurnAttachments({
+        images: [
+          {
+            id: "image-1",
+            name: "screen.png",
+            mimeType: "image/png",
+            sizeBytes: 5,
+          },
+        ],
+        persistedImages: [
+          {
+            id: "image-1",
+            name: "screen.png",
+            mimeType: "image/png",
+            sizeBytes: 5,
+            dataUrl,
+          },
+        ],
+      }),
+    ).toEqual({
+      ok: true,
+      attachments: [
+        {
+          kind: "image",
+          mime_type: "image/png",
+          name: "screen.png",
+          data_url: dataUrl,
+        },
+      ],
+    });
+  });
+
+  it("rejects composer images without prepared data URLs", () => {
+    expect(
+      buildProjectConversationTurnAttachments({
+        images: [
+          {
+            id: "image-1",
+            name: "screen.png",
+            mimeType: "image/png",
+            sizeBytes: 5,
+          },
+        ],
+        persistedImages: [],
+      }),
+    ).toEqual({
+      ok: false,
+      message: "screen.png could not be prepared for sending.",
+    });
+  });
+
+  it("validates composer data URLs before building Jarvis attachments", () => {
+    expect(
+      buildProjectConversationTurnAttachments({
+        images: [
+          {
+            id: "image-1",
+            name: "notes.txt",
+            mimeType: "text/plain",
+            sizeBytes: 5,
+          },
+        ],
+        persistedImages: [
+          {
+            id: "image-1",
+            name: "notes.txt",
+            mimeType: "text/plain",
+            sizeBytes: 5,
+            dataUrl: "data:text/plain;base64,aGVsbG8=",
+          },
+        ],
+      }),
+    ).toEqual({
+      ok: false,
+      message: "Attach PNG, JPEG, WEBP, or GIF images.",
+    });
   });
 
   it("gates attachments on the selected engine catalog support flag", () => {
