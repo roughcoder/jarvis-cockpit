@@ -793,7 +793,7 @@ export function ProjectConversationView({
         >
           <main className="relative flex min-h-0 flex-col overflow-hidden">
             <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-5">
-              <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 pb-40">
+              <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 pb-4">
                 {loadingProject ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Spinner className="size-4" />
@@ -832,9 +832,9 @@ export function ProjectConversationView({
                 ))}
               </div>
             </div>
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-2">
+            <div className="border-t border-border/40 bg-background pt-2">
               <div className="mx-auto w-full max-w-3xl px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:px-5">
-                <div className="pointer-events-auto">
+                <div>
                   <ChatComposer
                     capabilities={composerCapabilities}
                     composerRef={composerRef}
