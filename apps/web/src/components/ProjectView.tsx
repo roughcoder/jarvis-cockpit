@@ -14,7 +14,6 @@ import {
   BotIcon,
   BrainIcon,
   ExternalLinkIcon,
-  FileTextIcon,
   GitBranchIcon,
   LoaderIcon,
   PencilIcon,
@@ -23,17 +22,22 @@ import {
   SaveIcon,
   Trash2Icon,
   TriangleAlertIcon,
+  UploadIcon,
   XIcon,
 } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 
 import {
   appendProjectRepositoryDraftRow,
+  buildProjectFileUploadInput,
+  buildProjectMemoryRecordInput,
   buildProjectRepositoryDraftRows,
   findProjectById,
   patchProjectRepositoryDraftRow,
   removeProjectRepositoryDraftRow,
   setDefaultProjectRepositoryDraftRow,
+  validateAddedProjectRepositoryDraft,
+  type ProjectMemoryRecordKind,
   type ProjectRepositoryDraftRow,
 } from "./ProjectView.logic";
 import {
@@ -59,10 +63,20 @@ import {
 } from "./ui/alert-dialog";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "./ui/dialog";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { Input } from "./ui/input";
 import { Spinner } from "./ui/spinner";
 import { Switch } from "./ui/switch";
+import { Textarea } from "./ui/textarea";
 import { toastManager } from "./ui/toast";
 
 interface ProjectViewProps {
@@ -79,6 +93,8 @@ type PendingProjectAction =
       readonly kind: "delete";
       readonly project: Pick<JarvisProject, "id" | "name">;
     };
+
+type ProjectWriteModal = "upload-file" | "record-memory" | "add-repository" | null;
 
 function formatOptionalValue(value: string | null | undefined, fallback: string): string {
   const trimmed = value?.trim();
@@ -99,6 +115,15 @@ function newestConclusions(
   return [...conclusions]
     .sort((left, right) => (right.observed_at ?? "").localeCompare(left.observed_at ?? ""))
     .slice(0, 5);
+}
+
+function textToBase64(input: string): string {
+  const bytes = new TextEncoder().encode(input);
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return window.btoa(binary);
 }
 
 function actionTitle(action: PendingProjectAction | null): string {
@@ -157,6 +182,15 @@ export function ProjectView({ environmentId, projectId }: ProjectViewProps) {
   const updateProject = useAtomCommand(serverEnvironment.updateJarvisProject, {
     reportFailure: false,
   });
+  const recordFinding = useAtomCommand(serverEnvironment.recordJarvisProjectFinding, {
+    reportFailure: false,
+  });
+  const recordDecision = useAtomCommand(serverEnvironment.recordJarvisProjectDecision, {
+    reportFailure: false,
+  });
+  const uploadProjectFile = useAtomCommand(serverEnvironment.uploadJarvisProjectFile, {
+    reportFailure: false,
+  });
   const archiveProject = useAtomCommand(serverEnvironment.archiveJarvisProject, {
     reportFailure: false,
   });
@@ -182,6 +216,23 @@ export function ProjectView({ environmentId, projectId }: ProjectViewProps) {
   const [repoDrafts, setRepoDrafts] = useState<ReadonlyArray<ProjectRepositoryDraftRow>>([]);
   const [pendingAction, setPendingAction] = useState<PendingProjectAction | null>(null);
   const [writingProject, setWritingProject] = useState(false);
+  const [activeWriteModal, setActiveWriteModal] = useState<ProjectWriteModal>(null);
+  const [fileTitle, setFileTitle] = useState("");
+  const [fileArtifactType, setFileArtifactType] = useState("spec");
+  const [fileName, setFileName] = useState("project-note.md");
+  const [fileContent, setFileContent] = useState("");
+  const [fileWriteError, setFileWriteError] = useState<string | null>(null);
+  const [writingFile, setWritingFile] = useState(false);
+  const [memoryKind, setMemoryKind] = useState<ProjectMemoryRecordKind>("finding");
+  const [memoryContent, setMemoryContent] = useState("");
+  const [memoryWriteError, setMemoryWriteError] = useState<string | null>(null);
+  const [writingMemory, setWritingMemory] = useState(false);
+  const [addRepositoryDraft, setAddRepositoryDraft] = useState({
+    name: "",
+    remote: "",
+    default: false,
+  });
+  const [addRepositoryError, setAddRepositoryError] = useState<string | null>(null);
   const repoRowIdCounter = useRef(0);
   const repositoryValidation = useMemo(
     () => validateProjectRepositoryDrafts(repoDrafts),
@@ -212,6 +263,22 @@ export function ProjectView({ environmentId, projectId }: ProjectViewProps) {
     filesQuery.refresh();
   };
 
+  const openUploadFileModal = () => {
+    setFileWriteError(null);
+    setActiveWriteModal("upload-file");
+  };
+
+  const openRecordMemoryModal = () => {
+    setMemoryWriteError(null);
+    setActiveWriteModal("record-memory");
+  };
+
+  const openAddRepositoryModal = () => {
+    setAddRepositoryDraft({ name: "", remote: "", default: repoDrafts.length === 0 });
+    setAddRepositoryError(null);
+    setActiveWriteModal("add-repository");
+  };
+
   const updateRepositoryDraft = (
     index: number,
     patch: Partial<Omit<ProjectRepositoryDraftRow, "rowId">>,
@@ -228,6 +295,171 @@ export function ProjectView({ environmentId, projectId }: ProjectViewProps) {
       return patchProjectRepositoryDraftRow(drafts, index, {
         name: repoNameFromRemote(repo.remote.trim()),
       });
+    });
+  };
+
+  const inferAddedRepositoryName = () => {
+    setAddRepositoryDraft((draft) => {
+      if (draft.name.trim().length > 0) {
+        return draft;
+      }
+      return { ...draft, name: repoNameFromRemote(draft.remote.trim()) };
+    });
+  };
+
+  const uploadFile = async () => {
+    if (writingFile) {
+      return;
+    }
+    const uploadInput = buildProjectFileUploadInput(
+      {
+        title: fileTitle,
+        artifactType: fileArtifactType,
+        filename: fileName,
+        content: fileContent,
+      },
+      textToBase64,
+    );
+    if (!uploadInput.ok) {
+      setFileWriteError(uploadInput.message);
+      return;
+    }
+
+    setWritingFile(true);
+    setFileWriteError(null);
+    const result = await uploadProjectFile({
+      environmentId,
+      input: {
+        projectId,
+        input: uploadInput.input,
+      },
+    });
+    setWritingFile(false);
+
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        setFileWriteError(formatProjectWriteFailure(squashAtomCommandFailure(result)));
+      }
+      return;
+    }
+    if (!result.value.ok) {
+      setFileWriteError(
+        formatProjectWriteFailure(result.value.error?.message ?? "Jarvis did not upload the file."),
+      );
+      return;
+    }
+
+    setFileContent("");
+    setActiveWriteModal(null);
+    await filesQuery.refresh();
+    toastManager.add({
+      type: "success",
+      title: "Project file uploaded",
+      description: uploadInput.input.title,
+    });
+  };
+
+  const recordMemory = async () => {
+    if (writingMemory) {
+      return;
+    }
+    const memoryInput = buildProjectMemoryRecordInput({
+      kind: memoryKind,
+      content: memoryContent,
+    });
+    if (!memoryInput.ok) {
+      setMemoryWriteError(memoryInput.message);
+      return;
+    }
+
+    const command = memoryInput.command === "recordFinding" ? recordFinding : recordDecision;
+    setWritingMemory(true);
+    setMemoryWriteError(null);
+    const result = await command({
+      environmentId,
+      input: {
+        projectId,
+        input: memoryInput.input,
+      },
+    });
+    setWritingMemory(false);
+
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        setMemoryWriteError(formatProjectWriteFailure(squashAtomCommandFailure(result)));
+      }
+      return;
+    }
+    if (!result.value.ok) {
+      setMemoryWriteError(
+        formatProjectWriteFailure(
+          result.value.error?.message ?? `Jarvis did not record the ${memoryInput.kind}.`,
+        ),
+      );
+      return;
+    }
+
+    setMemoryContent("");
+    setActiveWriteModal(null);
+    await memoryQuery.refresh();
+    toastManager.add({
+      type: "success",
+      title: `${memoryInput.kind === "finding" ? "Finding" : "Decision"} recorded`,
+    });
+  };
+
+  const addRepository = async () => {
+    if (!project || writingProject) {
+      return;
+    }
+    const rowId = `project-repo-${repoRowIdCounter.current}`;
+    const addValidation = validateAddedProjectRepositoryDraft({
+      drafts: repoDrafts,
+      draft: addRepositoryDraft,
+      rowId,
+    });
+    if (!addValidation.ok) {
+      setAddRepositoryError(projectRepositoryValidationSummary(addValidation));
+      return;
+    }
+
+    setWritingProject(true);
+    setAddRepositoryError(null);
+    const result = await updateProject({
+      environmentId,
+      input: {
+        projectId: project.id,
+        input: {
+          name: project.name,
+          repos: addValidation.repos,
+        },
+      },
+    });
+    setWritingProject(false);
+
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        setAddRepositoryError(formatProjectWriteFailure(squashAtomCommandFailure(result)));
+      }
+      return;
+    }
+    if (!result.value.ok || !result.value.project) {
+      setAddRepositoryError(
+        formatProjectWriteFailure(
+          result.value.error?.message ?? "Jarvis did not return a project.",
+        ),
+      );
+      return;
+    }
+
+    repoRowIdCounter.current += 1;
+    setRepoDrafts(addValidation.drafts);
+    setActiveWriteModal(null);
+    await projectsQuery.refresh();
+    toastManager.add({
+      type: "success",
+      title: "Repository added",
+      description: addValidation.repos.at(-1)?.remote,
     });
   };
 
@@ -483,7 +715,12 @@ export function ProjectView({ environmentId, projectId }: ProjectViewProps) {
                       Save
                     </Button>
                   </div>
-                ) : null}
+                ) : (
+                  <Button size="xs" variant="outline" onClick={openAddRepositoryModal}>
+                    <PlusIcon className="size-3" />
+                    Add repository
+                  </Button>
+                )}
               </div>
 
               {editingRepos ? (
@@ -618,7 +855,10 @@ export function ProjectView({ environmentId, projectId }: ProjectViewProps) {
                       : memory?.representation || "No representation recorded."}
                   </p>
                 </div>
-                <BrainIcon className="size-4 text-muted-foreground" />
+                <Button size="icon-sm" variant="outline" onClick={openRecordMemoryModal}>
+                  <PlusIcon className="size-4" />
+                  <span className="sr-only">Record memory</span>
+                </Button>
               </div>
               {memoryQuery.data?.ok === false || memoryQuery.error ? (
                 <Alert variant="error" className="mt-4">
@@ -713,7 +953,10 @@ export function ProjectView({ environmentId, projectId }: ProjectViewProps) {
             <div className="rounded-lg border border-border/70 bg-muted/20 p-4">
               <div className="flex items-center justify-between gap-3">
                 <h2 className="text-sm font-semibold text-foreground">Files</h2>
-                <FileTextIcon className="size-4 text-muted-foreground" />
+                <Button size="icon-sm" variant="outline" onClick={openUploadFileModal}>
+                  <UploadIcon className="size-4" />
+                  <span className="sr-only">Upload project file</span>
+                </Button>
               </div>
               {filesQuery.data?.ok === false || filesQuery.error ? (
                 <Alert variant="error" className="mt-4">
@@ -756,6 +999,272 @@ export function ProjectView({ environmentId, projectId }: ProjectViewProps) {
           </aside>
         </div>
       </div>
+
+      <Dialog
+        open={activeWriteModal === "upload-file"}
+        onOpenChange={(open) => {
+          if (writingFile) {
+            return;
+          }
+          setActiveWriteModal(open ? "upload-file" : null);
+          if (!open) {
+            setFileWriteError(null);
+          }
+        }}
+      >
+        <DialogPopup className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UploadIcon className="size-4" />
+              Upload project file
+            </DialogTitle>
+            <DialogDescription>
+              Store a text artifact through the Jarvis project file API.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="space-y-4">
+            {fileWriteError ? (
+              <Alert variant="error">
+                <TriangleAlertIcon />
+                <AlertTitle>Upload failed</AlertTitle>
+                <AlertDescription>{fileWriteError}</AlertDescription>
+              </Alert>
+            ) : null}
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,12rem)]">
+              <label className="space-y-1.5">
+                <span className="text-xs font-medium text-muted-foreground">Title</span>
+                <Input
+                  value={fileTitle}
+                  onChange={(event) => setFileTitle(event.currentTarget.value)}
+                  placeholder="Project plan"
+                  disabled={writingFile}
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-medium text-muted-foreground">Artifact type</span>
+                <Input
+                  value={fileArtifactType}
+                  onChange={(event) => setFileArtifactType(event.currentTarget.value)}
+                  placeholder="spec"
+                  disabled={writingFile}
+                />
+              </label>
+              <label className="space-y-1.5 sm:col-span-2">
+                <span className="text-xs font-medium text-muted-foreground">File name</span>
+                <Input
+                  value={fileName}
+                  onChange={(event) => setFileName(event.currentTarget.value)}
+                  placeholder="project-note.md"
+                  disabled={writingFile}
+                />
+              </label>
+              <label className="space-y-1.5 sm:col-span-2">
+                <span className="text-xs font-medium text-muted-foreground">Content</span>
+                <Textarea
+                  value={fileContent}
+                  onChange={(event) => setFileContent(event.currentTarget.value)}
+                  placeholder="Project file content"
+                  className="min-h-32"
+                  disabled={writingFile}
+                />
+              </label>
+            </div>
+          </DialogPanel>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setActiveWriteModal(null);
+                setFileWriteError(null);
+              }}
+              disabled={writingFile}
+            >
+              Cancel
+            </Button>
+            <Button onClick={() => void uploadFile()} disabled={writingFile}>
+              {writingFile ? (
+                <LoaderIcon className="size-4 animate-spin" />
+              ) : (
+                <UploadIcon className="size-4" />
+              )}
+              Upload
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
+
+      <Dialog
+        open={activeWriteModal === "record-memory"}
+        onOpenChange={(open) => {
+          if (writingMemory) {
+            return;
+          }
+          setActiveWriteModal(open ? "record-memory" : null);
+          if (!open) {
+            setMemoryWriteError(null);
+          }
+        }}
+      >
+        <DialogPopup className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <BrainIcon className="size-4" />
+              Record project memory
+            </DialogTitle>
+            <DialogDescription>
+              Write an explicit finding or decision to Jarvis project memory.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="space-y-4">
+            {memoryWriteError ? (
+              <Alert variant="error">
+                <TriangleAlertIcon />
+                <AlertTitle>Memory write failed</AlertTitle>
+                <AlertDescription>{memoryWriteError}</AlertDescription>
+              </Alert>
+            ) : null}
+            <div className="grid grid-cols-2 gap-2 rounded-lg border border-border/70 bg-muted/30 p-1">
+              <Button
+                variant={memoryKind === "finding" ? "default" : "ghost"}
+                onClick={() => setMemoryKind("finding")}
+                aria-pressed={memoryKind === "finding"}
+                disabled={writingMemory}
+              >
+                Finding
+              </Button>
+              <Button
+                variant={memoryKind === "decision" ? "default" : "ghost"}
+                onClick={() => setMemoryKind("decision")}
+                aria-pressed={memoryKind === "decision"}
+                disabled={writingMemory}
+              >
+                Decision
+              </Button>
+            </div>
+            <label className="space-y-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Content</span>
+              <Textarea
+                value={memoryContent}
+                onChange={(event) => setMemoryContent(event.currentTarget.value)}
+                placeholder="A project decision or finding to preserve"
+                className="min-h-32"
+                disabled={writingMemory}
+              />
+            </label>
+          </DialogPanel>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setActiveWriteModal(null);
+                setMemoryWriteError(null);
+              }}
+              disabled={writingMemory}
+            >
+              Cancel
+            </Button>
+            <Button onClick={() => void recordMemory()} disabled={writingMemory}>
+              {writingMemory ? <LoaderIcon className="size-4 animate-spin" /> : null}
+              Record {memoryKind}
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
+
+      <Dialog
+        open={activeWriteModal === "add-repository"}
+        onOpenChange={(open) => {
+          if (writingProject) {
+            return;
+          }
+          setActiveWriteModal(open ? "add-repository" : null);
+          if (!open) {
+            setAddRepositoryError(null);
+          }
+        }}
+      >
+        <DialogPopup className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <GitBranchIcon className="size-4" />
+              Add repository
+            </DialogTitle>
+            <DialogDescription>
+              Add a project repository using the same validation as settings.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="space-y-4">
+            {addRepositoryError ? (
+              <Alert variant="error">
+                <TriangleAlertIcon />
+                <AlertTitle>Repository validation failed</AlertTitle>
+                <AlertDescription>{addRepositoryError}</AlertDescription>
+              </Alert>
+            ) : null}
+            <div className="grid gap-3">
+              <label className="space-y-1.5">
+                <span className="text-xs font-medium text-muted-foreground">Name</span>
+                <Input
+                  value={addRepositoryDraft.name}
+                  onChange={(event) =>
+                    setAddRepositoryDraft((draft) => ({
+                      ...draft,
+                      name: event.currentTarget.value,
+                    }))
+                  }
+                  placeholder="runtime"
+                  disabled={writingProject}
+                />
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-medium text-muted-foreground">Remote</span>
+                <Input
+                  value={addRepositoryDraft.remote}
+                  onBlur={inferAddedRepositoryName}
+                  onChange={(event) =>
+                    setAddRepositoryDraft((draft) => ({
+                      ...draft,
+                      remote: event.currentTarget.value,
+                    }))
+                  }
+                  placeholder="roughcoder/jarvis"
+                  disabled={writingProject}
+                />
+              </label>
+              <label className="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-background px-3 py-2">
+                <span className="text-sm text-foreground">Default repository</span>
+                <Switch
+                  checked={addRepositoryDraft.default}
+                  onCheckedChange={(checked) =>
+                    setAddRepositoryDraft((draft) => ({ ...draft, default: checked }))
+                  }
+                  disabled={writingProject}
+                />
+              </label>
+            </div>
+          </DialogPanel>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setActiveWriteModal(null);
+                setAddRepositoryError(null);
+              }}
+              disabled={writingProject}
+            >
+              Cancel
+            </Button>
+            <Button onClick={() => void addRepository()} disabled={writingProject}>
+              {writingProject ? (
+                <LoaderIcon className="size-4 animate-spin" />
+              ) : (
+                <PlusIcon className="size-4" />
+              )}
+              Add repository
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
 
       <AlertDialog
         open={pendingAction !== null}
