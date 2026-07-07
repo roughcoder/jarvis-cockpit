@@ -47,6 +47,7 @@ import {
   validateProjectRepositoryDrafts,
 } from "./settings/JarvisProjects.logic";
 import { cn } from "../lib/utils";
+import { textToBase64 } from "../lib/fileAttachments";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { serverEnvironment } from "../state/server";
 import { useEnvironmentQuery } from "../state/query";
@@ -115,15 +116,6 @@ function newestConclusions(
   return [...conclusions]
     .sort((left, right) => (right.observed_at ?? "").localeCompare(left.observed_at ?? ""))
     .slice(0, 5);
-}
-
-function textToBase64(input: string): string {
-  const bytes = new TextEncoder().encode(input);
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return window.btoa(binary);
 }
 
 function actionTitle(action: PendingProjectAction | null): string {

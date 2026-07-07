@@ -3,6 +3,16 @@ export interface FileDataUrlReadMessages {
   readonly readFailure: string;
 }
 
+/** UTF-8 encode text and base64 it (browser btoa needs a binary string). */
+export function textToBase64(input: string): string {
+  const bytes = new TextEncoder().encode(input);
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return window.btoa(binary);
+}
+
 const DEFAULT_FILE_DATA_URL_READ_MESSAGES: FileDataUrlReadMessages = {
   nonStringResult: "Could not read image data.",
   readFailure: "Failed to read image.",
