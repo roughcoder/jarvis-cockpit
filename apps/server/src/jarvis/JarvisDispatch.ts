@@ -485,12 +485,17 @@ function dispatchReceiptForJarvisResult(
         }),
       );
     }
+    // Prefer an explicit resume-remap thread id; otherwise fall back to the reconciliation
+    // packet's session_ref. (Single key — two spreads previously let the fallback silently
+    // override the resume-remap.)
+    const promotedThreadId =
+      options?.promotedThreadId ??
+      (result.session?.session_ref
+        ? jarvisThreadIdForSession(result.session.session_ref)
+        : undefined);
     return Effect.succeed({
       sequence: 0,
-      ...(options?.promotedThreadId ? { promotedThreadId: options.promotedThreadId } : {}),
-      ...(result.session?.session_ref
-        ? { promotedThreadId: jarvisThreadIdForSession(result.session.session_ref) }
-        : {}),
+      ...(promotedThreadId ? { promotedThreadId } : {}),
     });
   }
   return Effect.fail(
