@@ -201,7 +201,6 @@ import {
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useOpenAddProjectCommandPalette } from "../commandPaletteContext";
 import {
-  buildJarvisProjectConversationSessionMetadataByThreadId,
   buildJarvisProjectFirstSidebarProjects,
   getSidebarThreadIdsToPrewarm,
   resolveAdjacentThreadId,
@@ -209,6 +208,9 @@ import {
   isTrailingDoubleClick,
   markSidebarProjectsWithSourceKind,
   resolveProjectStatusIndicator,
+  resolveJarvisProjectConversationEngineIconKey,
+  resolveJarvisProjectConversationModelLabel,
+  resolveJarvisProjectConversationStatusPill,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
   resolveSidebarProjectConversationActiveThreadId,
@@ -1002,25 +1004,8 @@ function SidebarJarvisProjectConversations({
       input: { projectId, includeArchived: showArchived },
     }),
   );
-  const jarvisSnapshotQuery = useEnvironmentQuery(
-    serverEnvironment.jarvisSnapshot({
-      environmentId,
-      input: {},
-    }),
-  );
   const conversations =
     projectThreadsQuery.data?.ok === true ? (projectThreadsQuery.data.threads ?? []) : [];
-  const conversationMetadataByThreadId = useMemo(
-    () =>
-      buildJarvisProjectConversationSessionMetadataByThreadId({
-        threads: conversations,
-        sessions:
-          jarvisSnapshotQuery.data?.ok === true
-            ? (jarvisSnapshotQuery.data.snapshot?.sessions ?? [])
-            : [],
-      }),
-    [conversations, jarvisSnapshotQuery.data],
-  );
   const showPending = !projectThreadsQuery.data && projectThreadsQuery.isPending;
   const showFailed = projectThreadsQuery.error !== null || projectThreadsQuery.data?.ok === false;
   const navigateToProjectConversation = useCallback(
@@ -1186,12 +1171,9 @@ function SidebarJarvisProjectConversations({
         <SidebarProjectConversationRow
           key={conversation.thread_id}
           title={conversation.title}
-          engineIconKey={
-            conversationMetadataByThreadId.get(conversation.thread_id)?.engineIconKey ?? null
-          }
-          statusPill={
-            conversationMetadataByThreadId.get(conversation.thread_id)?.statusPill ?? null
-          }
+          engineIconKey={resolveJarvisProjectConversationEngineIconKey(conversation.engine)}
+          modelLabel={resolveJarvisProjectConversationModelLabel(conversation.model)}
+          statusPill={resolveJarvisProjectConversationStatusPill(conversation.status)}
           archived={isProjectConversationArchived(conversation)}
           isActive={activeThreadId === conversation.thread_id}
           onClick={() => navigateToProjectConversation(conversation)}
@@ -1237,6 +1219,7 @@ function SidebarProjectConversationArchivedToggle({
 function SidebarProjectConversationRow({
   title,
   engineIconKey,
+  modelLabel,
   statusPill,
   archived,
   isActive,
@@ -1248,6 +1231,7 @@ function SidebarProjectConversationRow({
 }: {
   readonly title: string;
   readonly engineIconKey: JarvisProjectConversationEngineIconKey | null;
+  readonly modelLabel: string | null;
   readonly statusPill: ThreadStatusPill | null;
   readonly archived: boolean;
   readonly isActive: boolean;
@@ -1310,6 +1294,16 @@ function SidebarProjectConversationRow({
           <EngineIcon className="size-3.5 shrink-0" aria-hidden="true" />
         ) : null}
         <span className="min-w-0 flex-1 truncate text-xs">{title}</span>
+        {modelLabel ? (
+          <span
+            className={`max-w-16 shrink-0 truncate text-[10px] leading-none ${
+              isActive ? "text-foreground/60" : "text-muted-foreground/60"
+            }`}
+            title={`Model: ${modelLabel}`}
+          >
+            {modelLabel}
+          </span>
+        ) : null}
         {statusPill ? (
           <span className="inline-flex shrink-0 items-center">
             <ThreadStatusLabel status={statusPill} compact />
