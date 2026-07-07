@@ -543,6 +543,32 @@ export const CodexColor: Icon = ({ className, ...props }) => (
   </svg>
 );
 
+// Placeholder Jarvis engine mark (2026-07-07) — distinct from Claude/Codex; swap for the
+// real brand SVG when available. Used for project-thread conversations (engine "jarvis").
+export const JarvisColor: Icon = ({ className, ...props }) => (
+  <svg {...props} viewBox="0 0 24 24" className={cn("shrink-0", className)}>
+    <title>Jarvis</title>
+    <path
+      fill="url(#jarvis-color-gradient)"
+      d="M12 1.6c.46 0 .86.31.98.75l1.46 5.34a3.2 3.2 0 002.27 2.27l5.34 1.46a1.02 1.02 0 010 1.96l-5.34 1.46a3.2 3.2 0 00-2.27 2.27l-1.46 5.34a1.02 1.02 0 01-1.96 0l-1.46-5.34a3.2 3.2 0 00-2.27-2.27L1.95 13.4a1.02 1.02 0 010-1.96l5.34-1.46a3.2 3.2 0 002.27-2.27l1.46-5.34c.12-.44.52-.75.98-.75z"
+    />
+    <defs>
+      <linearGradient
+        gradientUnits="userSpaceOnUse"
+        id="jarvis-color-gradient"
+        x1="3"
+        x2="21"
+        y1="3"
+        y2="21"
+      >
+        <stop stopColor="#2DD4BF" />
+        <stop offset=".5" stopColor="#6366F1" />
+        <stop offset="1" stopColor="#8B5CF6" />
+      </linearGradient>
+    </defs>
+  </svg>
+);
+
 export const Gemini: Icon = (props) => (
   <svg {...props} viewBox="0 0 296 298" fill="none">
     <mask

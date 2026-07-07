@@ -23,7 +23,7 @@ import {
   ThreadStatusLabel,
   ThreadWorktreeIndicator,
 } from "./ThreadStatusIndicators";
-import { ClaudeColor, CodexColor } from "./Icons";
+import { ClaudeColor, CodexColor, JarvisColor } from "./Icons";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
@@ -1259,7 +1259,13 @@ function SidebarProjectConversationRow({
 }) {
   const rowButtonRender = useMemo(() => <button type="button" />, []);
   const EngineIcon =
-    engineIconKey === "codex" ? CodexColor : engineIconKey === "claude" ? ClaudeColor : null;
+    engineIconKey === "codex"
+      ? CodexColor
+      : engineIconKey === "claude"
+        ? ClaudeColor
+        : engineIconKey === "jarvis"
+          ? JarvisColor
+          : null;
   const stopPropagationOnPointerDown = useCallback(
     (event: React.PointerEvent<HTMLButtonElement>) => {
       event.stopPropagation();
