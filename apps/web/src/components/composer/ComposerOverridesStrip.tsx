@@ -387,7 +387,7 @@ export const ComposerOverridesStrip = memo(function ComposerOverridesStrip(
     <div
       data-chat-composer-overrides-strip="true"
       className={cn(
-        "relative z-0 mx-2 -mt-2 rounded-b-[18px] rounded-t-[10px] border border-border/55 bg-muted/45 px-2.5 pb-2 pt-3 shadow-sm backdrop-blur",
+        "relative z-0 mx-2 mt-1.5 rounded-[16px] border border-border/55 bg-muted/45 px-2.5 py-2 shadow-sm backdrop-blur",
         props.compact ? "flex items-center gap-2" : "flex min-w-0 items-center gap-1",
       )}
     >
