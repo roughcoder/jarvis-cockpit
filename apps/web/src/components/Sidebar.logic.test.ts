@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
+  buildJarvisProjectConversationSessionMetadataByThreadId,
   buildJarvisProjectFirstSidebarProjects,
   createThreadJumpHintVisibilityController,
   getSidebarThreadIdsToPrewarm,
@@ -19,6 +20,8 @@ import {
   resolveSidebarStageBadgeLabel,
   resolveSidebarSurfaceCopy,
   jarvisRegistryProjectWorkspaceRoot,
+  resolveJarvisProjectConversationEngineIconKey,
+  resolveJarvisProjectConversationStatusPill,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
@@ -817,6 +820,127 @@ describe("resolveThreadStatusPill", () => {
         },
       }),
     ).toMatchObject({ label: "Completed", pulse: false });
+  });
+});
+
+describe("resolveJarvisProjectConversationEngineIconKey", () => {
+  it("maps Codex and OpenAI-family engines to the Codex icon key", () => {
+    expect(resolveJarvisProjectConversationEngineIconKey("codex")).toBe("codex");
+    expect(resolveJarvisProjectConversationEngineIconKey("openai:gpt-5.5")).toBe("codex");
+    expect(resolveJarvisProjectConversationEngineIconKey("gpt-5.5")).toBe("codex");
+    expect(resolveJarvisProjectConversationEngineIconKey("o4-mini")).toBe("codex");
+  });
+
+  it("maps Claude-family engines to the Claude icon key", () => {
+    expect(resolveJarvisProjectConversationEngineIconKey("claude")).toBe("claude");
+    expect(resolveJarvisProjectConversationEngineIconKey("claudeAgent")).toBe("claude");
+  });
+
+  it("returns null for unknown or empty engines", () => {
+    expect(resolveJarvisProjectConversationEngineIconKey("local-agent")).toBeNull();
+    expect(resolveJarvisProjectConversationEngineIconKey("")).toBeNull();
+    expect(resolveJarvisProjectConversationEngineIconKey(null)).toBeNull();
+  });
+});
+
+describe("resolveJarvisProjectConversationStatusPill", () => {
+  it("maps active worker statuses to the existing compact sidebar status labels", () => {
+    expect(resolveJarvisProjectConversationStatusPill("created")).toMatchObject({
+      label: "Connecting",
+      pulse: true,
+    });
+    expect(resolveJarvisProjectConversationStatusPill("waiting_provider")).toMatchObject({
+      label: "Connecting",
+      pulse: true,
+    });
+    expect(resolveJarvisProjectConversationStatusPill("running")).toMatchObject({
+      label: "Working",
+      pulse: true,
+    });
+  });
+
+  it("maps blocked and completed worker statuses to existing status pills", () => {
+    expect(resolveJarvisProjectConversationStatusPill("needs_input")).toMatchObject({
+      label: "Awaiting Input",
+      pulse: false,
+    });
+    expect(resolveJarvisProjectConversationStatusPill("needs_approval")).toMatchObject({
+      label: "Pending Approval",
+      pulse: false,
+    });
+    expect(resolveJarvisProjectConversationStatusPill("completed")).toMatchObject({
+      label: "Completed",
+      pulse: false,
+    });
+  });
+
+  it("does not render a status for terminal/error states without a legacy equivalent", () => {
+    expect(resolveJarvisProjectConversationStatusPill("failed")).toBeNull();
+    expect(resolveJarvisProjectConversationStatusPill("interrupted")).toBeNull();
+    expect(resolveJarvisProjectConversationStatusPill("stopped")).toBeNull();
+    expect(resolveJarvisProjectConversationStatusPill(null)).toBeNull();
+  });
+});
+
+describe("buildJarvisProjectConversationSessionMetadataByThreadId", () => {
+  const codexSession = {
+    session_id: "sess_codex",
+    session_ref: "sessref_worker_sess_codex",
+    engine: "codex",
+    status: "running" as const,
+  };
+  const claudeSession = {
+    session_id: "sess_claude",
+    session_ref: "sessref_worker_sess_claude",
+    engine: "claudeAgent",
+    status: "completed" as const,
+  };
+
+  it("joins project conversations to worker sessions by session_id", () => {
+    const metadataByThreadId = buildJarvisProjectConversationSessionMetadataByThreadId({
+      threads: [{ thread_id: "thread_1", session_id: "sess_codex" }],
+      sessions: [codexSession],
+    });
+
+    expect(metadataByThreadId.get("thread_1")).toMatchObject({
+      engineIconKey: "codex",
+      joinKey: "session_id",
+      statusPill: { label: "Working" },
+    });
+  });
+
+  it("falls back to session_ref when session_id does not match", () => {
+    const metadataByThreadId = buildJarvisProjectConversationSessionMetadataByThreadId({
+      threads: [{ thread_id: "thread_1", session_id: "sessref_worker_sess_claude" }],
+      sessions: [claudeSession],
+    });
+
+    expect(metadataByThreadId.get("thread_1")).toMatchObject({
+      engineIconKey: "claude",
+      joinKey: "session_ref",
+      statusPill: { label: "Completed" },
+    });
+  });
+
+  it("leaves unmatched conversations without metadata", () => {
+    const metadataByThreadId = buildJarvisProjectConversationSessionMetadataByThreadId({
+      threads: [{ thread_id: "thread_1", session_id: "project:jarvis:orchestrator:thread_1" }],
+      sessions: [codexSession],
+    });
+
+    expect(metadataByThreadId.has("thread_1")).toBe(false);
+  });
+
+  it("leaves ambiguous conversations without metadata", () => {
+    const metadataByThreadId = buildJarvisProjectConversationSessionMetadataByThreadId({
+      threads: [{ thread_id: "thread_1", session_id: "shared-key" }],
+      sessions: [
+        { ...codexSession, session_id: "shared-key" },
+        { ...claudeSession, session_ref: "shared-key" },
+      ],
+    });
+
+    expect(metadataByThreadId.has("thread_1")).toBe(false);
   });
 });
 
