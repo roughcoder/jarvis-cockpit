@@ -148,6 +148,19 @@ source:"github_app"|"oauth"|"pat", refreshed_at}`, and
 identity → phases stream → session runs. Cockpit "Not reported" rows (already shipped)
 light up from the new snapshot fields without UI changes.
 
+## 5b. Conversation/thread rename endpoint (from 2026-07-07 cockpit review)
+
+**Problem.** Operators want to rename a project conversation (edit the title inline), and the
+cockpit's future orchestration chat needs to rename conversations programmatically as work
+evolves. There is no title-write route today.
+
+**Ask.** `PATCH /v1/projects/{project_id}/threads/{tid}` (or dedicated `.../title`) accepting
+`{ "title": "..." }`, member-gated, returning the updated thread and emitting a
+`thread.renamed` event. Idempotency key supported.
+
+**Acceptance.** Rename persists, appears in `GET .../threads` metadata and thread detail, and
+survives reload; unauthorized callers get 403 with authority detail.
+
 ## 6. Session `unarchive` (parity with thread/project archive)
 
 **Problem.** `POST /v1/sessions/{ref}/archive` exists; unarchive is documented as
