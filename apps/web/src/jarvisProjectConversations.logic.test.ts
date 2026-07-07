@@ -379,3 +379,62 @@ describe("project conversation failures", () => {
     ).toBe("Jarvis request projects.threads.unarchive failed with HTTP 409: already active.");
   });
 });
+
+it("grafts local tool items onto the confirming history message so tool rows survive refresh", () => {
+  const historyMessages = projectConversationHistoryMessages({
+    messages: [
+      {
+        role: "user",
+        peer_id: "neil",
+        content: "inspect the runtime repo",
+        observed_at: "2026-07-07T10:00:01.000Z",
+      },
+      {
+        role: "assistant",
+        peer_id: "jarvis",
+        content: "The runtime repo builds the brain.",
+        observed_at: "2026-07-07T10:00:05.000Z",
+      },
+    ],
+  });
+
+  const toolItem = {
+    kind: "tool" as const,
+    id: "tool-call_1",
+    toolCall: {
+      id: "tool-call_1",
+      callId: "call_1",
+      messageId: "call_1",
+      eventId: "ev_1",
+      sequence: 1,
+      occurredAt: "2026-07-07T10:00:03.000Z",
+      name: "read_file",
+      input: { path: "README.md" },
+      inputSummary: "README.md",
+      result: { ok: true },
+      resultSummary: "ok",
+      status: "completed" as const,
+    },
+  };
+
+  const messages = projectConversationMergedMessages({
+    historyMessages,
+    localTurns: [
+      {
+        id: "turn-1",
+        prompt: "inspect the runtime repo",
+        response: "The runtime repo builds the brain.",
+        toolItems: [toolItem],
+        status: "completed",
+        error: null,
+        createdAt: "2026-07-07T10:00:00.000Z",
+      },
+    ],
+  });
+
+  // The local copies are dropped (history echoes win)…
+  expect(messages.map((message) => message.source)).toEqual(["history", "history"]);
+  // …but the assistant history row inherits the local turn's tool items.
+  const assistant = messages.find((message) => message.role === "assistant");
+  expect(assistant?.toolItems).toEqual([toolItem]);
+});

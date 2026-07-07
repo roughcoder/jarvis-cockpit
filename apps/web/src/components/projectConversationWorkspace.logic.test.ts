@@ -113,3 +113,29 @@ describe("project conversation workspace provisioning", () => {
     ).toEqual(new Set(["runtime", "runtime-main"]));
   });
 });
+
+it("keeps polling when the in-flight turn staged repos on an already-running workspace", () => {
+  expect(
+    shouldPollProjectConversationWorkspace({
+      turnInFlight: true,
+      turnRequestedWorkspace: true,
+      workspace: { provision_phase: "running" },
+    }),
+  ).toBe(true);
+  // No workspace request on the turn keeps the existing behavior.
+  expect(
+    shouldPollProjectConversationWorkspace({
+      turnInFlight: true,
+      turnRequestedWorkspace: false,
+      workspace: { provision_phase: "running" },
+    }),
+  ).toBe(false);
+  // Never poll without a turn in flight, even if a workspace was requested.
+  expect(
+    shouldPollProjectConversationWorkspace({
+      turnInFlight: false,
+      turnRequestedWorkspace: true,
+      workspace: { provision_phase: "running" },
+    }),
+  ).toBe(false);
+});
