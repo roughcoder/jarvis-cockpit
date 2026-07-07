@@ -372,8 +372,51 @@ it.effect("fixture client archives project conversations", () =>
   }),
 );
 
+it.effect("fixture client records project conversation workspace escalation", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisFixtureClient();
+    const thread = yield* client.createProjectThread("jarvis-cockpit", {
+      title: "Escalate me",
+    });
+
+    yield* client.sendProjectThreadTurn("jarvis-cockpit", thread.thread_id, {
+      text: "Inspect runtime.",
+      workspace: {
+        repos: [{ name: "runtime", base_ref: "origin/main" }],
+        engine: "codex",
+      },
+    });
+    const detail = yield* client.getProjectThread("jarvis-cockpit", thread.thread_id);
+
+    assert.strictEqual(detail.workspace?.engine, "codex");
+    assert.strictEqual(detail.workspace?.worktrees[0]?.name, "runtime");
+    assert.strictEqual(detail.workspace?.worktrees[0]?.base_ref, "origin/main");
+  }),
+);
+
 it.effect("cockpit client accepts project conversation detail and archive response shapes", () =>
   Effect.gen(function* () {
+    const workspace = {
+      worker_id: "macbook-worker",
+      session_id: "conv_thread_1",
+      engine: "codex",
+      workspace_id: "jarvis-thread-1",
+      root_label: "jarvis-thread-1",
+      cwd_label: "jarvis-thread-1",
+      status: "ready",
+      provision_phase: "running",
+      worktrees: [
+        {
+          name: "runtime",
+          repo: "roughcoder/jarvis",
+          path_label: "runtime",
+          branch: "jarvis/jarvis-thread-runtime",
+          base_ref: "origin/main",
+          status: "ready",
+          provision_phase: "running",
+        },
+      ],
+    };
     const thread = {
       thread_id: "thread_1",
       project_id: "jarvis",
@@ -385,6 +428,7 @@ it.effect("cockpit client accepts project conversation detail and archive respon
       archived_at: "",
       archived_by: "",
       archive_reason: "",
+      workspace,
     };
     const detail = {
       api_version: "v1",
@@ -442,11 +486,15 @@ it.effect("cockpit client accepts project conversation detail and archive respon
     const unarchived = yield* client.unarchiveProjectThread("jarvis", "thread_1");
 
     assert.strictEqual(listed[0]?.thread_id, "thread_1");
+    assert.strictEqual(listed[0]?.workspace?.worktrees[0]?.base_ref, "origin/main");
     assert.strictEqual(opened.messages[0]?.content, "Hello");
+    assert.strictEqual(opened.workspace?.engine, "codex");
     assert.strictEqual(envelope.thread_id, "thread_1");
     assert.strictEqual(bare.thread_id, "thread_1");
+    assert.strictEqual(bare.workspace?.workspace_id, "jarvis-thread-1");
     assert.strictEqual(list.thread_id, "thread_1");
     assert.strictEqual(unarchived.thread_id, "thread_1");
+    assert.strictEqual(unarchived.workspace?.status, "ready");
     assert.deepStrictEqual(
       requests.map((request) => [request.method, request.url]),
       [
@@ -648,6 +696,10 @@ it.effect("cockpit client decodes JSON project thread turn responses", () =>
     const result = yield* client.sendProjectThreadTurn("dogfood", "thread-1", {
       text: "What changed?",
       idempotency_key: "turn-1",
+      workspace: {
+        repos: [{ name: "runtime", base_ref: "origin/main" }],
+        engine: "codex",
+      },
     });
 
     assert.strictEqual(result.ok, true);
@@ -656,6 +708,10 @@ it.effect("cockpit client decodes JSON project thread turn responses", () =>
     assert.deepStrictEqual(requests[0]?.body, {
       text: "What changed?",
       idempotency_key: "turn-1",
+      workspace: {
+        repos: [{ name: "runtime", base_ref: "origin/main" }],
+        engine: "codex",
+      },
       metadata: { surface: "jarvis-cockpit" },
     });
   }),
@@ -685,6 +741,12 @@ it.effect("cockpit client renames project threads with a PATCH request", () =>
             created_at: now,
             updated_at: now,
             created_by: "neil",
+            workspace: {
+              engine: "codex",
+              status: "ready",
+              provision_phase: "running",
+              worktrees: [],
+            },
           },
         });
       },
@@ -698,6 +760,7 @@ it.effect("cockpit client renames project threads with a PATCH request", () =>
     assert.strictEqual(result.title, "Renamed thread");
     assert.strictEqual(result.status, "completed");
     assert.strictEqual(result.ended_reason, "completed");
+    assert.strictEqual(result.workspace?.engine, "codex");
     assert.deepStrictEqual(requests[0], {
       url: "http://jarvis.local:8787/v1/projects/dogfood/threads/thread-1",
       method: "PATCH",

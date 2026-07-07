@@ -7,6 +7,7 @@ import {
   JarvisCockpitCatalog,
   JarvisCapabilitiesResult,
   JarvisCloseSessionInput,
+  JarvisConversationWorkspace,
   JarvisControlResult,
   DEFAULT_JARVIS_API_BASE_URL,
   type JsonObject as JsonObjectType,
@@ -556,6 +557,34 @@ function findProjectThread(
 
 function isProjectThreadArchived(thread: Pick<JarvisProjectThread, "archived_at">): boolean {
   return typeof thread.archived_at === "string" && thread.archived_at.trim().length > 0;
+}
+
+function fixtureConversationWorkspace(
+  input: JarvisProjectThreadTurnInput["workspace"],
+): JarvisConversationWorkspace | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  const engine = input.engine ?? "codex";
+  return {
+    worker_id: "fixture-worker",
+    session_id: `conv_fixture_${engine}`,
+    engine,
+    workspace_id: `jarvis-fixture-${engine}`,
+    root_label: `jarvis-fixture-${engine}`,
+    cwd_label: input.repos?.[0]?.name ?? `jarvis-fixture-${engine}`,
+    status: "ready",
+    provision_phase: "running",
+    worktrees: (input.repos ?? []).map((repo) => ({
+      name: repo.name,
+      repo: repo.name,
+      path_label: repo.name,
+      branch: `jarvis/fixture-${repo.name}`,
+      base_ref: repo.base_ref,
+      status: "ready",
+      provision_phase: "running",
+    })),
+  };
 }
 
 function resolveRequestAuth(
@@ -2939,6 +2968,17 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
           }),
         );
       }
+      const workspace = fixtureConversationWorkspace(input.workspace);
+      const activeThread =
+        workspace === undefined ? thread : { ...thread, updated_at: now, workspace };
+      if (workspace !== undefined) {
+        projectThreads.set(
+          candidateProjectId,
+          (projectThreads.get(candidateProjectId) ?? []).map((candidate) =>
+            candidate.thread_id === threadId ? activeThread : candidate,
+          ),
+        );
+      }
       const text = `Fixture Jarvis recorded a Codex project conversation for ${project.name}: ${input.text}`;
       const key = projectThreadKey(candidateProjectId, threadId);
       projectThreadMessages.set(key, [
@@ -2952,7 +2992,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
         events: [
           {
             event: "thread.turn.started",
-            data: { thread_id: thread.thread_id, project_id: project.id },
+            data: { thread_id: activeThread.thread_id, project_id: project.id },
           },
           {
             event: "thread.reply",
@@ -2960,7 +3000,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
           },
           {
             event: "thread.turn.done",
-            data: { thread_id: thread.thread_id },
+            data: { thread_id: activeThread.thread_id },
           },
         ],
       });
