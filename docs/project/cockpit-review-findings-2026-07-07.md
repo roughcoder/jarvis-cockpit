@@ -80,6 +80,29 @@ and **talks to other agents via the Agent Client Protocol (ACP / `openclaw/acpx`
 Codex/Claude/etc. Full spec: `docs/project/orchestration-chat-design.md`. Design-only until
 approved; F5 wires a stub button to it.
 
+## F8. Engine icon on chat rows (batch 2, 2026-07-07)
+
+**Ask.** Each chat row in the sidebar should show a small COLORED engine icon (Claude /
+Codex) so you can see at a glance which engine a chat is. Icons supplied by Neil, added as
+`ClaudeColor` / `CodexColor` in `Icons.tsx`.
+
+**Read.** Cockpit UI + a data join. `JarvisProjectThread` (what conversation rows render) has
+NO engine field — only `session_id`. The snapshot's worker sessions carry `engine`. Join
+thread.`session_id` → snapshot session → `engine`, render the colored icon in
+`SidebarProjectConversationRow`. If the join is unreliable, raise a Jarvis ask to put
+`engine` on the project thread directly. Work-session rows already have engine.
+
+## F9. Chat status was lost — restore it (batch 2, 2026-07-07)
+
+**Ask.** Chat rows used to show status (working / in-progress / completed / etc.); the
+project-conversation rows don't. Keep/restore the status indicator per chat.
+
+**Read.** Regression/gap. Same join as F8: worker session has `status`; project thread does
+not. Restore a status pill/indicator on `SidebarProjectConversationRow` from the joined
+session status (reuse the existing thread status-pill component/logic used by legacy thread
+rows — `resolveThreadStatusPill` in `Sidebar.logic.ts`). If status isn't reliably joinable,
+Jarvis ask: expose conversation status on the project thread.
+
 ---
 
 ## Jarvis API asks surfaced by this review
