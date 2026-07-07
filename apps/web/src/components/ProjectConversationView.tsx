@@ -3,7 +3,6 @@ import type {
   JarvisProject,
   JarvisProjectFile,
   JarvisProjectMemoryResult,
-  JarvisProjectThreadTurnResult,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -55,10 +54,11 @@ import {
   isProjectConversationArchived,
   isProjectConversationDetailRouteGap,
   projectConversationHistoryMessages,
+  projectConversationMergedMessages,
   sortProjectConversations,
   visibleProjectFiles,
+  type ProjectConversationLocalTurnView,
   type ProjectConversationMessageView,
-  type ProjectConversationSendStatus,
 } from "../jarvisProjectConversations.logic";
 import {
   commitProjectConversationLocalRename,
@@ -81,14 +81,7 @@ interface ProjectConversationViewProps {
   readonly threadId: ThreadId;
 }
 
-interface LocalTurn {
-  readonly id: string;
-  readonly prompt: string;
-  readonly response: string;
-  readonly status: ProjectConversationSendStatus;
-  readonly error: string | null;
-  readonly createdAt: string;
-}
+type LocalTurn = ProjectConversationLocalTurnView;
 
 export function ProjectConversationView({
   environmentId,
@@ -163,6 +156,10 @@ export function ProjectConversationView({
   );
   const [draft, setDraft] = useState("");
   const [turns, setTurns] = useState<LocalTurn[]>([]);
+  const messages = useMemo(
+    () => projectConversationMergedMessages({ historyMessages, localTurns: turns }),
+    [historyMessages, turns],
+  );
   const [pendingArchiveConfirmation, setPendingArchiveConfirmation] = useState(false);
   const [renamingConversation, setRenamingConversation] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
@@ -318,9 +315,18 @@ export function ProjectConversationView({
       return;
     }
 
-    const reply = projectConversationReplyLabel(result.value.result);
+    const reply = extractProjectConversationReply(result.value.result);
     markTurn(turnId, { status: "completed", response: reply, error: null });
     refreshConversationData();
+  };
+
+  const retryMessage = (message: ProjectConversationMessageView): (() => void) | undefined => {
+    const retryPrompt = message.retryPrompt;
+    const localTurnId = message.localTurnId;
+    if (!retryPrompt || !localTurnId) {
+      return undefined;
+    }
+    return () => void sendPrompt(retryPrompt, localTurnId);
   };
 
   const writeArchiveState = async (action: "archive" | "unarchive") => {
@@ -605,7 +611,7 @@ export function ProjectConversationView({
                     </EmptyHeader>
                   </Empty>
                 ) : null}
-                {conversation !== null && historyMessages.length === 0 && turns.length === 0 ? (
+                {conversation !== null && messages.length === 0 ? (
                   <Empty className="min-h-80">
                     <EmptyHeader>
                       <MessageSquareIcon className="mb-4 size-7 text-muted-foreground" />
@@ -617,14 +623,11 @@ export function ProjectConversationView({
                     </EmptyHeader>
                   </Empty>
                 ) : null}
-                {historyMessages.map((message) => (
-                  <ProjectConversationMessageRow key={message.id} message={message} />
-                ))}
-                {turns.map((turn) => (
-                  <ProjectConversationTurnRow
-                    key={turn.id}
-                    turn={turn}
-                    onRetry={() => void sendPrompt(turn.prompt, turn.id)}
+                {messages.map((message) => (
+                  <ProjectConversationMessageRow
+                    key={message.id}
+                    message={message}
+                    onRetry={retryMessage(message)}
                     retryDisabled={sendBusy}
                   />
                 ))}
@@ -704,48 +707,14 @@ export function ProjectConversationView({
   );
 }
 
-function ProjectConversationTurnRow({
-  turn,
+function ProjectConversationMessageRow({
+  message,
   onRetry,
   retryDisabled,
 }: {
-  readonly turn: LocalTurn;
-  readonly onRetry: () => void;
-  readonly retryDisabled: boolean;
-}) {
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="ml-auto max-w-[85%] rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground">
-        {turn.prompt}
-      </div>
-      <div className="max-w-[85%] rounded-lg border border-border/70 bg-card/40 px-3 py-2 text-sm text-foreground">
-        {turn.status === "pending" || turn.status === "streaming" ? (
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <Spinner className="size-4" />
-            {turn.response || "Waiting for Jarvis"}
-          </div>
-        ) : null}
-        {turn.status === "completed" ? (
-          <div className="whitespace-pre-wrap">{turn.response}</div>
-        ) : null}
-        {turn.status === "failed" ? (
-          <div className="space-y-2">
-            <div className="text-destructive">{turn.error}</div>
-            <Button size="xs" variant="outline" onClick={onRetry} disabled={retryDisabled}>
-              <RotateCcwIcon className="size-3.5" />
-              Retry
-            </Button>
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function ProjectConversationMessageRow({
-  message,
-}: {
   readonly message: ProjectConversationMessageView;
+  readonly onRetry: (() => void) | undefined;
+  readonly retryDisabled: boolean;
 }) {
   const isUser = message.role === "user";
   return (
@@ -757,7 +726,27 @@ function ProjectConversationMessageRow({
           : "border border-border/70 bg-card/40 text-foreground",
       )}
     >
-      <div className="whitespace-pre-wrap">{message.content}</div>
+      {isUser ? <div className="whitespace-pre-wrap">{message.content}</div> : null}
+      {!isUser && (message.status === "pending" || message.status === "streaming") ? (
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <Spinner className="size-4" />
+          {message.content || "Waiting for Jarvis"}
+        </div>
+      ) : null}
+      {!isUser && message.status === "completed" ? (
+        <div className="whitespace-pre-wrap">{message.content}</div>
+      ) : null}
+      {!isUser && message.status === "failed" ? (
+        <div className="space-y-2">
+          <div className="text-destructive">{message.error ?? message.content}</div>
+          {onRetry ? (
+            <Button size="xs" variant="outline" onClick={onRetry} disabled={retryDisabled}>
+              <RotateCcwIcon className="size-3.5" />
+              Retry
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -851,8 +840,4 @@ function ProjectConversationContextPanel({
       </div>
     </aside>
   );
-}
-
-function projectConversationReplyLabel(result: JarvisProjectThreadTurnResult): string {
-  return extractProjectConversationReply(result) || "Jarvis completed the turn.";
 }
