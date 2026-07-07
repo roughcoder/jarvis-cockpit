@@ -150,6 +150,47 @@ export const SourceControlDiscoveryResult = Schema.Struct({
 });
 export type SourceControlDiscoveryResult = typeof SourceControlDiscoveryResult.Type;
 
+/**
+ * Open pull request on a repository linked to a Jarvis project. `repo` is the
+ * normalized `owner/name` slug the pull request was listed from.
+ */
+export const ProjectPullRequest = Schema.Struct({
+  repo: TrimmedNonEmptyString,
+  number: PositiveInt,
+  title: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+  author: Schema.optional(TrimmedNonEmptyString),
+  baseRefName: TrimmedNonEmptyString,
+  headRefName: TrimmedNonEmptyString,
+  isDraft: Schema.Boolean,
+  updatedAt: Schema.Option(Schema.DateTimeUtc),
+  createdAt: Schema.Option(Schema.DateTimeUtc),
+});
+export type ProjectPullRequest = typeof ProjectPullRequest.Type;
+
+export const ProjectPullRequestRepoError = Schema.Struct({
+  repo: TrimmedNonEmptyString,
+  message: TrimmedNonEmptyString,
+});
+export type ProjectPullRequestRepoError = typeof ProjectPullRequestRepoError.Type;
+
+/**
+ * Result of listing open pull requests across a project's linked repos.
+ * Per-repo failures land in `errors` so one broken repo does not blank the
+ * whole list; `error` is reserved for request-level failures.
+ */
+export const JarvisProjectPullRequestsResult = Schema.Struct({
+  ok: Schema.Boolean,
+  pullRequests: Schema.optionalKey(Schema.Array(ProjectPullRequest)),
+  errors: Schema.optionalKey(Schema.Array(ProjectPullRequestRepoError)),
+  error: Schema.optionalKey(
+    Schema.Struct({
+      message: TrimmedNonEmptyString,
+    }),
+  ),
+});
+export type JarvisProjectPullRequestsResult = typeof JarvisProjectPullRequestsResult.Type;
+
 export class SourceControlProviderError extends Schema.TaggedErrorClass<SourceControlProviderError>()(
   "SourceControlProviderError",
   {

@@ -15,6 +15,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import {
   decodeGitHubPullRequestJson,
   decodeGitHubPullRequestListJson,
+  type NormalizedGitHubPullRequestRecord,
 } from "./gitHubPullRequests.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -211,6 +212,18 @@ export class GitHubCli extends Context.Service<
       readonly limit?: number;
     }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
 
+    /**
+     * Lists open pull requests for an explicit `owner/name` repository via
+     * `gh pr list --repo`. Unlike the other methods, `cwd` is only a working
+     * directory for the process — it does not need to be a checkout of the
+     * repository.
+     */
+    readonly listRepositoryPullRequests: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly limit?: number;
+    }) => Effect.Effect<ReadonlyArray<NormalizedGitHubPullRequestRecord>, GitHubCliError>;
+
     readonly getPullRequest: (input: {
       readonly cwd: string;
       readonly reference: string;
@@ -355,6 +368,41 @@ export const make = Effect.gen(function* () {
                     decoded.success.map(({ updatedAt: _updatedAt, ...summary }) => summary),
                   );
                 }),
+              ),
+        ),
+      ),
+    listRepositoryPullRequests: (input) =>
+      execute({
+        cwd: input.cwd,
+        args: [
+          "pr",
+          "list",
+          "--repo",
+          input.repository,
+          "--state",
+          "open",
+          "--limit",
+          String(input.limit ?? 50),
+          "--json",
+          "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,createdAt,isDraft,author",
+        ],
+      }).pipe(
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          raw.length === 0
+            ? Effect.succeed([])
+            : Effect.sync(() => decodeGitHubPullRequestListJson(raw)).pipe(
+                Effect.flatMap((decoded) =>
+                  Result.isSuccess(decoded)
+                    ? Effect.succeed(decoded.success)
+                    : Effect.fail(
+                        new GitHubPullRequestListDecodeError({
+                          command: "gh",
+                          cwd: input.cwd,
+                          cause: decoded.failure,
+                        }),
+                      ),
+                ),
               ),
         ),
       ),

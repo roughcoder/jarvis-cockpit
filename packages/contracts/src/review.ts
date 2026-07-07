@@ -34,3 +34,19 @@ export type ReviewDiffPreviewResult = typeof ReviewDiffPreviewResult.Type;
 
 export const ReviewDiffPreviewError = Schema.Union([VcsError, GitCommandError]);
 export type ReviewDiffPreviewError = typeof ReviewDiffPreviewError.Type;
+
+/**
+ * Review dimensions the cockpit offers as tick-boxes. Selecting them expands
+ * the orchestrator prompt seeded into a project conversation (see
+ * `@t3tools/shared/prReview`); reviews are performed by that conversation, not
+ * by a server-side pipeline.
+ */
+export const PrReviewDimensionId = Schema.Literals([
+  "correctness",
+  "security",
+  "performance",
+  "tests",
+  "maintainability",
+  "style",
+]);
+export type PrReviewDimensionId = typeof PrReviewDimensionId.Type;

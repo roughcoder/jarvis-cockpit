@@ -7,6 +7,10 @@
       "types": "./src/model.ts",
       "import": "./src/model.ts"
     },
+    "./prReview": {
+      "types": "./src/prReview.ts",
+      "import": "./src/prReview.ts"
+    },
     "./advertisedEndpoint": {
       "types": "./src/advertisedEndpoint.ts",
       "import": "./src/advertisedEndpoint.ts"

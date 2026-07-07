@@ -214,6 +214,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:jarvis-project",
       tag: WS_METHODS.serverGetJarvisProject,
     }),
+    jarvisProjectPullRequests: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:jarvis-project-pull-requests",
+      tag: WS_METHODS.serverGetJarvisProjectPullRequests,
+    }),
     jarvisProjectMemory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:jarvis-project-memory",
       tag: WS_METHODS.serverGetJarvisProjectMemory,
