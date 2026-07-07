@@ -1,4 +1,9 @@
-import type { JarvisProject, JarvisWorkerProfile } from "@t3tools/contracts";
+import type {
+  JarvisProject,
+  JarvisWorkerProfile,
+  ProviderDriverKind,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 
 export const WORKER_AUTO_VALUE = "__auto__";
 
@@ -17,6 +22,25 @@ export type EffectiveComposerJarvisRouting = {
   selectedRepoRemote: string | null;
   selectedWorkerOverrideId: string | null;
 };
+
+export function jarvisEngineForComposerSelection(input: {
+  readonly selectedProvider: ProviderDriverKind;
+  readonly selectedInstanceId: ProviderInstanceId;
+  readonly selectedModel: string;
+}): string {
+  const model = input.selectedModel.trim().toLowerCase();
+  if (model === "codex" || model === "claude") {
+    return model;
+  }
+  const instanceId = String(input.selectedInstanceId).trim().toLowerCase();
+  if (input.selectedProvider === "claudeAgent" || instanceId === "claudeagent") {
+    return "claude";
+  }
+  if (input.selectedProvider === "claude" || instanceId.startsWith("claude")) {
+    return "claude";
+  }
+  return "codex";
+}
 
 export function jarvisRepoForProject(project: ComposerJarvisProject | null): string | null {
   const repo = project?.repos.find((candidate) => candidate.default) ?? project?.repos[0];

@@ -2,6 +2,7 @@ import { useCallback, type ComponentType } from "react";
 import {
   ArchiveIcon,
   ArrowLeftIcon,
+  BotIcon,
   FolderGit2Icon,
   GitBranchIcon,
   KeyboardIcon,
@@ -29,6 +30,7 @@ import { T3ConnectSidebarAvatar, T3ConnectSidebarSignIn } from "../clerk/T3Conne
 export type SettingsSectionPath =
   | "/settings/general"
   | "/settings/keybindings"
+  | "/settings/providers"
   | "/settings/jarvis"
   | "/settings/projects"
   | "/settings/workers"
@@ -45,6 +47,7 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
 }> = [
   { label: "General", to: "/settings/general", icon: Settings2Icon },
   { label: "Keybindings", to: "/settings/keybindings", icon: KeyboardIcon },
+  { label: "Providers", to: "/settings/providers", icon: BotIcon },
   { label: "Jarvis", to: "/settings/jarvis", icon: ServerCogIcon },
   { label: "Projects", to: "/settings/projects", icon: FolderGit2Icon },
   { label: "Workers", to: "/settings/workers", icon: ServerIcon },

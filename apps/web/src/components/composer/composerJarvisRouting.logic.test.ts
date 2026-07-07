@@ -1,7 +1,14 @@
-import { JarvisProjectId, JarvisWorkerId, type JarvisWorkerProfile } from "@t3tools/contracts";
+import {
+  JarvisProjectId,
+  JarvisWorkerId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type JarvisWorkerProfile,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  jarvisEngineForComposerSelection,
   resolveEffectiveComposerJarvisRouting,
   workerCanStartRepo,
   workerIsHealthyEnough,
@@ -219,5 +226,36 @@ describe("composer Jarvis routing", () => {
     expect(workerIsHealthyEnough(worker())).toBe(true);
     expect(workerIsHealthyEnough(worker({ status: "offline" }))).toBe(false);
     expect(workerIsHealthyEnough(worker({ health: "unhealthy" }))).toBe(false);
+  });
+
+  it("derives the Jarvis engine from model, provider, and instance selection", () => {
+    expect(
+      jarvisEngineForComposerSelection({
+        selectedProvider: ProviderDriverKind.make("codex"),
+        selectedInstanceId: ProviderInstanceId.make("primary"),
+        selectedModel: "claude",
+      }),
+    ).toBe("claude");
+    expect(
+      jarvisEngineForComposerSelection({
+        selectedProvider: ProviderDriverKind.make("claudeAgent"),
+        selectedInstanceId: ProviderInstanceId.make("primary"),
+        selectedModel: "sonnet",
+      }),
+    ).toBe("claude");
+    expect(
+      jarvisEngineForComposerSelection({
+        selectedProvider: ProviderDriverKind.make("codex"),
+        selectedInstanceId: ProviderInstanceId.make("claude-remote"),
+        selectedModel: "gpt-5",
+      }),
+    ).toBe("claude");
+    expect(
+      jarvisEngineForComposerSelection({
+        selectedProvider: ProviderDriverKind.make("codex"),
+        selectedInstanceId: ProviderInstanceId.make("primary"),
+        selectedModel: "gpt-5",
+      }),
+    ).toBe("codex");
   });
 });
