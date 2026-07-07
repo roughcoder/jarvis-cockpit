@@ -229,6 +229,48 @@ describe("buildJarvisProjectFirstSidebarProjects", () => {
     expect(projects[0]?.jarvisRegistryProjectId).toBe("jarvis");
     expect(projects[0]?.sidebarBadges).toEqual([]);
   });
+
+  it("leaves work artifacts unlinked when no registry-link resolver is provided", () => {
+    const projects = buildJarvisProjectFirstSidebarProjects({
+      registryProjects: [{ id: "jarvis", name: "Jarvis", status: "active" }],
+      projectedWorkProjects: [makeSidebarProjectSnapshot()],
+      environmentId: localEnvironmentId,
+      nowIso: "2026-07-06T10:00:00.000Z",
+      makeProjectId: ProjectId.make,
+    });
+
+    const work = projects.find((project) => project.sidebarSourceKind === "jarvis-work-artifact");
+    expect(work?.linkedRegistryProjectId).toBeNull();
+  });
+
+  it("links a work artifact to its registry project when the resolver matches a known project", () => {
+    const projects = buildJarvisProjectFirstSidebarProjects({
+      registryProjects: [{ id: "jarvis", name: "Jarvis", status: "active" }],
+      projectedWorkProjects: [makeSidebarProjectSnapshot()],
+      environmentId: localEnvironmentId,
+      nowIso: "2026-07-06T10:00:00.000Z",
+      makeProjectId: ProjectId.make,
+      resolveWorkRegistryLink: (project) =>
+        project.memberProjects.some((member) => member.id === "jarvis-run_run-1") ? "jarvis" : null,
+    });
+
+    const work = projects.find((project) => project.sidebarSourceKind === "jarvis-work-artifact");
+    expect(work?.linkedRegistryProjectId).toBe("jarvis");
+  });
+
+  it("drops a link to a registry project that is absent from the snapshot", () => {
+    const projects = buildJarvisProjectFirstSidebarProjects({
+      registryProjects: [{ id: "jarvis", name: "Jarvis", status: "active" }],
+      projectedWorkProjects: [makeSidebarProjectSnapshot()],
+      environmentId: localEnvironmentId,
+      nowIso: "2026-07-06T10:00:00.000Z",
+      makeProjectId: ProjectId.make,
+      resolveWorkRegistryLink: () => "unknown-project",
+    });
+
+    const work = projects.find((project) => project.sidebarSourceKind === "jarvis-work-artifact");
+    expect(work?.linkedRegistryProjectId).toBeNull();
+  });
 });
 
 function makeLatestTurn(overrides?: {
