@@ -552,6 +552,42 @@ export const JarvisEndedReason = Schema.Literals([
 ]);
 export type JarvisEndedReason = typeof JarvisEndedReason.Type;
 
+export const JarvisWorkspaceRepoInput = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  base_ref: Schema.optional(TrimmedNonEmptyString),
+});
+export type JarvisWorkspaceRepoInput = typeof JarvisWorkspaceRepoInput.Type;
+
+export const JarvisTurnWorkspaceInput = Schema.Struct({
+  repos: Schema.optionalKey(Schema.Array(JarvisWorkspaceRepoInput)),
+  engine: Schema.optional(TrimmedNonEmptyString),
+});
+export type JarvisTurnWorkspaceInput = typeof JarvisTurnWorkspaceInput.Type;
+
+export const JarvisWorktree = Schema.Struct({
+  name: OptionalPossiblyEmptyPublicString,
+  repo: OptionalPossiblyEmptyPublicString,
+  path_label: OptionalPossiblyEmptyPublicString,
+  branch: OptionalPossiblyEmptyPublicString,
+  base_ref: OptionalPossiblyEmptyPublicString,
+  status: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  provision_phase: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+});
+export type JarvisWorktree = typeof JarvisWorktree.Type;
+
+export const JarvisConversationWorkspace = Schema.Struct({
+  worker_id: OptionalPossiblyEmptyPublicString,
+  session_id: OptionalPossiblyEmptyPublicString,
+  engine: OptionalPossiblyEmptyPublicString,
+  workspace_id: OptionalPossiblyEmptyPublicString,
+  root_label: OptionalPossiblyEmptyPublicString,
+  cwd_label: OptionalPossiblyEmptyPublicString,
+  status: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  provision_phase: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  worktrees: Schema.Array(JarvisWorktree).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+});
+export type JarvisConversationWorkspace = typeof JarvisConversationWorkspace.Type;
+
 export const JarvisProjectThread = Schema.Struct({
   thread_id: JarvisProjectThreadId,
   project_id: JarvisProjectId,
@@ -575,6 +611,7 @@ export const JarvisProjectThread = Schema.Struct({
   archived_at: OptionalPossiblyEmptyPublicString,
   archived_by: OptionalPossiblyEmptyPublicString,
   archive_reason: OptionalPossiblyEmptyPublicString,
+  workspace: Schema.optional(Schema.NullOr(JarvisConversationWorkspace)),
 });
 export type JarvisProjectThread = typeof JarvisProjectThread.Type;
 
@@ -644,6 +681,7 @@ export type JarvisTurnAttachment = typeof JarvisTurnAttachment.Type;
 export const JarvisProjectThreadTurnInput = Schema.Struct({
   text: TrimmedNonEmptyString,
   attachments: Schema.optionalKey(Schema.Array(JarvisTurnAttachment)),
+  workspace: Schema.optionalKey(JarvisTurnWorkspaceInput),
   idempotency_key: Schema.optional(TrimmedNonEmptyString),
   metadata: Schema.optionalKey(JarvisWriteMetadata).pipe(
     Schema.withDecodingDefault(Effect.succeed({ surface: "jarvis-cockpit" })),

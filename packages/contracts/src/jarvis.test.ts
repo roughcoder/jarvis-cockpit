@@ -49,6 +49,8 @@ const decodeLifecycleResult = Schema.decodeUnknownEffect(JarvisLifecycleResult);
 const decodeSseEvent = Schema.decodeUnknownEffect(JarvisCockpitEvent);
 const decodeProjectThreadDetail = Schema.decodeUnknownEffect(JarvisProjectThreadDetailResponse);
 const decodeProjectThreadTurn = Schema.decodeUnknownEffect(JarvisProjectThreadTurnInput);
+const encodeProjectThreadDetail = Schema.encodeEffect(JarvisProjectThreadDetailResponse);
+const encodeProjectThreadTurn = Schema.encodeEffect(JarvisProjectThreadTurnInput);
 
 const generatedAt = "2026-07-01T12:00:00+00:00";
 const sessionRef = "sessref_macbook-worker_sess_123";
@@ -226,6 +228,110 @@ it.effect("decodes project conversation detail with archived state and history",
     assert.strictEqual(parsed.thread.archived_by, "neil");
     assert.strictEqual(parsed.thread.messages[0]?.role, "user");
     assert.strictEqual(parsed.thread.messages[1]?.content, "Continue Phase 5.");
+    assert.strictEqual(parsed.thread.workspace, undefined);
+  }),
+);
+
+it.effect("decodes and encodes escalated project conversation workspace projections", () =>
+  Effect.gen(function* () {
+    const payload = {
+      api_version: "v1",
+      schema_version: 1,
+      project_id: "jarvis",
+      thread: {
+        thread_id: "thread_1",
+        project_id: "jarvis",
+        session_id: "project:jarvis:orchestrator:thread_1",
+        title: "Planning",
+        created_at: generatedAt,
+        updated_at: generatedAt,
+        created_by: "neil",
+        workspace: {
+          worker_id: "macbook-worker",
+          session_id: "conv_thread_1",
+          engine: "codex",
+          workspace_id: "jarvis-thread-1",
+          root_label: "jarvis-thread-1",
+          cwd_label: "jarvis-thread-1",
+          status: "ready",
+          provision_phase: "running",
+          worktrees: [
+            {
+              name: "runtime",
+              repo: "roughcoder/jarvis",
+              path_label: "runtime",
+              branch: "jarvis/jarvis-thread-runtime",
+              base_ref: "origin/main",
+              status: "ready",
+              provision_phase: "running",
+            },
+          ],
+        },
+        messages: [],
+      },
+    };
+
+    const parsed = yield* decodeProjectThreadDetail(payload);
+    const encoded = yield* encodeProjectThreadDetail(parsed);
+
+    assert.strictEqual(parsed.thread.workspace?.engine, "codex");
+    assert.strictEqual(parsed.thread.workspace?.worktrees[0]?.base_ref, "origin/main");
+    assert.deepStrictEqual(encoded.thread.workspace, payload.thread.workspace);
+  }),
+);
+
+it.effect("decodes unknown project conversation workspace status strings", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectThreadDetail({
+      api_version: "v1",
+      schema_version: 1,
+      project_id: "jarvis",
+      thread: {
+        thread_id: "thread_1",
+        project_id: "jarvis",
+        session_id: "project:jarvis:orchestrator:thread_1",
+        title: "Planning",
+        created_at: generatedAt,
+        updated_at: generatedAt,
+        workspace: {
+          status: "warming-cache",
+          provision_phase: "allocating-scratch-disk",
+          worktrees: [
+            {
+              name: "runtime",
+              status: "mounting-index",
+              provision_phase: "hydrating-lfs",
+            },
+          ],
+        },
+        messages: [],
+      },
+    });
+
+    assert.strictEqual(parsed.thread.workspace?.status, "warming-cache");
+    assert.strictEqual(parsed.thread.workspace?.provision_phase, "allocating-scratch-disk");
+    assert.strictEqual(parsed.thread.workspace?.worktrees[0]?.status, "mounting-index");
+    assert.strictEqual(parsed.thread.workspace?.worktrees[0]?.provision_phase, "hydrating-lfs");
+
+    const withoutWorktrees = yield* decodeProjectThreadDetail({
+      api_version: "v1",
+      schema_version: 1,
+      project_id: "jarvis",
+      thread: {
+        thread_id: "thread_2",
+        project_id: "jarvis",
+        session_id: "project:jarvis:orchestrator:thread_2",
+        title: "Planning",
+        created_at: generatedAt,
+        updated_at: generatedAt,
+        workspace: {
+          status: "ready",
+        },
+        messages: [],
+      },
+    });
+
+    assert.deepStrictEqual(withoutWorktrees.thread.workspace?.worktrees, []);
   }),
 );
 
@@ -820,6 +926,7 @@ it.effect("decodes project thread turns with optional image attachments", () =>
     const textOnly = yield* decodeProjectThreadTurn({
       text: "Continue the project conversation.",
     });
+    const encodedTextOnly = yield* encodeProjectThreadTurn(textOnly);
     const withAttachment = yield* decodeProjectThreadTurn({
       text: "Use this screenshot.",
       attachments: [
@@ -831,11 +938,24 @@ it.effect("decodes project thread turns with optional image attachments", () =>
         },
       ],
     });
+    const withWorkspace = yield* decodeProjectThreadTurn({
+      text: "Inspect the runtime repo and summarize the failing tests.",
+      workspace: {
+        repos: [{ name: "runtime", base_ref: "origin/main" }],
+        engine: "codex",
+      },
+    });
+    const encodedWithWorkspace = yield* encodeProjectThreadTurn(withWorkspace);
 
     assert.strictEqual(textOnly.attachments, undefined);
+    assert.strictEqual("workspace" in encodedTextOnly, false);
     assert.strictEqual(withAttachment.attachments?.[0]?.kind, "image");
     assert.strictEqual(withAttachment.attachments?.[0]?.mime_type, "image/png");
     assert.strictEqual(withAttachment.metadata?.surface, "jarvis-cockpit");
+    assert.deepStrictEqual(encodedWithWorkspace.workspace, {
+      repos: [{ name: "runtime", base_ref: "origin/main" }],
+      engine: "codex",
+    });
   }),
 );
 
