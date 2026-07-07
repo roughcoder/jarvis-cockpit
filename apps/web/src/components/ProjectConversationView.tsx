@@ -143,12 +143,6 @@ export function ProjectConversationView({
       input: { projectId, includeRetracted: false },
     }),
   );
-  const capabilitiesQuery = useEnvironmentQuery(
-    serverEnvironment.jarvisCapabilities({
-      environmentId,
-      input: {},
-    }),
-  );
   const sendTurn = useAtomCommand(serverEnvironment.sendJarvisProjectThreadTurn, {
     reportFailure: false,
   });
@@ -219,8 +213,12 @@ export function ProjectConversationView({
     endedReason: conversation?.ended_reason,
   });
   const contextPanelToggleState = resolveProjectContextPanelToggleState(contextPanelCollapsed);
+  // Project-thread conversations run on the brain (engine "jarvis"), which the gating treats
+  // as attachment-capable without a catalog lookup — so we intentionally do NOT fetch the
+  // (expensive, route-probing) capabilities here on every conversation mount. A worker-linked
+  // thread with a non-brain engine would need a lightweight catalog read wired at that point.
   const attachmentsSupported = projectConversationSupportsImageAttachments({
-    catalog: capabilitiesQuery.data?.catalog ?? null,
+    catalog: null,
     engine: conversation?.engine,
   });
   const detailFallback =
@@ -356,10 +354,13 @@ export function ProjectConversationView({
     const files = Array.from(fileList);
     if (files.length === 0) return;
 
-    const nextAttachments = [...attachments];
+    const addedAttachments: ComposerImageAttachmentDraft[] = [];
     let reportedLimit = false;
     for (const file of files) {
-      const countValidation = validateProjectTurnAttachmentCount(nextAttachments.length, 1);
+      const countValidation = validateProjectTurnAttachmentCount(
+        attachments.length + addedAttachments.length,
+        1,
+      );
       if (!countValidation.ok) {
         if (!reportedLimit) {
           showAttachmentError(countValidation.message);
@@ -409,9 +410,9 @@ export function ProjectConversationView({
         continue;
       }
       const base64Data = dataUrl.slice(dataUrl.indexOf(",") + 1);
-      nextAttachments.push({
+      addedAttachments.push({
         ...buildProjectTurnImageAttachment({
-          name: file.name || `image-${nextAttachments.length + 1}`,
+          name: file.name || `image-${attachments.length + addedAttachments.length + 1}`,
           mimeType,
           base64Data,
         }),
@@ -420,8 +421,18 @@ export function ProjectConversationView({
       });
     }
 
-    if (nextAttachments.length !== attachments.length) {
-      setAttachments(nextAttachments);
+    if (addedAttachments.length > 0) {
+      // Functional update + re-check the count against the latest state so concurrent
+      // adds (e.g. paste while a prior read is pending) accumulate instead of clobbering.
+      setAttachments((existing) => {
+        const merged = [...existing];
+        for (const attachment of addedAttachments) {
+          if (validateProjectTurnAttachmentCount(merged.length, 1).ok) {
+            merged.push(attachment);
+          }
+        }
+        return merged;
+      });
     }
   };
 

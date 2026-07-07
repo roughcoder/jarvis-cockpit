@@ -254,7 +254,9 @@ function historyMessageView(
 ): ProjectConversationMessageView {
   return {
     id: `history-${index}-${message.observed_at}`,
-    role: message.role,
+    // Contract role is a tolerant string; render "user" on the user side, everything else
+    // (assistant / any future role) on the assistant side.
+    role: message.role === "user" ? "user" : "assistant",
     content: message.content,
     observedAt: message.observed_at,
     peerId: message.peer_id?.trim() || null,

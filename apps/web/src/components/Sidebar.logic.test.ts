@@ -884,6 +884,11 @@ describe("resolveJarvisProjectConversationStatusPill", () => {
   it("does not render a status when the thread status is missing", () => {
     expect(resolveJarvisProjectConversationStatusPill(null)).toBeNull();
   });
+
+  it("does not render a pill for an unknown (future) status instead of throwing", () => {
+    expect(resolveJarvisProjectConversationStatusPill("cancelled")).toBeNull();
+    expect(resolveJarvisProjectConversationStatusPill("queued")).toBeNull();
+  });
 });
 
 describe("resolveJarvisProjectConversationModelLabel", () => {

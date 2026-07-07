@@ -1,4 +1,4 @@
-import { Outlet, createFileRoute } from "@tanstack/react-router";
+import { Outlet, createFileRoute, useLocation } from "@tanstack/react-router";
 import { TriangleAlertIcon } from "lucide-react";
 
 import { ProjectView } from "../components/ProjectView";
@@ -17,6 +17,9 @@ function ProjectRouteView() {
   const routeParams = Route.useParams({
     select: (params) => resolveProjectRouteParams(params),
   });
+  // Reactive router pathname — a raw window.location read would not re-render this route
+  // component when a client-side navigation moves to/from a child (conversation) route.
+  const pathname = useLocation({ select: (location) => location.pathname });
   const shell = useEnvironmentQuery(
     routeParams === null ? null : environmentShell.stateAtom(routeParams.environmentId),
   );
@@ -33,7 +36,7 @@ function ProjectRouteView() {
           routeParams.projectId,
         )}`;
 
-  if (exactProjectPath !== null && window.location.pathname !== exactProjectPath) {
+  if (exactProjectPath !== null && pathname !== exactProjectPath) {
     return <Outlet />;
   }
 
