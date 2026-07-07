@@ -224,9 +224,15 @@ export function ProjectConversationView({
       : null;
 
   useEffect(() => {
+    // Param-only navigation between conversations reuses this component, so reset all
+    // per-thread local state — otherwise the previous conversation's draft, attachments,
+    // and optimistic turns (and a busy composer) leak into the next one.
     setRenamingConversation(false);
     setRenameDraft("");
+    setDraft("");
     setAttachments([]);
+    setTurns([]);
+    turnCounter.current = 0;
   }, [threadId]);
 
   useEffect(() => {
