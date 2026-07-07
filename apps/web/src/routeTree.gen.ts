@@ -27,6 +27,8 @@ import { Route as SettingsCapabilitiesRouteImport } from './routes/settings.capa
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
+import { Route as ChatJarvisProjectEnvironmentIdProjectIdRouteImport } from './routes/_chat.jarvis-project.$environmentId.$projectId'
+import { Route as ChatJarvisProjectEnvironmentIdProjectIdOrchestrationRouteImport } from './routes/_chat.jarvis-project.$environmentId.$projectId.orchestration'
 import { Route as ChatJarvisProjectEnvironmentIdProjectIdThreadIdRouteImport } from './routes/_chat.jarvis-project.$environmentId.$projectId.$threadId'
 
 const SettingsRoute = SettingsRouteImport.update({
@@ -119,11 +121,23 @@ const ChatEnvironmentIdThreadIdRoute =
     path: '/$environmentId/$threadId',
     getParentRoute: () => ChatRoute,
   } as any)
+const ChatJarvisProjectEnvironmentIdProjectIdRoute =
+  ChatJarvisProjectEnvironmentIdProjectIdRouteImport.update({
+    id: '/jarvis-project/$environmentId/$projectId',
+    path: '/jarvis-project/$environmentId/$projectId',
+    getParentRoute: () => ChatRoute,
+  } as any)
+const ChatJarvisProjectEnvironmentIdProjectIdOrchestrationRoute =
+  ChatJarvisProjectEnvironmentIdProjectIdOrchestrationRouteImport.update({
+    id: '/orchestration',
+    path: '/orchestration',
+    getParentRoute: () => ChatJarvisProjectEnvironmentIdProjectIdRoute,
+  } as any)
 const ChatJarvisProjectEnvironmentIdProjectIdThreadIdRoute =
   ChatJarvisProjectEnvironmentIdProjectIdThreadIdRouteImport.update({
-    id: '/jarvis-project/$environmentId/$projectId/$threadId',
-    path: '/jarvis-project/$environmentId/$projectId/$threadId',
-    getParentRoute: () => ChatRoute,
+    id: '/$threadId',
+    path: '/$threadId',
+    getParentRoute: () => ChatJarvisProjectEnvironmentIdProjectIdRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
@@ -144,7 +158,9 @@ export interface FileRoutesByFullPath {
   '/settings/workers': typeof SettingsWorkersRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/jarvis-project/$environmentId/$projectId': typeof ChatJarvisProjectEnvironmentIdProjectIdRouteWithChildren
   '/jarvis-project/$environmentId/$projectId/$threadId': typeof ChatJarvisProjectEnvironmentIdProjectIdThreadIdRoute
+  '/jarvis-project/$environmentId/$projectId/orchestration': typeof ChatJarvisProjectEnvironmentIdProjectIdOrchestrationRoute
 }
 export interface FileRoutesByTo {
   '/pair': typeof PairRoute
@@ -164,7 +180,9 @@ export interface FileRoutesByTo {
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/jarvis-project/$environmentId/$projectId': typeof ChatJarvisProjectEnvironmentIdProjectIdRouteWithChildren
   '/jarvis-project/$environmentId/$projectId/$threadId': typeof ChatJarvisProjectEnvironmentIdProjectIdThreadIdRoute
+  '/jarvis-project/$environmentId/$projectId/orchestration': typeof ChatJarvisProjectEnvironmentIdProjectIdOrchestrationRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -186,7 +204,9 @@ export interface FileRoutesById {
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/_chat/jarvis-project/$environmentId/$projectId': typeof ChatJarvisProjectEnvironmentIdProjectIdRouteWithChildren
   '/_chat/jarvis-project/$environmentId/$projectId/$threadId': typeof ChatJarvisProjectEnvironmentIdProjectIdThreadIdRoute
+  '/_chat/jarvis-project/$environmentId/$projectId/orchestration': typeof ChatJarvisProjectEnvironmentIdProjectIdOrchestrationRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -208,7 +228,9 @@ export interface FileRouteTypes {
     | '/settings/workers'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/jarvis-project/$environmentId/$projectId'
     | '/jarvis-project/$environmentId/$projectId/$threadId'
+    | '/jarvis-project/$environmentId/$projectId/orchestration'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/pair'
@@ -228,7 +250,9 @@ export interface FileRouteTypes {
     | '/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/jarvis-project/$environmentId/$projectId'
     | '/jarvis-project/$environmentId/$projectId/$threadId'
+    | '/jarvis-project/$environmentId/$projectId/orchestration'
   id:
     | '__root__'
     | '/_chat'
@@ -249,7 +273,9 @@ export interface FileRouteTypes {
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
+    | '/_chat/jarvis-project/$environmentId/$projectId'
     | '/_chat/jarvis-project/$environmentId/$projectId/$threadId'
+    | '/_chat/jarvis-project/$environmentId/$projectId/orchestration'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -386,29 +412,61 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatEnvironmentIdThreadIdRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/jarvis-project/$environmentId/$projectId': {
+      id: '/_chat/jarvis-project/$environmentId/$projectId'
+      path: '/jarvis-project/$environmentId/$projectId'
+      fullPath: '/jarvis-project/$environmentId/$projectId'
+      preLoaderRoute: typeof ChatJarvisProjectEnvironmentIdProjectIdRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/jarvis-project/$environmentId/$projectId/orchestration': {
+      id: '/_chat/jarvis-project/$environmentId/$projectId/orchestration'
+      path: '/orchestration'
+      fullPath: '/jarvis-project/$environmentId/$projectId/orchestration'
+      preLoaderRoute: typeof ChatJarvisProjectEnvironmentIdProjectIdOrchestrationRouteImport
+      parentRoute: typeof ChatJarvisProjectEnvironmentIdProjectIdRoute
+    }
     '/_chat/jarvis-project/$environmentId/$projectId/$threadId': {
       id: '/_chat/jarvis-project/$environmentId/$projectId/$threadId'
-      path: '/jarvis-project/$environmentId/$projectId/$threadId'
+      path: '/$threadId'
       fullPath: '/jarvis-project/$environmentId/$projectId/$threadId'
       preLoaderRoute: typeof ChatJarvisProjectEnvironmentIdProjectIdThreadIdRouteImport
-      parentRoute: typeof ChatRoute
+      parentRoute: typeof ChatJarvisProjectEnvironmentIdProjectIdRoute
     }
   }
 }
+
+interface ChatJarvisProjectEnvironmentIdProjectIdRouteChildren {
+  ChatJarvisProjectEnvironmentIdProjectIdThreadIdRoute: typeof ChatJarvisProjectEnvironmentIdProjectIdThreadIdRoute
+  ChatJarvisProjectEnvironmentIdProjectIdOrchestrationRoute: typeof ChatJarvisProjectEnvironmentIdProjectIdOrchestrationRoute
+}
+
+const ChatJarvisProjectEnvironmentIdProjectIdRouteChildren: ChatJarvisProjectEnvironmentIdProjectIdRouteChildren =
+  {
+    ChatJarvisProjectEnvironmentIdProjectIdThreadIdRoute:
+      ChatJarvisProjectEnvironmentIdProjectIdThreadIdRoute,
+    ChatJarvisProjectEnvironmentIdProjectIdOrchestrationRoute:
+      ChatJarvisProjectEnvironmentIdProjectIdOrchestrationRoute,
+  }
+
+const ChatJarvisProjectEnvironmentIdProjectIdRouteWithChildren =
+  ChatJarvisProjectEnvironmentIdProjectIdRoute._addFileChildren(
+    ChatJarvisProjectEnvironmentIdProjectIdRouteChildren,
+  )
 
 interface ChatRouteChildren {
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
   ChatDraftDraftIdRoute: typeof ChatDraftDraftIdRoute
-  ChatJarvisProjectEnvironmentIdProjectIdThreadIdRoute: typeof ChatJarvisProjectEnvironmentIdProjectIdThreadIdRoute
+  ChatJarvisProjectEnvironmentIdProjectIdRoute: typeof ChatJarvisProjectEnvironmentIdProjectIdRouteWithChildren
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
   ChatDraftDraftIdRoute: ChatDraftDraftIdRoute,
-  ChatJarvisProjectEnvironmentIdProjectIdThreadIdRoute:
-    ChatJarvisProjectEnvironmentIdProjectIdThreadIdRoute,
+  ChatJarvisProjectEnvironmentIdProjectIdRoute:
+    ChatJarvisProjectEnvironmentIdProjectIdRouteWithChildren,
 }
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
