@@ -3875,10 +3875,29 @@ export default function Sidebar() {
   );
   const jarvisFixtureMode = primaryServerConfig?.jarvisBrain?.fixtureMode === true;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  // Jarvis cockpit may live on a non-primary environment; route Jarvis reads/links to the
+  // actual Jarvis-capable environment (preferring primary when it is the Jarvis one).
+  const jarvisEnvironmentId = useMemo(() => {
+    if (
+      primaryEnvironmentId !== null &&
+      environments.some(
+        (environment) =>
+          environment.environmentId === primaryEnvironmentId &&
+          isJarvisCockpitEnvironment(environment.serverConfig ?? undefined),
+      )
+    ) {
+      return primaryEnvironmentId;
+    }
+    return (
+      environments.find((environment) =>
+        isJarvisCockpitEnvironment(environment.serverConfig ?? undefined),
+      )?.environmentId ?? null
+    );
+  }, [environments, primaryEnvironmentId]);
   const jarvisProjectRegistryQuery = useEnvironmentQuery(
-    isJarvisCockpitMode && primaryEnvironmentId !== null
+    isJarvisCockpitMode && jarvisEnvironmentId !== null
       ? serverEnvironment.jarvisProjects({
-          environmentId: primaryEnvironmentId,
+          environmentId: jarvisEnvironmentId,
           input: { includeArchived: false },
         })
       : null,
@@ -3970,7 +3989,7 @@ export default function Sidebar() {
     return buildJarvisProjectFirstSidebarProjects({
       registryProjects: jarvisRegistryProjects,
       projectedWorkProjects,
-      environmentId: primaryEnvironmentId,
+      environmentId: jarvisEnvironmentId,
       nowIso: "1970-01-01T00:00:00.000Z",
       makeProjectId: ProjectId.make,
     });
@@ -3982,6 +4001,7 @@ export default function Sidebar() {
     orderedProjects,
     projectGroupingSettings,
     primaryEnvironmentId,
+    jarvisEnvironmentId,
   ]);
 
   const sidebarProjectByKey = useMemo(
