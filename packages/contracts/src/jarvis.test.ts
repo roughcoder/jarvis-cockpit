@@ -9,6 +9,7 @@ import {
   JarvisCockpitEvent,
   JarvisControlResult,
   JarvisProjectThreadDetailResponse,
+  JarvisProjectThreadTurnInput,
   JarvisRestoreCheckpointInput,
   JarvisRunsSnapshot,
   JarvisSessionCheckpointsResponse,
@@ -43,6 +44,7 @@ const decodeArchive = Schema.decodeUnknownEffect(JarvisArchiveInput);
 const decodeControlResult = Schema.decodeUnknownEffect(JarvisControlResult);
 const decodeSseEvent = Schema.decodeUnknownEffect(JarvisCockpitEvent);
 const decodeProjectThreadDetail = Schema.decodeUnknownEffect(JarvisProjectThreadDetailResponse);
+const decodeProjectThreadTurn = Schema.decodeUnknownEffect(JarvisProjectThreadTurnInput);
 
 const generatedAt = "2026-07-01T12:00:00+00:00";
 const sessionRef = "sessref_macbook-worker_sess_123";
@@ -113,6 +115,7 @@ it.effect("decodes a Jarvis cockpit catalog fixture", () =>
             approval_requests: true,
             input_requests: true,
             checkpoints: true,
+            attachments: true,
           },
         },
       ],
@@ -151,6 +154,7 @@ it.effect("decodes a Jarvis cockpit catalog fixture", () =>
 
     assert.strictEqual(parsed.api_version, "v1");
     assert.strictEqual(parsed.engines[0]?.engine, "codex");
+    assert.strictEqual(parsed.engines[0]?.supports.attachments, true);
     assert.strictEqual(parsed.capabilities[0]?.capability, "code.edit");
     assert.deepStrictEqual(parsed.work_sources, [
       "manual",
@@ -804,6 +808,30 @@ it.effect("decodes command inputs with cockpit metadata defaults", () =>
     assert.strictEqual(input.text, "Use the existing orchestration store patterns.");
     assert.strictEqual(restore.metadata?.surface, "jarvis-cockpit");
     assert.strictEqual(archive.metadata?.surface, "jarvis-cockpit");
+  }),
+);
+
+it.effect("decodes project thread turns with optional image attachments", () =>
+  Effect.gen(function* () {
+    const textOnly = yield* decodeProjectThreadTurn({
+      text: "Continue the project conversation.",
+    });
+    const withAttachment = yield* decodeProjectThreadTurn({
+      text: "Use this screenshot.",
+      attachments: [
+        {
+          kind: "image",
+          mime_type: "image/png",
+          name: "screenshot.png",
+          data_url: "data:image/png;base64,aGVsbG8=",
+        },
+      ],
+    });
+
+    assert.strictEqual(textOnly.attachments, undefined);
+    assert.strictEqual(withAttachment.attachments?.[0]?.kind, "image");
+    assert.strictEqual(withAttachment.attachments?.[0]?.mime_type, "image/png");
+    assert.strictEqual(withAttachment.metadata?.surface, "jarvis-cockpit");
   }),
 );
 

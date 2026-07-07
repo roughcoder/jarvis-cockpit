@@ -2043,10 +2043,7 @@ const makeWsRpcLayer = (
                 Effect.succeed({
                   ok: false,
                   error: {
-                    message:
-                      error instanceof Error && error.message.trim().length > 0
-                        ? error.message
-                        : "Jarvis project conversation turn failed.",
+                    message: formatJarvisProjectTurnFailure(error),
                   },
                 }),
               ),
@@ -2616,6 +2613,20 @@ const makeWsRpcLayer = (
       });
     }),
   );
+
+function formatJarvisProjectTurnFailure(error: unknown): string {
+  const fallback = "Jarvis project conversation turn failed.";
+  const message =
+    error instanceof Error && error.message.trim().length > 0 ? error.message : fallback;
+  if (!(error instanceof JarvisClientError)) {
+    return message;
+  }
+  const responseBody = error.responseBody?.trim();
+  if (!responseBody) {
+    return message;
+  }
+  return `${message} ${responseBody}`;
+}
 
 export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {

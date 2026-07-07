@@ -745,6 +745,10 @@ export function makeJarvisCockpitClient(input: {
     getCapabilities: () =>
       Effect.gen(function* () {
         const checkedAt = DateTime.formatIso(DateTime.nowUnsafe());
+        const catalogResult = yield* requestJson("cockpit.catalog", "/v1/cockpit/catalog").pipe(
+          Effect.flatMap(decodeFor("cockpit.catalog", decodeCatalog)),
+          Effect.result,
+        );
         let projectId: string | null = null;
         let threadId: string | null = null;
         const routes: JarvisRouteCapability[] = [];
@@ -810,6 +814,7 @@ export function makeJarvisCockpitClient(input: {
           ok: true,
           checked_at: checkedAt,
           routes,
+          ...(Result.isSuccess(catalogResult) ? { catalog: catalogResult.success } : {}),
         };
       }),
     getMcpStatus: () =>
@@ -1679,6 +1684,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
               approval_requests: true,
               input_requests: true,
               checkpoints: true,
+              attachments: true,
             },
           },
         ],
@@ -1725,6 +1731,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
               approval_requests: true,
               input_requests: true,
               checkpoints: true,
+              attachments: true,
             },
           },
         ],
@@ -2265,6 +2272,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
               approval_requests: true,
               input_requests: true,
               checkpoints: true,
+              attachments: true,
             },
           },
         ],
@@ -2310,6 +2318,63 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       Effect.succeed({
         ok: true,
         checked_at: now,
+        catalog: {
+          api_version: "v1",
+          schema_version: 1,
+          engines: [
+            {
+              engine: "codex",
+              display_name: "Codex",
+              description: "OpenAI Codex provider session",
+              supports: {
+                streaming: true,
+                resume: true,
+                interrupt: true,
+                approval_requests: true,
+                input_requests: true,
+                checkpoints: true,
+                attachments: true,
+              },
+            },
+          ],
+          capabilities: [
+            {
+              capability: "code.edit",
+              display_name: "Edit code",
+              maps_to: ["worker.session.create", "worker.session.turn"],
+            },
+            {
+              capability: "shell.run",
+              display_name: "Run shell commands",
+              maps_to: ["worker.job.start"],
+            },
+          ],
+          work_sources: ["manual", "github", "linear", "voice", "whatsapp"],
+          engine_strategies: ["single", "parallel", "review_panel"],
+          branch_strategies: ["auto", "use_existing", "create", "none"],
+          landing_policies: ["branch_only", "draft_pr", "ready_pr", "confirm_before_pr"],
+          request_kinds: ["approval", "input"],
+          start_options: {
+            sources: ["manual", "github", "linear"],
+            engines: ["codex", "claude"],
+            engine_strategies: ["single", "parallel"],
+            landing_modes: ["branch_only", "draft_pr", "ready_pr", "confirm_before_pr"],
+            required_fields: {
+              manual: ["phrase or work_item.title", "repo (unless a default repo is configured)"],
+              github: ["repo (unless a default repo is configured)"],
+              linear: [],
+            },
+            defaults: {
+              source: "manual",
+              worker_id: "macbook-worker",
+              repo: "roughcoder/jarvis",
+              engine: "codex",
+              engine_strategy: "single",
+              landing_mode: "draft_pr",
+            },
+          },
+          generated_at: now,
+        },
         routes: JARVIS_CAPABILITY_ROUTE_DEFINITIONS.map((route) => {
           const path = route.path
             .replace("{id}", encodeURIComponent(cockpitProjectId))

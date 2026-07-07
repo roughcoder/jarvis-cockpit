@@ -1,0 +1,83 @@
+import { describe, expect, it } from "vite-plus/test";
+
+import {
+  buildProjectTurnImageAttachmentDataUrl,
+  decodedBytesFromProjectTurnAttachmentDataUrl,
+  PROJECT_TURN_ATTACHMENT_MAX_COUNT,
+  PROJECT_TURN_ATTACHMENT_MAX_DECODED_BYTES,
+  projectConversationSupportsImageAttachments,
+  validateProjectTurnAttachmentCount,
+  validateProjectTurnImageAttachment,
+} from "./projectConversationComposer.logic";
+
+describe("project conversation image attachments", () => {
+  it("accepts only the deployed image mime allow-list", () => {
+    for (const mimeType of ["image/png", "image/jpeg", "image/webp", "image/gif"]) {
+      expect(
+        validateProjectTurnImageAttachment({
+          name: "screen.png",
+          mimeType,
+          decodedBytes: 1024,
+        }),
+      ).toEqual({ ok: true });
+    }
+
+    expect(
+      validateProjectTurnImageAttachment({
+        name: "notes.txt",
+        mimeType: "text/plain",
+        decodedBytes: 128,
+      }),
+    ).toMatchObject({ ok: false });
+  });
+
+  it("rejects more than four images per turn", () => {
+    expect(validateProjectTurnAttachmentCount(3, 1)).toEqual({ ok: true });
+    expect(validateProjectTurnAttachmentCount(3, 2)).toEqual({
+      ok: false,
+      message: `Attach up to ${PROJECT_TURN_ATTACHMENT_MAX_COUNT} images per turn.`,
+    });
+  });
+
+  it("rejects images larger than five decoded MiB", () => {
+    expect(
+      validateProjectTurnImageAttachment({
+        name: "large.png",
+        mimeType: "image/png",
+        decodedBytes: PROJECT_TURN_ATTACHMENT_MAX_DECODED_BYTES + 1,
+      }),
+    ).toMatchObject({ ok: false });
+  });
+
+  it("builds data URLs and calculates decoded byte size", () => {
+    const dataUrl = buildProjectTurnImageAttachmentDataUrl("image/png", "aGVsbG8=");
+
+    expect(dataUrl).toBe("data:image/png;base64,aGVsbG8=");
+    expect(decodedBytesFromProjectTurnAttachmentDataUrl(dataUrl)).toBe(5);
+    expect(decodedBytesFromProjectTurnAttachmentDataUrl("https://example.test/image.png")).toBe(
+      null,
+    );
+  });
+
+  it("gates attachments on the selected engine catalog support flag", () => {
+    const catalog = {
+      engines: [
+        {
+          engine: "codex",
+          supports: { attachments: true },
+        },
+        {
+          engine: "claude",
+          supports: { attachments: false },
+        },
+      ],
+    };
+
+    expect(projectConversationSupportsImageAttachments({ catalog, engine: "codex" })).toBe(true);
+    expect(projectConversationSupportsImageAttachments({ catalog, engine: "claude" })).toBe(false);
+    expect(projectConversationSupportsImageAttachments({ catalog, engine: "missing" })).toBe(false);
+    expect(projectConversationSupportsImageAttachments({ catalog: null, engine: "codex" })).toBe(
+      false,
+    );
+  });
+});
