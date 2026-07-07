@@ -4,6 +4,7 @@ import {
   ChevronRightIcon,
   CloudIcon,
   ContainerIcon,
+  FolderOpenIcon,
   FolderPlusIcon,
   Globe2Icon,
   LoaderIcon,
@@ -81,7 +82,7 @@ import { localFilesystemCwd } from "../filesystemCwd";
 import { APP_STAGE_LABEL } from "../branding";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { isMacPlatform } from "../lib/utils";
+import { cn, isMacPlatform } from "../lib/utils";
 import {
   readThreadShell,
   useProject,
@@ -222,6 +223,7 @@ import {
   type SidebarProjectView,
   type SidebarSurfaceCopy,
 } from "./Sidebar.logic";
+import { buildProjectRouteParams } from "./ProjectView.logic";
 import { sortThreads } from "../lib/threadSort";
 import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -2450,6 +2452,48 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [createThreadForProjectMember, project.groupedProjectCount, project.memberProjects],
   );
 
+  const handleViewJarvisProjectClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!project.jarvisRegistryProjectId) {
+        return;
+      }
+      if (isMobile) {
+        setOpenMobile(false);
+      }
+      void router.navigate({
+        to: "/jarvis-project/$environmentId/$projectId",
+        params: buildProjectRouteParams({
+          environmentId: project.environmentId,
+          projectId: project.jarvisRegistryProjectId,
+        }),
+      });
+    },
+    [isMobile, project.environmentId, project.jarvisRegistryProjectId, router, setOpenMobile],
+  );
+
+  const handleOpenProjectOrchestrationClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!project.jarvisRegistryProjectId) {
+        return;
+      }
+      if (isMobile) {
+        setOpenMobile(false);
+      }
+      void router.navigate({
+        to: "/jarvis-project/$environmentId/$projectId/orchestration",
+        params: buildProjectRouteParams({
+          environmentId: project.environmentId,
+          projectId: project.jarvisRegistryProjectId,
+        }),
+      });
+    },
+    [isMobile, project.environmentId, project.jarvisRegistryProjectId, router, setOpenMobile],
+  );
+
   const attemptArchiveThread = useCallback(
     async (threadRef: ScopedThreadRef) => {
       const result = await archiveThread(threadRef);
@@ -2692,9 +2736,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         <SidebarMenuButton
           ref={isManualProjectSorting ? dragHandleProps?.setActivatorNodeRef : undefined}
           size="sm"
-          className={`gap-2 px-2 py-1.5 pr-8 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground max-sm:pr-14 ${
-            isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
-          }`}
+          className={cn(
+            "gap-2 px-2 py-1.5 pr-8 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground max-sm:pr-14",
+            project.sidebarSourceKind === "jarvis-registry" && "pl-15",
+            isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : "cursor-pointer",
+          )}
           {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
           {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.listeners : {})}
           onPointerDownCapture={handleProjectButtonPointerDownCapture}
@@ -2758,6 +2804,40 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             ) : null}
           </span>
         </SidebarMenuButton>
+        {project.sidebarSourceKind === "jarvis-registry" ? (
+          <div className="pointer-events-none absolute top-[calc(50%+1px)] left-1 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label={`View project ${project.displayName}`}
+                    className={SIDEBAR_ICON_ACTION_BUTTON_CLASS}
+                    onClick={handleViewJarvisProjectClick}
+                  >
+                    <FolderOpenIcon className="size-3.5" />
+                  </button>
+                }
+              />
+              <TooltipPopup side="top">View project</TooltipPopup>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label={`Open orchestration chat for ${project.displayName}`}
+                    className={SIDEBAR_ICON_ACTION_BUTTON_CLASS}
+                    onClick={handleOpenProjectOrchestrationClick}
+                  >
+                    <RocketIcon className="size-3.5" />
+                  </button>
+                }
+              />
+              <TooltipPopup side="top">Orchestration chat</TooltipPopup>
+            </Tooltip>
+          </div>
+        ) : null}
         {/* Environment badge – visible by default, crossfades with the
             "new thread" button on hover using the same pointer-events +
             opacity pattern as the thread row archive/timestamp swap. */}
