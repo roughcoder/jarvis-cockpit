@@ -15,6 +15,7 @@ import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SettingsWorkersRouteImport } from './routes/settings.workers'
 import { Route as SettingsSourceControlRouteImport } from './routes/settings.source-control'
+import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
 import { Route as SettingsProjectsRouteImport } from './routes/settings.projects'
 import { Route as SettingsMcpRouteImport } from './routes/settings.mcp'
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
@@ -57,6 +58,11 @@ const SettingsWorkersRoute = SettingsWorkersRouteImport.update({
 const SettingsSourceControlRoute = SettingsSourceControlRouteImport.update({
   id: '/source-control',
   path: '/source-control',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsProvidersRoute = SettingsProvidersRouteImport.update({
+  id: '/providers',
+  path: '/providers',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsProjectsRoute = SettingsProjectsRouteImport.update({
@@ -147,6 +153,7 @@ export interface FileRoutesByFullPath {
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/mcp': typeof SettingsMcpRoute
   '/settings/projects': typeof SettingsProjectsRoute
+  '/settings/providers': typeof SettingsProvidersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/workers': typeof SettingsWorkersRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
@@ -167,6 +174,7 @@ export interface FileRoutesByTo {
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/mcp': typeof SettingsMcpRoute
   '/settings/projects': typeof SettingsProjectsRoute
+  '/settings/providers': typeof SettingsProvidersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/workers': typeof SettingsWorkersRoute
   '/': typeof ChatIndexRoute
@@ -190,6 +198,7 @@ export interface FileRoutesById {
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/mcp': typeof SettingsMcpRoute
   '/settings/projects': typeof SettingsProjectsRoute
+  '/settings/providers': typeof SettingsProvidersRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/settings/workers': typeof SettingsWorkersRoute
   '/_chat/': typeof ChatIndexRoute
@@ -214,6 +223,7 @@ export interface FileRouteTypes {
     | '/settings/keybindings'
     | '/settings/mcp'
     | '/settings/projects'
+    | '/settings/providers'
     | '/settings/source-control'
     | '/settings/workers'
     | '/$environmentId/$threadId'
@@ -234,6 +244,7 @@ export interface FileRouteTypes {
     | '/settings/keybindings'
     | '/settings/mcp'
     | '/settings/projects'
+    | '/settings/providers'
     | '/settings/source-control'
     | '/settings/workers'
     | '/'
@@ -256,6 +267,7 @@ export interface FileRouteTypes {
     | '/settings/keybindings'
     | '/settings/mcp'
     | '/settings/projects'
+    | '/settings/providers'
     | '/settings/source-control'
     | '/settings/workers'
     | '/_chat/'
@@ -314,6 +326,13 @@ declare module '@tanstack/react-router' {
       path: '/source-control'
       fullPath: '/settings/source-control'
       preLoaderRoute: typeof SettingsSourceControlRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/providers': {
+      id: '/settings/providers'
+      path: '/providers'
+      fullPath: '/settings/providers'
+      preLoaderRoute: typeof SettingsProvidersRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/projects': {
@@ -462,6 +481,7 @@ interface SettingsRouteChildren {
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
   SettingsMcpRoute: typeof SettingsMcpRoute
   SettingsProjectsRoute: typeof SettingsProjectsRoute
+  SettingsProvidersRoute: typeof SettingsProvidersRoute
   SettingsSourceControlRoute: typeof SettingsSourceControlRoute
   SettingsWorkersRoute: typeof SettingsWorkersRoute
 }
@@ -476,6 +496,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
   SettingsMcpRoute: SettingsMcpRoute,
   SettingsProjectsRoute: SettingsProjectsRoute,
+  SettingsProvidersRoute: SettingsProvidersRoute,
   SettingsSourceControlRoute: SettingsSourceControlRoute,
   SettingsWorkersRoute: SettingsWorkersRoute,
 }

@@ -19,7 +19,7 @@ import {
   type EnvironmentConnectionPresentation,
 } from "@t3tools/client-runtime/connection";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { createModelSelection } from "@t3tools/shared/model";
+import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import {
   memo,
   useCallback,
@@ -65,6 +65,7 @@ import {
   shouldUseCompactComposerFooter,
 } from "../composerFooterLayout";
 import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../ComposerPromptEditor";
+import { ProviderModelPicker } from "./ProviderModelPicker";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
@@ -73,13 +74,16 @@ import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { ComposerOverridesStrip } from "../composer/ComposerOverridesStrip";
-import {
-  EngineReasoningControl,
-  resolveComposerJarvisEngineSelection,
-} from "../composer/EngineReasoningControl";
 import type { ComposerCapabilities } from "../composer/composerCapabilities";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
+import {
+  getComposerPromptInjectionState,
+  getComposerProviderState,
+  renderProviderTraitsMenuContent,
+  renderProviderTraitsPicker,
+} from "./composerProviderState";
+import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../pierre-icons";
 import { cn, randomUUID } from "~/lib/utils";
@@ -108,7 +112,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
-import { getProviderInteractionModeToggle } from "../../providerModels";
+import { getProviderDisplayName, getProviderInteractionModeToggle } from "../../providerModels";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -116,10 +120,15 @@ import {
   sortProviderInstanceEntries,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
+import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelSelection";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import type { SessionPhase, Thread } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
 import type { PendingApproval, PendingUserInput } from "../../session-logic";
+import {
+  deriveLatestContextWindowSnapshot,
+  formatProviderDisplayName,
+} from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
@@ -129,6 +138,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { buildStartWorkRoutingSummary } from "../startWork.logic";
 import {
   type ComposerJarvisProject,
+  jarvisEngineForComposerSelection,
   lastPathSegment,
   resolveEffectiveComposerJarvisRouting,
   shortProjectLabel,
@@ -385,6 +395,8 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 
 const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
   compact: boolean;
+  activeContextWindow: ReturnType<typeof deriveLatestContextWindowSnapshot>;
+  activeThreadProviderDisplayName: string | null;
   isPreparingWorktree: boolean;
   pendingAction: {
     questionIndex: number;
@@ -407,6 +419,12 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
 }) {
   return (
     <>
+      {props.activeContextWindow ? (
+        <ContextWindowMeter
+          usage={props.activeContextWindow}
+          providerDisplayName={props.activeThreadProviderDisplayName}
+        />
+      ) : null}
       {props.isPreparingWorktree ? (
         <span className="text-muted-foreground/70 text-xs">Preparing worktree...</span>
       ) : null}
@@ -602,6 +620,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     capabilities,
     composerDraftTarget,
     environmentId,
+    routeKind,
+    routeThreadRef,
     draftId,
     activeThreadId,
     activeThreadEnvironmentId: _activeThreadEnvironmentId,
@@ -635,9 +655,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     providerStatuses,
     activeProjectDefaultModelSelection,
     activeThreadModelSelection,
+    activeThreadActivities,
     resolvedTheme,
     settings,
+    keybindings,
     idlePlaceholder,
+    terminalOpen,
     gitCwd,
     promptRef,
     composerRef,
@@ -652,11 +675,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onAdvanceActivePendingUserInput,
     onPreviousActivePendingUserInputQuestion,
     onChangeActivePendingUserInputCustomAnswer,
+    onProviderModelSelect,
+    getModelDisabledReason,
     toggleInteractionMode,
     handleRuntimeModeChange,
     handleInteractionModeChange,
     togglePlanSidebar,
     focusComposer,
+    scheduleComposerFocus,
     setThreadError,
     onExpandImage,
   } = props;
@@ -841,12 +867,31 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [selectedProviderEntry],
   );
 
-  const selectedPromptEffort = null;
-  const selectedModelOptionsForDispatch =
-    composerModelOptions?.[selectedInstanceId] ??
-    activeThreadModelSelection?.options ??
-    activeProjectDefaultModelSelection?.options ??
-    null;
+  const composerPromptInjectionState = useMemo(
+    () => getComposerPromptInjectionState(prompt),
+    [prompt],
+  );
+  const composerProviderState = useMemo(
+    () =>
+      getComposerProviderState({
+        provider: selectedProvider,
+        model: selectedModel,
+        models: selectedProviderModels,
+        promptInjectionState: composerPromptInjectionState,
+        modelOptions: composerModelOptions?.[selectedInstanceId],
+      }),
+    [
+      composerModelOptions,
+      composerPromptInjectionState,
+      selectedInstanceId,
+      selectedModel,
+      selectedProvider,
+      selectedProviderModels,
+    ],
+  );
+
+  const selectedPromptEffort = composerProviderState.promptEffort;
+  const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
   const composerProviderControls = useMemo(
     () => ({
       showInteractionModeToggle: getProviderInteractionModeToggle(
@@ -860,31 +905,39 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => createModelSelection(selectedInstanceId, selectedModel, selectedModelOptionsForDispatch),
     [selectedInstanceId, selectedModel, selectedModelOptionsForDispatch],
   );
+  const selectedJarvisEngine = useMemo(
+    () =>
+      jarvisEngineForComposerSelection({
+        selectedProvider,
+        selectedInstanceId,
+        selectedModel,
+      }),
+    [selectedInstanceId, selectedModel, selectedProvider],
+  );
+  const selectedModelForPicker = selectedModel;
+  // Instance-keyed option list so the picker can show each configured
+  // instance (built-in + custom) as a first-class sidebar entry. The
+  // options are server-reported models plus that exact instance's
+  // configured custom models; selected slugs are not injected into lists.
+  const modelOptionsByInstance = useMemo<
+    ReadonlyMap<ProviderInstanceId, ReadonlyArray<AppModelOption>>
+  >(() => {
+    const out = new Map<ProviderInstanceId, ReadonlyArray<AppModelOption>>();
+    for (const entry of providerInstanceEntries) {
+      out.set(entry.instanceId, getAppModelOptionsForInstance(settings, entry));
+    }
+    return out;
+  }, [providerInstanceEntries, settings]);
+  const selectedModelForPickerWithCustomFallback = useMemo(() => {
+    const currentOptions = modelOptionsByInstance.get(selectedInstanceId) ?? [];
+    return currentOptions.some((option) => option.slug === selectedModelForPicker)
+      ? selectedModelForPicker
+      : (normalizeModelSlug(selectedModelForPicker, selectedProvider) ?? selectedModelForPicker);
+  }, [modelOptionsByInstance, selectedInstanceId, selectedModelForPicker, selectedProvider]);
 
   // ------------------------------------------------------------------
   // Jarvis routing context
   // ------------------------------------------------------------------
-  const canSelectJarvisEngine = capabilities.engineControl;
-  const jarvisCapabilitiesQuery = useEnvironmentQuery(
-    canSelectJarvisEngine
-      ? serverEnvironment.jarvisCapabilities({ environmentId, input: {} })
-      : null,
-  );
-  const jarvisEngines = jarvisCapabilitiesQuery.data?.catalog?.engines ?? [];
-  const [selectedJarvisEngineDraft, setSelectedJarvisEngineDraft] = useState<string | null>(null);
-  const selectedJarvisEngine = useMemo(
-    () =>
-      resolveComposerJarvisEngineSelection({
-        engines: jarvisEngines,
-        previousEngine: selectedJarvisEngineDraft,
-      }),
-    [jarvisEngines, selectedJarvisEngineDraft],
-  );
-  useEffect(() => {
-    if (selectedJarvisEngine !== selectedJarvisEngineDraft) {
-      setSelectedJarvisEngineDraft(selectedJarvisEngine);
-    }
-  }, [selectedJarvisEngine, selectedJarvisEngineDraft]);
   const canRouteJarvisStart = capabilities.jarvisRouting;
   const jarvisProjectsQuery = useEnvironmentQuery(
     canRouteJarvisStart
@@ -1021,7 +1074,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       jarvisWorkers.filter(
         (worker) =>
           workerIsHealthyEnough(worker) &&
-          selectedJarvisEngine !== null &&
           workerSupportsEngine(worker, selectedJarvisEngine) &&
           workerCanStartRepo(worker, selectedJarvisRepoEntry?.remote ?? null),
       ),
@@ -1121,9 +1173,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (jarvisWorkers.length === 0) {
       return "Jarvis has not reported any workers.";
     }
-    if (selectedJarvisEngine === null) {
-      return "Jarvis has not reported any engines.";
-    }
     if (selectedWorkerOverrideId !== null && selectedOverrideWorker === null) {
       return "The selected worker is no longer available. Auto routing will be used.";
     }
@@ -1148,6 +1197,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ]);
 
   // ------------------------------------------------------------------
+  // Context window
+  // ------------------------------------------------------------------
+  const activeContextWindow = useMemo(
+    () => deriveLatestContextWindowSnapshot(activeThreadActivities ?? []),
+    [activeThreadActivities],
+  );
+  const activeThreadProviderDisplayName = useMemo(() => {
+    if (!activeThreadModelSelection) return null;
+    const entry = providerStatuses.find(
+      (p) => p.instanceId === activeThreadModelSelection.instanceId,
+    );
+    if (entry) {
+      return getProviderDisplayName(providerStatuses, entry.driver);
+    }
+    return formatProviderDisplayName(activeThreadModelSelection.instanceId);
+  }, [providerStatuses, activeThreadModelSelection]);
+
+  // ------------------------------------------------------------------
   // Composer-local state
   // ------------------------------------------------------------------
   const [composerCursor, setComposerCursor] = useState(() =>
@@ -1163,6 +1230,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
+  const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const isMobileViewport = useMediaQuery("max-sm");
   const isComposerCollapsedMobile = isMobileViewport && !isComposerFocused;
@@ -1234,8 +1302,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     if (composerTrigger.kind === "slash-command") {
       if (!capabilities.slashCommands) return [];
-      const builtInSlashCommandItems = (
-        capabilities.interactionControl
+      const builtInSlashCommandItems = [
+        {
+          id: "slash:model",
+          type: "slash-command" as const,
+          command: "model" as const,
+          label: "/model",
+          description: "Switch response model for this thread",
+        },
+        ...(capabilities.interactionControl
           ? [
               {
                 id: "slash:plan",
@@ -1252,8 +1327,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 description: "Switch this thread back to normal build mode",
               },
             ]
-          : []
-      ) satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
+          : []),
+      ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
         (command) => ({
           id: `provider-slash-command:${selectedProvider}:${command.name}`,
@@ -1393,8 +1468,54 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [capabilities.mentions, capabilities.slashCommands, idlePlaceholder]);
   const composerDisabled = composerDisabledReason !== null;
 
+  // ------------------------------------------------------------------
+  // Provider traits UI
+  // ------------------------------------------------------------------
+  const setPromptFromTraits = useCallback(
+    (nextPrompt: string) => {
+      if (nextPrompt === promptRef.current) {
+        scheduleComposerFocus();
+        return;
+      }
+      promptRef.current = nextPrompt;
+      setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+      const nextCursor = collapseExpandedComposerCursor(nextPrompt, nextPrompt.length);
+      setComposerCursor(nextCursor);
+      setComposerTrigger(
+        detectComposerTriggerForCapabilities(nextPrompt, nextPrompt.length, capabilities),
+      );
+      scheduleComposerFocus();
+    },
+    [capabilities, composerDraftTarget, promptRef, scheduleComposerFocus, setComposerDraftPrompt],
+  );
+
+  const providerTraitsMenuContent = renderProviderTraitsMenuContent({
+    provider: selectedProvider,
+    instanceId: selectedInstanceId,
+    ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
+    ...(routeKind === "draft" && draftId ? { draftId } : {}),
+    model: selectedModel,
+    models: selectedProviderModels,
+    modelOptions: composerModelOptions?.[selectedInstanceId],
+    prompt,
+    onPromptChange: setPromptFromTraits,
+  });
+  const providerTraitsPicker = renderProviderTraitsPicker({
+    provider: selectedProvider,
+    instanceId: selectedInstanceId,
+    ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
+    ...(routeKind === "draft" && draftId ? { draftId } : {}),
+    model: selectedModel,
+    models: selectedProviderModels,
+    modelOptions: composerModelOptions?.[selectedInstanceId],
+    prompt,
+    onPromptChange: setPromptFromTraits,
+  });
   const showCompactComposerControlsMenu = Boolean(
-    showComposerInteractionModeToggle || showRuntimeModeControl || showPlanSidebarToggle,
+    (showEngineControl && providerTraitsMenuContent) ||
+    showComposerInteractionModeToggle ||
+    showRuntimeModeControl ||
+    showPlanSidebarToggle,
   );
   const pendingPrimaryAction = useMemo(
     () =>
@@ -1875,6 +1996,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
       if (item.type === "slash-command") {
+        if (item.command === "model") {
+          const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+            expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+            focusEditorAfterReplace: false,
+          });
+          if (applied) {
+            setComposerHighlightedItemId(null);
+            setIsComposerModelPickerOpen(true);
+          }
+          return;
+        }
         void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -2245,9 +2377,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         const rangeEnd = promptRef.current.length;
         return applyPromptReplacement(rangeEnd, rangeEnd, text);
       },
-      openModelPicker: () => {},
-      toggleModelPicker: () => {},
-      isModelPickerOpen: () => false,
+      openModelPicker: () => {
+        setIsComposerModelPickerOpen(true);
+      },
+      toggleModelPicker: () => {
+        setIsComposerModelPickerOpen((open) => !open);
+      },
+      isModelPickerOpen: () => isComposerModelPickerOpen,
       readSnapshot: () => {
         return readComposerSnapshot();
       },
@@ -2349,6 +2485,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       environmentUnavailable,
       activePendingProgress,
       applyPromptReplacement,
+      isComposerModelPickerOpen,
       readComposerSnapshot,
       selectedModel,
       selectedModelOptionsForDispatch,
@@ -2373,7 +2510,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       data-chat-composer-form="true"
     >
       <div
-        className={cn("group rounded-[22px] p-px transition-colors duration-200")}
+        className={cn(
+          "group rounded-[22px] p-px transition-colors duration-200",
+          composerProviderState.composerFrameClassName,
+        )}
         onDragEnter={onComposerDragEnter}
         onDragOver={onComposerDragOver}
         onDragLeave={onComposerDragLeave}
@@ -2386,6 +2526,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             "chat-composer-glass rounded-[20px] border transition-colors duration-200 has-focus-visible:border-ring/45",
             isDragOverComposer ? "border-primary/70 bg-accent/45" : "border-border",
             environmentUnavailable ? "opacity-75" : null,
+            composerProviderState.composerSurfaceClassName,
           )}
           onFocusCapture={(event) => {
             const activeElement = event.target;
@@ -2803,12 +2944,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               >
                 <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                   {showEngineControl ? (
-                    <EngineReasoningControl
+                    <ProviderModelPicker
                       compact={isComposerFooterCompact}
-                      engines={jarvisEngines}
-                      selectedEngine={selectedJarvisEngine}
-                      pending={jarvisCapabilitiesQuery.isPending}
-                      onEngineChange={setSelectedJarvisEngineDraft}
+                      activeInstanceId={selectedInstanceId}
+                      model={selectedModelForPickerWithCustomFallback}
+                      lockedProvider={lockedProvider}
+                      lockedContinuationGroupKey={lockedContinuationGroupKey}
+                      instanceEntries={providerInstanceEntries}
+                      keybindings={keybindings}
+                      modelOptionsByInstance={modelOptionsByInstance}
+                      terminalOpen={terminalOpen}
+                      open={isComposerModelPickerOpen}
+                      {...(composerProviderState.modelPickerIconClassName
+                        ? {
+                            activeProviderIconClassName:
+                              composerProviderState.modelPickerIconClassName,
+                          }
+                        : {})}
+                      onOpenChange={(open) => {
+                        setIsComposerModelPickerOpen(open);
+                      }}
+                      getModelDisabledReason={getModelDisabledReason}
+                      onInstanceModelChange={onProviderModelSelect}
                     />
                   ) : null}
 
@@ -2821,12 +2978,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       runtimeMode={runtimeMode}
                       showInteractionModeToggle={showComposerInteractionModeToggle}
                       showRuntimeModeControl={showRuntimeModeControl}
+                      traitsMenuContent={showEngineControl ? providerTraitsMenuContent : null}
                       onToggleInteractionMode={toggleInteractionMode}
                       onTogglePlanSidebar={togglePlanSidebar}
                       onRuntimeModeChange={handleRuntimeModeChange}
                     />
                   ) : (
                     <>
+                      {showEngineControl && providerTraitsPicker ? (
+                        <>
+                          <Separator
+                            orientation="vertical"
+                            className="mx-0.5 hidden h-4 sm:block"
+                          />
+                          {providerTraitsPicker}
+                        </>
+                      ) : null}
                       <ComposerFooterModeControls
                         showRuntimeModeControl={showRuntimeModeControl}
                         showInteractionModeToggle={showComposerInteractionModeToggle}
@@ -2853,6 +3020,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 >
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
+                    activeContextWindow={activeContextWindow}
+                    activeThreadProviderDisplayName={activeThreadProviderDisplayName}
                     pendingAction={pendingPrimaryAction}
                     isRunning={phase === "running"}
                     showPlanFollowUpPrompt={
@@ -2882,7 +3051,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             environmentProjects={environmentProjects}
             workers={jarvisWorkers}
             workersPending={jarvisSnapshotQuery.isPending}
-            selectedEngine={selectedJarvisEngine ?? ""}
+            selectedEngine={selectedJarvisEngine}
             selectedWorkerOverrideId={selectedWorkerOverrideIdForDispatch}
             defaultWorkerId={jarvisDefaultWorkerId}
             routingSummary={jarvisRoutingSummary}

@@ -113,7 +113,7 @@ function ProviderUpdateEnvironmentsNotification() {
       toastManager.close(active.toastId);
       activeToastRef.current = null;
     }
-    void navigate({ to: "/settings/general" });
+    void navigate({ to: "/settings/providers" });
   }, [navigate]);
 
   useEffect(() => {

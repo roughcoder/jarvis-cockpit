@@ -217,6 +217,7 @@ import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayo
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { resolveEffectiveEnvMode } from "./BranchToolbar.logic";
+import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import {
@@ -5171,6 +5172,7 @@ function ChatViewContent(props: ChatViewProps) {
         </header>
 
         {/* Error banner */}
+        <ProviderStatusBanner status={activeProviderStatus} />
         <ThreadErrorBanner
           error={threadError}
           onDismiss={() => setThreadError(activeThread.id, null)}

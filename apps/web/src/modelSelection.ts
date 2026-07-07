@@ -3,25 +3,21 @@ import {
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
   type ModelSelection,
-  type ProviderOptionSelection,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
-  type ServerProviderModel,
 } from "@t3tools/contracts";
 import {
-  buildProviderOptionSelectionsFromDescriptors,
   createModelSelection,
-  getProviderOptionDescriptors,
   normalizeModelSlug,
   resolveSelectableModel,
 } from "@t3tools/shared/model";
+import { getComposerProviderState } from "./components/chat/composerProviderState";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import {
   getDefaultServerModel,
-  getProviderModelCapabilities,
   getProviderModels,
   resolveSelectableProvider,
 } from "./providerModels";
@@ -32,20 +28,6 @@ import { sortModelsForProviderInstance } from "./modelOrdering";
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
 const DEFAULT_TEXT_GENERATION_INSTANCE_ID = ProviderInstanceId.make("codex");
-
-function buildModelOptionsForDispatch(input: {
-  readonly provider: ProviderDriverKind;
-  readonly model: string;
-  readonly models: ReadonlyArray<ServerProviderModel>;
-  readonly modelOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined;
-}): ReadonlyArray<ProviderOptionSelection> | undefined {
-  const caps = getProviderModelCapabilities(input.models, input.model, input.provider);
-  const descriptors = getProviderOptionDescriptors({
-    caps,
-    selections: input.modelOptions,
-  });
-  return buildProviderOptionSelectionsFromDescriptors(descriptors);
-}
 
 /**
  * Resolve the custom-model list for a given instance, preferring the
@@ -317,7 +299,7 @@ export function resolveAppModelSelectionState(
       return createModelSelection(entry.instanceId, "", []);
     }
     const provider = entry.driverKind;
-    const modelOptionsForDispatch = buildModelOptionsForDispatch({
+    const { modelOptionsForDispatch } = getComposerProviderState({
       provider,
       model,
       models: entry.models,
@@ -334,7 +316,7 @@ export function resolveAppModelSelectionState(
   // don't carry over the old provider's model — use the fallback provider's default.
   const selectedModel = keptSelectedProvider ? selection.model : null;
   const model = resolveAppModelSelection(provider, settings, providers, selectedModel);
-  const modelOptionsForDispatch = buildModelOptionsForDispatch({
+  const { modelOptionsForDispatch } = getComposerProviderState({
     provider,
     model,
     models: getProviderModels(providers, provider),
