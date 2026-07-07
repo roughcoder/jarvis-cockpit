@@ -529,11 +529,37 @@ export type JarvisProjectFileRetractInput = typeof JarvisProjectFileRetractInput
 export const JarvisProjectFileUploadResponse = JsonObject;
 export type JarvisProjectFileUploadResponse = typeof JarvisProjectFileUploadResponse.Type;
 
+// Project-thread lifecycle status (brain conversation). See COCKPIT_API.md.
+export const JarvisProjectThreadStatus = Schema.Literals([
+  "created",
+  "running",
+  "completed",
+  "failed",
+]);
+export type JarvisProjectThreadStatus = typeof JarvisProjectThreadStatus.Type;
+
+// Why a conversation/session ended; null while active.
+export const JarvisEndedReason = Schema.Literals([
+  "completed",
+  "stopped",
+  "interrupted_by_user",
+  "worker_lost",
+  "engine_error",
+]);
+export type JarvisEndedReason = typeof JarvisEndedReason.Type;
+
 export const JarvisProjectThread = Schema.Struct({
   thread_id: JarvisProjectThreadId,
   project_id: JarvisProjectId,
   session_id: TrimmedNonEmptyString,
   title: TrimmedNonEmptyString,
+  // Enrichment fields (2026-07-07 brain release). Optional so older deployments still decode.
+  engine: OptionalPossiblyEmptyPublicString,
+  model: OptionalPossiblyEmptyPublicString,
+  worker_id: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  host: OptionalPossiblyEmptyPublicString,
+  status: Schema.optional(Schema.NullOr(JarvisProjectThreadStatus)),
+  ended_reason: Schema.optional(Schema.NullOr(JarvisEndedReason)),
   created_at: IsoDateTime,
   updated_at: IsoDateTime,
   created_by: OptionalPossiblyEmptyPublicString,
