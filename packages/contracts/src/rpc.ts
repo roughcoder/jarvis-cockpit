@@ -266,6 +266,7 @@ export const WS_METHODS = {
   serverRetractJarvisProjectFile: "server.retractJarvisProjectFile",
   serverCreateJarvisProjectThread: "server.createJarvisProjectThread",
   serverArchiveJarvisProjectThread: "server.archiveJarvisProjectThread",
+  serverRenameJarvisProjectThread: "server.renameJarvisProjectThread",
   serverUnarchiveJarvisProjectThread: "server.unarchiveJarvisProjectThread",
   serverSendJarvisProjectThreadTurn: "server.sendJarvisProjectThreadTurn",
   serverDiscoverSourceControl: "server.discoverSourceControl",
@@ -556,6 +557,22 @@ export const WsServerArchiveJarvisProjectThreadRpc = Rpc.make(
       projectId: Schema.String,
       threadId: Schema.String,
       input: Schema.optional(JarvisProjectThreadArchiveInput),
+    }),
+    success: JarvisProjectThreadResult,
+    error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerRenameJarvisProjectThreadRpc = Rpc.make(
+  WS_METHODS.serverRenameJarvisProjectThread,
+  {
+    payload: Schema.Struct({
+      projectId: Schema.String,
+      threadId: Schema.String,
+      input: Schema.Struct({
+        title: Schema.String,
+        idempotency_key: Schema.String,
+      }),
     }),
     success: JarvisProjectThreadResult,
     error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
@@ -1015,6 +1032,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRetractJarvisProjectFileRpc,
   WsServerCreateJarvisProjectThreadRpc,
   WsServerArchiveJarvisProjectThreadRpc,
+  WsServerRenameJarvisProjectThreadRpc,
   WsServerUnarchiveJarvisProjectThreadRpc,
   WsServerSendJarvisProjectThreadTurnRpc,
   WsServerDiscoverSourceControlRpc,

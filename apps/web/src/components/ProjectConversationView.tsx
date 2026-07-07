@@ -34,7 +34,7 @@ import { serverEnvironment } from "../state/server";
 import { type EnvironmentQueryView, useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
-import { cn } from "../lib/utils";
+import { cn, randomUUID } from "../lib/utils";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import {
@@ -50,6 +50,7 @@ import {
   archivedProjectConversationSummary,
   defaultProjectRepo,
   extractProjectConversationReply,
+  formatJarvisCommandFailure,
   formatProjectConversationFailure,
   isProjectConversationArchived,
   isProjectConversationDetailRouteGap,
@@ -61,8 +62,9 @@ import {
   type ProjectConversationMessageView,
 } from "../jarvisProjectConversations.logic";
 import {
-  commitProjectConversationLocalRename,
+  buildProjectConversationRenameInput,
   PROJECT_CONTEXT_PANEL_COLLAPSED_STORAGE_KEY,
+  resolveProjectConversationHeaderStatus,
   resolveProjectContextPanelToggleState,
   resolveProjectConversationTitle,
 } from "./projectConversationHeader.logic";
@@ -127,6 +129,9 @@ export function ProjectConversationView({
   const unarchiveThread = useAtomCommand(serverEnvironment.unarchiveJarvisProjectThread, {
     reportFailure: false,
   });
+  const renameThread = useAtomCommand(serverEnvironment.renameJarvisProjectThread, {
+    reportFailure: false,
+  });
   const project =
     projectsQuery.data?.ok === true
       ? ((projectsQuery.data.projects ?? []).find((candidate) => candidate.id === projectId) ??
@@ -163,9 +168,7 @@ export function ProjectConversationView({
   const [pendingArchiveConfirmation, setPendingArchiveConfirmation] = useState(false);
   const [renamingConversation, setRenamingConversation] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
-  const [localTitleByThreadId, setLocalTitleByThreadId] = useState<
-    Readonly<Record<string, string>>
-  >({});
+  const [renameBusy, setRenameBusy] = useState(false);
   const [contextPanelCollapsed, setContextPanelCollapsed] = useLocalStorage(
     PROJECT_CONTEXT_PANEL_COLLAPSED_STORAGE_KEY,
     false,
@@ -177,9 +180,11 @@ export function ProjectConversationView({
   const archived = isProjectConversationArchived(conversation);
   const archiveSummary = archivedProjectConversationSummary(conversation);
   const conversationTitle = resolveProjectConversationTitle({
-    threadId: String(threadId),
     serverTitle: conversation?.title ?? "Project conversation",
-    localTitleByThreadId,
+  });
+  const conversationStatus = resolveProjectConversationHeaderStatus({
+    status: conversation?.status,
+    endedReason: conversation?.ended_reason,
   });
   const contextPanelToggleState = resolveProjectContextPanelToggleState(contextPanelCollapsed);
   const detailFallback =
@@ -211,18 +216,14 @@ export function ProjectConversationView({
     setRenameDraft("");
   };
 
-  const commitConversationRename = () => {
+  const commitConversationRename = async () => {
     if (conversation === null) return;
-    const result = commitProjectConversationLocalRename({
-      threadId: String(threadId),
-      serverTitle: conversation.title,
+    const renameInput = buildProjectConversationRenameInput({
+      currentTitle: conversation.title,
       draftTitle: renameDraft,
-      localTitleByThreadId,
+      idempotencyKey: `project-thread-rename-${String(threadId)}-${randomUUID()}`,
     });
-    setLocalTitleByThreadId(result.localTitleByThreadId);
-    setRenameDraft("");
-    setRenamingConversation(false);
-    if (result.status === "empty") {
+    if (renameInput.status === "empty") {
       toastManager.add({
         type: "error",
         title: "Conversation title not changed",
@@ -230,13 +231,49 @@ export function ProjectConversationView({
       });
       return;
     }
-    if (result.status === "local-only") {
-      toastManager.add({
-        type: "info",
-        title: "Rename shown locally",
-        description: "Jarvis does not expose project conversation rename yet.",
-      });
+    if (renameInput.status === "unchanged") {
+      setRenameDraft("");
+      setRenamingConversation(false);
+      return;
     }
+
+    setRenameBusy(true);
+    const result = await renameThread({
+      environmentId,
+      input: {
+        projectId,
+        threadId: String(threadId),
+        input: renameInput.input,
+      },
+    });
+    setRenameBusy(false);
+
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const message = formatProjectConversationRenameFailure(squashAtomCommandFailure(result));
+        toastManager.add({
+          type: "error",
+          title: "Could not rename conversation",
+          description: message,
+        });
+      }
+      return;
+    }
+    if (!result.value.ok || !result.value.thread) {
+      const message = formatProjectConversationRenameFailure(
+        result.value.error?.message ?? "Jarvis did not return a renamed project conversation.",
+      );
+      toastManager.add({
+        type: "error",
+        title: "Could not rename conversation",
+        description: message,
+      });
+      return;
+    }
+    setRenameDraft("");
+    setRenamingConversation(false);
+    threadsQuery.refresh();
+    threadDetailQuery.refresh();
   };
 
   const markTurn = (
@@ -414,7 +451,7 @@ export function ProjectConversationView({
                   className="flex min-w-0 items-center gap-1.5"
                   onSubmit={(event) => {
                     event.preventDefault();
-                    commitConversationRename();
+                    void commitConversationRename();
                   }}
                 >
                   <input
@@ -437,13 +474,18 @@ export function ProjectConversationView({
                           type="submit"
                           size="icon-xs"
                           variant="outline"
-                          aria-label="Save conversation title locally"
+                          aria-label="Save conversation title"
+                          disabled={renameBusy}
                         >
-                          <CheckIcon className="size-3.5" />
+                          {renameBusy ? (
+                            <Spinner className="size-3.5" />
+                          ) : (
+                            <CheckIcon className="size-3.5" />
+                          )}
                         </Button>
                       }
                     />
-                    <TooltipPopup side="bottom">Rename not yet persisted by Jarvis</TooltipPopup>
+                    <TooltipPopup side="bottom">Save title</TooltipPopup>
                   </Tooltip>
                   <Button
                     size="icon-xs"
@@ -461,11 +503,7 @@ export function ProjectConversationView({
                     className="group/title flex min-w-0 cursor-pointer items-center gap-1.5 text-left outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default"
                     onClick={startConversationRename}
                     disabled={conversation === null}
-                    title={
-                      conversationTitle.isLocalOnly
-                        ? "Rename not yet persisted by Jarvis"
-                        : "Rename conversation"
-                    }
+                    title="Rename conversation"
                   >
                     <h2 className="truncate text-sm font-medium text-foreground">
                       {conversationTitle.title}
@@ -474,17 +512,17 @@ export function ProjectConversationView({
                       <PencilIcon className="size-3 shrink-0 text-muted-foreground/0 transition-colors group-hover/title:text-muted-foreground group-focus-visible/title:text-muted-foreground" />
                     ) : null}
                   </button>
-                  {conversationTitle.isLocalOnly ? (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Badge variant="outline" className="h-5 shrink-0 text-[10px]">
-                            Local
-                          </Badge>
-                        }
-                      />
-                      <TooltipPopup side="bottom">Rename not yet persisted by Jarvis</TooltipPopup>
-                    </Tooltip>
+                  {conversationStatus ? (
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <Badge variant={conversationStatus.variant} className="h-5 text-[10px]">
+                        {conversationStatus.label}
+                      </Badge>
+                      {conversationStatus.endedNote ? (
+                        <span className="text-xs text-muted-foreground">
+                          {conversationStatus.endedNote}
+                        </span>
+                      ) : null}
+                    </div>
                   ) : null}
                 </div>
               )}
@@ -705,6 +743,20 @@ export function ProjectConversationView({
       </div>
     </div>
   );
+}
+
+function formatProjectConversationRenameFailure(error: unknown): string {
+  const message = formatJarvisCommandFailure(
+    error,
+    "The Jarvis project conversation rename request failed.",
+  );
+  if (/projects\.threads\.rename.*HTTP (404|405|501)/u.test(message)) {
+    return "This Jarvis brain does not expose project conversation rename yet. Cockpit reached Jarvis, but the conversation rename route is unavailable.";
+  }
+  if (/HTTP 403/u.test(message)) {
+    return "Jarvis denied the project conversation rename.";
+  }
+  return message;
 }
 
 function ProjectConversationMessageRow({

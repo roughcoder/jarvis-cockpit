@@ -1,66 +1,115 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  commitProjectConversationLocalRename,
+  buildProjectConversationRenameInput,
+  PROJECT_CONVERSATION_TITLE_MAX_LENGTH,
   resolveProjectContextPanelToggleState,
+  resolveProjectConversationHeaderStatus,
   resolveProjectConversationTitle,
 } from "./projectConversationHeader.logic";
 
 describe("project conversation header rename state", () => {
-  it("uses the Jarvis title when there is no local-only rename", () => {
+  it("uses the Jarvis title directly", () => {
     expect(
       resolveProjectConversationTitle({
-        threadId: "thread-a",
         serverTitle: "Conversation for Jarvis",
-        localTitleByThreadId: {},
       }),
     ).toEqual({
       title: "Conversation for Jarvis",
-      isLocalOnly: false,
     });
   });
 
-  it("uses a local-only title without marking it persisted", () => {
+  it("builds a normalized persisted rename input", () => {
     expect(
-      resolveProjectConversationTitle({
-        threadId: "thread-a",
-        serverTitle: "Conversation for Jarvis",
-        localTitleByThreadId: { "thread-a": "Release audit" },
+      buildProjectConversationRenameInput({
+        currentTitle: "Conversation for Jarvis",
+        draftTitle: "  Release \n\t audit  ",
+        idempotencyKey: "rename-1",
       }),
     ).toEqual({
+      status: "ready",
       title: "Release audit",
-      isLocalOnly: true,
+      input: {
+        title: "Release audit",
+        idempotency_key: "rename-1",
+      },
     });
   });
 
-  it("commits a trimmed local-only rename", () => {
-    expect(
-      commitProjectConversationLocalRename({
-        threadId: "thread-a",
-        serverTitle: "Conversation for Jarvis",
-        draftTitle: "  Release audit  ",
-        localTitleByThreadId: {},
-      }),
-    ).toEqual({
-      title: "Release audit",
-      status: "local-only",
-      localTitleByThreadId: { "thread-a": "Release audit" },
+  it("caps persisted rename titles at 200 characters", () => {
+    const result = buildProjectConversationRenameInput({
+      currentTitle: "Conversation for Jarvis",
+      draftTitle: "x".repeat(PROJECT_CONVERSATION_TITLE_MAX_LENGTH + 10),
+      idempotencyKey: "rename-1",
     });
+
+    expect(result.status).toBe("ready");
+    expect(result.title).toHaveLength(PROJECT_CONVERSATION_TITLE_MAX_LENGTH);
+    if (result.status === "ready") {
+      expect(result.input.title).toHaveLength(PROJECT_CONVERSATION_TITLE_MAX_LENGTH);
+    }
   });
 
-  it("does not replace the current title with an empty rename", () => {
+  it("does not build a rename input for empty or unchanged titles", () => {
     expect(
-      commitProjectConversationLocalRename({
-        threadId: "thread-a",
-        serverTitle: "Conversation for Jarvis",
+      buildProjectConversationRenameInput({
+        currentTitle: "Conversation for Jarvis",
         draftTitle: "   ",
-        localTitleByThreadId: { "thread-a": "Release audit" },
+        idempotencyKey: "rename-1",
       }),
     ).toEqual({
-      title: "Release audit",
       status: "empty",
-      localTitleByThreadId: { "thread-a": "Release audit" },
+      title: "Conversation for Jarvis",
     });
+
+    expect(
+      buildProjectConversationRenameInput({
+        currentTitle: "Conversation for Jarvis",
+        draftTitle: " Conversation   for Jarvis ",
+        idempotencyKey: "rename-2",
+      }),
+    ).toEqual({
+      status: "unchanged",
+      title: "Conversation for Jarvis",
+    });
+  });
+});
+
+describe("project conversation header status", () => {
+  it("resolves running, completed, and failed status indicators", () => {
+    expect(
+      resolveProjectConversationHeaderStatus({ status: "running", endedReason: null }),
+    ).toEqual({
+      label: "Running",
+      variant: "warning",
+      endedNote: null,
+    });
+
+    expect(
+      resolveProjectConversationHeaderStatus({
+        status: "completed",
+        endedReason: "completed",
+      }),
+    ).toEqual({
+      label: "Completed",
+      variant: "success",
+      endedNote: "ended: completed",
+    });
+
+    expect(
+      resolveProjectConversationHeaderStatus({
+        status: "failed",
+        endedReason: "engine_error",
+      }),
+    ).toEqual({
+      label: "Failed",
+      variant: "error",
+      endedNote: "ended: engine error",
+    });
+  });
+
+  it("omits status when Jarvis did not provide one", () => {
+    expect(resolveProjectConversationHeaderStatus({ status: null, endedReason: null })).toBeNull();
   });
 });
 
