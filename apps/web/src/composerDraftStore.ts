@@ -57,12 +57,28 @@ const isProviderDriverKind = Schema.is(ProviderDriverKind);
 const isReviewCommentContext = Schema.is(ReviewCommentContextSchema);
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
-const COMPOSER_DRAFT_STORAGE_VERSION = 8;
+const COMPOSER_DRAFT_STORAGE_VERSION = 9;
 const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree"]);
 export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
 
 export const DraftId = Schema.String.pipe(Schema.brand("DraftId"));
 export type DraftId = typeof DraftId.Type;
+
+export type ComposerJarvisRoutingDraft = {
+  projectId: string;
+  repoRemote: string | null;
+  workerOverrideId: string | null;
+};
+
+// Brain project threads are not `ScopedThreadRef`s; keep them in the `DraftId`
+// lane so persisted composer keys stay a flat string map.
+export function jarvisProjectThreadDraftId(
+  environmentId: EnvironmentId,
+  projectId: ProjectId,
+  threadId: ThreadId,
+): DraftId {
+  return DraftId.make(`jarvis-project:${environmentId}:${projectId}:${threadId}`);
+}
 
 const COMPOSER_PERSIST_DEBOUNCE_MS = 300;
 
@@ -147,6 +163,13 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   activeProvider: Schema.optionalKey(Schema.NullOr(ProviderInstanceId)),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   interactionMode: Schema.optionalKey(ProviderInteractionMode),
+  jarvisRouting: Schema.optionalKey(
+    Schema.Struct({
+      projectId: Schema.String,
+      repoRemote: Schema.NullOr(Schema.String),
+      workerOverrideId: Schema.NullOr(Schema.String),
+    }),
+  ),
 });
 type PersistedComposerThreadDraftState = typeof PersistedComposerThreadDraftState.Type;
 
@@ -275,6 +298,7 @@ export interface ComposerThreadDraftState {
   activeProvider: ProviderInstanceId | null;
   runtimeMode: RuntimeMode | null;
   interactionMode: ProviderInteractionMode | null;
+  jarvisRouting: ComposerJarvisRoutingDraft | null;
 }
 
 /**
@@ -434,6 +458,10 @@ interface ComposerDraftStoreState {
     threadRef: ComposerThreadTarget,
     interactionMode: ProviderInteractionMode | null | undefined,
   ) => void;
+  setJarvisRouting: (
+    threadRef: ComposerThreadTarget,
+    routing: ComposerJarvisRoutingDraft | null | undefined,
+  ) => void;
   addImage: (threadRef: ComposerThreadTarget, image: ComposerImageAttachment) => void;
   addImages: (threadRef: ComposerThreadTarget, images: ComposerImageAttachment[]) => void;
   removeImage: (threadRef: ComposerThreadTarget, imageId: string) => void;
@@ -584,6 +612,7 @@ const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
   activeProvider: null,
   runtimeMode: null,
   interactionMode: null,
+  jarvisRouting: null,
 });
 
 /**
@@ -606,6 +635,7 @@ export function createEmptyThreadDraft(): ComposerThreadDraftState {
     activeProvider: null,
     runtimeMode: null,
     interactionMode: null,
+    jarvisRouting: null,
   };
 }
 
@@ -678,7 +708,8 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     Object.keys(draft.modelSelectionByProvider).length === 0 &&
     draft.activeProvider === null &&
     draft.runtimeMode === null &&
-    draft.interactionMode === null
+    draft.interactionMode === null &&
+    draft.jarvisRouting === null
   );
 }
 
@@ -1167,6 +1198,25 @@ function normalizePersistedTerminalContextDraft(
     terminalLabel,
     lineStart: normalizedLineStart,
     lineEnd: normalizedLineEnd,
+  };
+}
+
+function normalizeComposerJarvisRoutingDraft(value: unknown): ComposerJarvisRoutingDraft | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.projectId !== "string" ||
+    (candidate.repoRemote !== null && typeof candidate.repoRemote !== "string") ||
+    (candidate.workerOverrideId !== null && typeof candidate.workerOverrideId !== "string")
+  ) {
+    return null;
+  }
+  return {
+    projectId: candidate.projectId,
+    repoRemote: candidate.repoRemote,
+    workerOverrideId: candidate.workerOverrideId,
   };
 }
 
@@ -1672,6 +1722,7 @@ function normalizePersistedDraftsByThreadId(
       draftCandidate.interactionMode === "plan" || draftCandidate.interactionMode === "default"
         ? draftCandidate.interactionMode
         : null;
+    const jarvisRouting = normalizeComposerJarvisRoutingDraft(draftCandidate.jarvisRouting);
     const prompt = ensureInlineTerminalContextPlaceholders(
       promptCandidate,
       terminalContexts.length,
@@ -1732,7 +1783,8 @@ function normalizePersistedDraftsByThreadId(
       reviewComments.length === 0 &&
       !hasModelData &&
       !runtimeMode &&
-      !interactionMode
+      !interactionMode &&
+      jarvisRouting === null
     ) {
       continue;
     }
@@ -1762,6 +1814,7 @@ function normalizePersistedDraftsByThreadId(
         : {}),
       ...(runtimeMode ? { runtimeMode } : {}),
       ...(interactionMode ? { interactionMode } : {}),
+      ...(jarvisRouting ? { jarvisRouting } : {}),
     };
   }
 
@@ -1832,6 +1885,7 @@ function partializeComposerDraftStoreState(
     }
     const hasModelData =
       Object.keys(draft.modelSelectionByProvider).length > 0 || draft.activeProvider !== null;
+    const hasJarvisRouting = draft.jarvisRouting !== null;
     if (
       draft.prompt.length === 0 &&
       draft.persistedAttachments.length === 0 &&
@@ -1841,7 +1895,8 @@ function partializeComposerDraftStoreState(
       draft.reviewComments.length === 0 &&
       !hasModelData &&
       draft.runtimeMode === null &&
-      draft.interactionMode === null
+      draft.interactionMode === null &&
+      !hasJarvisRouting
     ) {
       continue;
     }
@@ -1900,6 +1955,7 @@ function partializeComposerDraftStoreState(
         : {}),
       ...(draft.runtimeMode ? { runtimeMode: draft.runtimeMode } : {}),
       ...(draft.interactionMode ? { interactionMode: draft.interactionMode } : {}),
+      ...(draft.jarvisRouting ? { jarvisRouting: { ...draft.jarvisRouting } } : {}),
     };
     persistedDraftsByThreadKey[threadKey] = persistedDraft;
   }
@@ -2137,6 +2193,7 @@ function toHydratedThreadDraft(
     activeProvider,
     runtimeMode: persistedDraft.runtimeMode ?? null,
     interactionMode: persistedDraft.interactionMode ?? null,
+    jarvisRouting: persistedDraft.jarvisRouting ? { ...persistedDraft.jarvisRouting } : null,
   };
 }
 
@@ -2826,6 +2883,34 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const nextDraft: ComposerThreadDraftState = {
               ...base,
               interactionMode: nextInteractionMode,
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        setJarvisRouting: (threadRef, routing) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) {
+            return;
+          }
+          const nextJarvisRouting = normalizeComposerJarvisRoutingDraft(routing);
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey];
+            if (!existing && nextJarvisRouting === null) {
+              return state;
+            }
+            const base = existing ?? createEmptyThreadDraft();
+            if (Equal.equals(base.jarvisRouting, nextJarvisRouting)) {
+              return state;
+            }
+            const nextDraft: ComposerThreadDraftState = {
+              ...base,
+              jarvisRouting: nextJarvisRouting,
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {
