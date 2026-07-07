@@ -103,6 +103,14 @@ session status (reuse the existing thread status-pill component/logic used by le
 rows — `resolveThreadStatusPill` in `Sidebar.logic.ts`). If status isn't reliably joinable,
 Jarvis ask: expose conversation status on the project thread.
 
+## F10. Model per conversation is missing (batch 2, 2026-07-07)
+
+**Ask.** Each conversation should show/carry which MODEL it is using (not just the engine).
+
+**Read.** Same data gap as F8/F9: the project thread carries no model field. Bundle into the
+project-thread enrichment ask (engine + model + status + ended_reason on the thread, or a
+reliable session join).
+
 ---
 
 ## Jarvis API asks surfaced by this review
