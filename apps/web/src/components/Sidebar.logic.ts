@@ -621,7 +621,7 @@ export function resolveThreadStatusPill(input: {
   return null;
 }
 
-export type JarvisProjectConversationEngineIconKey = "codex" | "claude";
+export type JarvisProjectConversationEngineIconKey = "codex" | "claude" | "jarvis";
 
 export interface JarvisProjectConversationSessionMetadata {
   engineIconKey: JarvisProjectConversationEngineIconKey | null;
@@ -668,6 +668,10 @@ export function resolveJarvisProjectConversationEngineIconKey(
     /^o\d/.test(normalized)
   ) {
     return "codex";
+  }
+  // Project-thread conversations are brain chats reported as engine "jarvis".
+  if (normalized.includes("jarvis") || normalized === "brain") {
+    return "jarvis";
   }
   return null;
 }

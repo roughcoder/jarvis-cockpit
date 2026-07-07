@@ -836,6 +836,11 @@ describe("resolveJarvisProjectConversationEngineIconKey", () => {
     expect(resolveJarvisProjectConversationEngineIconKey("claudeAgent")).toBe("claude");
   });
 
+  it("maps brain conversations to the Jarvis icon key", () => {
+    expect(resolveJarvisProjectConversationEngineIconKey("jarvis")).toBe("jarvis");
+    expect(resolveJarvisProjectConversationEngineIconKey("brain")).toBe("jarvis");
+  });
+
   it("returns null for unknown or empty engines", () => {
     expect(resolveJarvisProjectConversationEngineIconKey("local-agent")).toBeNull();
     expect(resolveJarvisProjectConversationEngineIconKey("")).toBeNull();
