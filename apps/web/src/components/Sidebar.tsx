@@ -8,7 +8,6 @@ import {
   FolderPlusIcon,
   Globe2Icon,
   LoaderIcon,
-  MessageSquareIcon,
   RocketIcon,
   SearchIcon,
   SettingsIcon,
@@ -24,6 +23,7 @@ import {
   ThreadStatusLabel,
   ThreadWorktreeIndicator,
 } from "./ThreadStatusIndicators";
+import { ClaudeColor, CodexColor } from "./Icons";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
@@ -201,6 +201,7 @@ import {
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useOpenAddProjectCommandPalette } from "../commandPaletteContext";
 import {
+  buildJarvisProjectConversationSessionMetadataByThreadId,
   buildJarvisProjectFirstSidebarProjects,
   getSidebarThreadIdsToPrewarm,
   resolveAdjacentThreadId,
@@ -219,7 +220,8 @@ import {
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
   useThreadJumpHintVisibility,
-  ThreadStatusPill,
+  type JarvisProjectConversationEngineIconKey,
+  type ThreadStatusPill,
   type SidebarProjectView,
   type SidebarSurfaceCopy,
 } from "./Sidebar.logic";
@@ -1000,8 +1002,25 @@ function SidebarJarvisProjectConversations({
       input: { projectId, includeArchived: showArchived },
     }),
   );
+  const jarvisSnapshotQuery = useEnvironmentQuery(
+    serverEnvironment.jarvisSnapshot({
+      environmentId,
+      input: {},
+    }),
+  );
   const conversations =
     projectThreadsQuery.data?.ok === true ? (projectThreadsQuery.data.threads ?? []) : [];
+  const conversationMetadataByThreadId = useMemo(
+    () =>
+      buildJarvisProjectConversationSessionMetadataByThreadId({
+        threads: conversations,
+        sessions:
+          jarvisSnapshotQuery.data?.ok === true
+            ? (jarvisSnapshotQuery.data.snapshot?.sessions ?? [])
+            : [],
+      }),
+    [conversations, jarvisSnapshotQuery.data],
+  );
   const showPending = !projectThreadsQuery.data && projectThreadsQuery.isPending;
   const showFailed = projectThreadsQuery.error !== null || projectThreadsQuery.data?.ok === false;
   const navigateToProjectConversation = useCallback(
@@ -1167,6 +1186,12 @@ function SidebarJarvisProjectConversations({
         <SidebarProjectConversationRow
           key={conversation.thread_id}
           title={conversation.title}
+          engineIconKey={
+            conversationMetadataByThreadId.get(conversation.thread_id)?.engineIconKey ?? null
+          }
+          statusPill={
+            conversationMetadataByThreadId.get(conversation.thread_id)?.statusPill ?? null
+          }
           archived={isProjectConversationArchived(conversation)}
           isActive={activeThreadId === conversation.thread_id}
           onClick={() => navigateToProjectConversation(conversation)}
@@ -1211,6 +1236,8 @@ function SidebarProjectConversationArchivedToggle({
 
 function SidebarProjectConversationRow({
   title,
+  engineIconKey,
+  statusPill,
   archived,
   isActive,
   onClick,
@@ -1220,6 +1247,8 @@ function SidebarProjectConversationRow({
   onArchive,
 }: {
   readonly title: string;
+  readonly engineIconKey: JarvisProjectConversationEngineIconKey | null;
+  readonly statusPill: ThreadStatusPill | null;
   readonly archived: boolean;
   readonly isActive: boolean;
   readonly onClick: () => void;
@@ -1229,6 +1258,8 @@ function SidebarProjectConversationRow({
   readonly onArchive: () => void;
 }) {
   const rowButtonRender = useMemo(() => <button type="button" />, []);
+  const EngineIcon =
+    engineIconKey === "codex" ? CodexColor : engineIconKey === "claude" ? ClaudeColor : null;
   const stopPropagationOnPointerDown = useCallback(
     (event: React.PointerEvent<HTMLButtonElement>) => {
       event.stopPropagation();
@@ -1269,12 +1300,15 @@ function SidebarProjectConversationRow({
           <ArchiveIcon
             className={`size-3 shrink-0 ${isActive ? "text-foreground/72" : "text-muted-foreground/60"}`}
           />
-        ) : (
-          <MessageSquareIcon
-            className={`size-3 shrink-0 ${isActive ? "text-foreground/72" : "text-muted-foreground/60"}`}
-          />
-        )}
+        ) : EngineIcon ? (
+          <EngineIcon className="size-3.5 shrink-0" aria-hidden="true" />
+        ) : null}
         <span className="min-w-0 flex-1 truncate text-xs">{title}</span>
+        {statusPill ? (
+          <span className="inline-flex shrink-0 items-center">
+            <ThreadStatusLabel status={statusPill} compact />
+          </span>
+        ) : null}
         {archived ? (
           <span className="text-[9px] uppercase text-muted-foreground/60">Archived</span>
         ) : null}
