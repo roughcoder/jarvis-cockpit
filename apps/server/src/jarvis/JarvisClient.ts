@@ -6,6 +6,7 @@ import {
   JarvisArtifact,
   JarvisCockpitCatalog,
   JarvisCapabilitiesResult,
+  JarvisCloseSessionInput,
   JarvisControlResult,
   DEFAULT_JARVIS_API_BASE_URL,
   type JsonObject as JsonObjectType,
@@ -37,6 +38,8 @@ import {
   JarvisProjectThreadTurnInput,
   JarvisProjectThreadTurnResult,
   JarvisProjectUpdateInput,
+  JarvisDeleteInput,
+  JarvisLifecycleResult,
   JarvisMcpStatus,
   JarvisRequestId,
   JarvisRestoreCheckpointInput,
@@ -244,6 +247,18 @@ export interface JarvisClient {
     runId: string,
     input?: JarvisArchiveInput,
   ) => Effect.Effect<JarvisControlResult, JarvisClientError>;
+  readonly deleteSession: (
+    sessionRef: string,
+    input?: JarvisDeleteInput,
+  ) => Effect.Effect<JarvisLifecycleResult, JarvisClientError>;
+  readonly deleteRun: (
+    runId: string,
+    input?: JarvisDeleteInput,
+  ) => Effect.Effect<JarvisLifecycleResult, JarvisClientError>;
+  readonly closeSession: (
+    sessionRef: string,
+    input?: JarvisCloseSessionInput,
+  ) => Effect.Effect<JarvisLifecycleResult, JarvisClientError>;
   readonly restoreCheckpoint: (
     sessionRef: string,
     input: JarvisRestoreCheckpointInput,
@@ -362,6 +377,7 @@ const decodeCatalog = Schema.decodeUnknownEffect(JarvisCockpitCatalog);
 const decodeMcpStatus = Schema.decodeUnknownEffect(JarvisMcpStatus);
 const decodeSnapshot = Schema.decodeUnknownEffect(JarvisRunsSnapshot);
 const decodeControlResult = Schema.decodeUnknownEffect(JarvisControlResult);
+const decodeLifecycleResult = Schema.decodeUnknownEffect(JarvisLifecycleResult);
 const decodeStartWorkValidationResult = Schema.decodeUnknownEffect(JarvisStartWorkValidationResult);
 const decodeProjectListResponse = Schema.decodeUnknownEffect(JarvisProjectListResponse);
 const decodeProjectDetailResponse = Schema.decodeUnknownEffect(JarvisProjectDetailResponse);
@@ -1125,6 +1141,22 @@ export function makeJarvisCockpitClient(input: {
         `/v1/runs/${encodeURIComponent(runId)}/archive`,
         withSurfaceMetadata(archiveInput),
       ).pipe(Effect.flatMap(decodeFor("runs.archive", decodeControlResult))),
+    deleteSession: (sessionRef, deleteInput = {}) =>
+      requestJson("sessions.delete", `/v1/sessions/${encodeURIComponent(sessionRef)}`, {
+        method: "DELETE",
+        body: JSON.stringify(withSurfaceMetadata(deleteInput)),
+      }).pipe(Effect.flatMap(decodeFor("sessions.delete", decodeLifecycleResult))),
+    deleteRun: (runId, deleteInput = {}) =>
+      requestJson("runs.delete", `/v1/runs/${encodeURIComponent(runId)}`, {
+        method: "DELETE",
+        body: JSON.stringify(withSurfaceMetadata(deleteInput)),
+      }).pipe(Effect.flatMap(decodeFor("runs.delete", decodeLifecycleResult))),
+    closeSession: (sessionRef, closeInput = {}) =>
+      postJson(
+        "sessions.close",
+        `/v1/sessions/${encodeURIComponent(sessionRef)}/close`,
+        withSurfaceMetadata(closeInput),
+      ).pipe(Effect.flatMap(decodeFor("sessions.close", decodeLifecycleResult))),
     restoreCheckpoint: (sessionRef, restoreInput) =>
       postJson(
         "sessions.checkpoints.restore",
@@ -1294,6 +1326,12 @@ export function makeJarvisClient(config: {
         withClient("sessions.archive", (client) => client.archiveSession(sessionRef, input)),
       archiveRun: (runId, input) =>
         withClient("runs.archive", (client) => client.archiveRun(runId, input)),
+      deleteSession: (sessionRef, input) =>
+        withClient("sessions.delete", (client) => client.deleteSession(sessionRef, input)),
+      deleteRun: (runId, input) =>
+        withClient("runs.delete", (client) => client.deleteRun(runId, input)),
+      closeSession: (sessionRef, input) =>
+        withClient("sessions.close", (client) => client.closeSession(sessionRef, input)),
       restoreCheckpoint: (sessionRef, input) =>
         withClient("sessions.checkpoints.restore", (client) =>
           client.restoreCheckpoint(sessionRef, input),
@@ -1473,6 +1511,9 @@ function makeMissingConfigurationClient(message: string): JarvisClient {
     stopSession: () => fail("jarvis.client.configure"),
     archiveSession: () => fail("jarvis.client.configure"),
     archiveRun: () => fail("jarvis.client.configure"),
+    deleteSession: () => fail("jarvis.client.configure"),
+    deleteRun: () => fail("jarvis.client.configure"),
+    closeSession: () => fail("jarvis.client.configure"),
     restoreCheckpoint: () => fail("jarvis.client.configure"),
     resumeRun: () => fail("jarvis.client.configure"),
   };
@@ -3064,6 +3105,81 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
         cursor: "evt_fixture_3",
         run: updatedRun,
         session: archivedSession,
+      });
+    },
+    deleteSession: (candidateSessionRef) => {
+      const targetSession = findSession(candidateSessionRef) ?? session;
+      const events = eventsBySession.get(targetSession.session_ref) ?? [];
+      const requests = requestsBySession.get(targetSession.session_ref) ?? [];
+      const checkpoints = checkpointsBySession.get(targetSession.session_ref) ?? [];
+      fixtureSnapshot = {
+        ...fixtureSnapshot,
+        generated_at: now,
+        sessions: fixtureSnapshot.sessions.filter(
+          (candidate) => candidate.session_ref !== targetSession.session_ref,
+        ),
+      };
+      eventsBySession.delete(targetSession.session_ref);
+      requestsBySession.delete(targetSession.session_ref);
+      checkpointsBySession.delete(targetSession.session_ref);
+      return Effect.succeed({
+        ok: true,
+        deleted: true,
+        reclamation: {
+          records: 1 + requests.length + checkpoints.length,
+          events: events.length,
+          worktrees: 0,
+          bytes: 0,
+        },
+      });
+    },
+    deleteRun: (candidateRunId) => {
+      const targetRun = findRun(candidateRunId) ?? run;
+      const removedSessions = fixtureSnapshot.sessions.filter(
+        (candidate) => candidate.run_id === targetRun.run_id,
+      );
+      fixtureSnapshot = {
+        ...fixtureSnapshot,
+        generated_at: now,
+        runs: fixtureSnapshot.runs.filter((candidate) => candidate.run_id !== targetRun.run_id),
+        sessions: fixtureSnapshot.sessions.filter(
+          (candidate) => candidate.run_id !== targetRun.run_id,
+        ),
+      };
+      let eventCount = 0;
+      for (const removedSession of removedSessions) {
+        eventCount += eventsBySession.get(removedSession.session_ref)?.length ?? 0;
+        eventsBySession.delete(removedSession.session_ref);
+        requestsBySession.delete(removedSession.session_ref);
+        checkpointsBySession.delete(removedSession.session_ref);
+      }
+      return Effect.succeed({
+        ok: true,
+        deleted: true,
+        reclamation: {
+          records: 1 + removedSessions.length,
+          events: eventCount,
+          worktrees: 0,
+          bytes: 0,
+        },
+      });
+    },
+    closeSession: (candidateSessionRef) => {
+      const updatedSession = updateFixtureSession(candidateSessionRef, (targetSession) => ({
+        ...targetSession,
+        archived_at: now,
+        status: "stopped",
+        updated_at: now,
+      }));
+      return Effect.succeed({
+        ok: true,
+        deleted: false,
+        reclamation: {
+          records: 0,
+          events: eventsBySession.get(updatedSession.session_ref)?.length ?? 0,
+          worktrees: 0,
+          bytes: 0,
+        },
       });
     },
     restoreCheckpoint: (_sessionRef, restoreInput) =>

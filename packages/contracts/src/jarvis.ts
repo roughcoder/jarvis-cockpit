@@ -84,6 +84,8 @@ export const JarvisSupportedControl = Schema.Literals([
   "interrupt",
   "stop",
   "archive",
+  "delete",
+  "close",
   "checkpoint_restore",
 ]);
 export type JarvisSupportedControl = typeof JarvisSupportedControl.Type;
@@ -1047,6 +1049,37 @@ export const JarvisWorkerWorktreePruneResult = Schema.Struct({
 });
 export type JarvisWorkerWorktreePruneResult = typeof JarvisWorkerWorktreePruneResult.Type;
 
+export const JarvisReclamationSummary = Schema.Struct({
+  records: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  events: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  worktrees: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  bytes: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+});
+export type JarvisReclamationSummary = typeof JarvisReclamationSummary.Type;
+
+export const JarvisLifecycleResult = Schema.Struct({
+  ok: Schema.Boolean,
+  deleted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  reclamation: JarvisReclamationSummary.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({
+        records: 0,
+        events: 0,
+        worktrees: 0,
+        bytes: 0,
+      }),
+    ),
+  ),
+});
+export type JarvisLifecycleResult = typeof JarvisLifecycleResult.Type;
+
+export const JarvisLifecycleRpcResult = Schema.Struct({
+  ok: Schema.Boolean,
+  result: Schema.optionalKey(JarvisLifecycleResult),
+  error: Schema.optionalKey(JarvisReadError),
+});
+export type JarvisLifecycleRpcResult = typeof JarvisLifecycleRpcResult.Type;
+
 export const JarvisSessionDetailResponse = Schema.Struct({
   session: JarvisWorkerSession,
   raw: Schema.optionalKey(JsonObject).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
@@ -1202,6 +1235,17 @@ export const JarvisArchiveInput = Schema.Struct({
   ),
 });
 export type JarvisArchiveInput = typeof JarvisArchiveInput.Type;
+
+export const JarvisDeleteInput = Schema.Struct({
+  idempotency_key: Schema.optional(TrimmedNonEmptyString),
+  metadata: Schema.optionalKey(JarvisWriteMetadata).pipe(
+    Schema.withDecodingDefault(Effect.succeed({ surface: "jarvis-cockpit" })),
+  ),
+});
+export type JarvisDeleteInput = typeof JarvisDeleteInput.Type;
+
+export const JarvisCloseSessionInput = JarvisDeleteInput;
+export type JarvisCloseSessionInput = typeof JarvisCloseSessionInput.Type;
 
 export const JarvisControlSessionRef = Schema.Struct({
   session_ref: JarvisSessionRef,

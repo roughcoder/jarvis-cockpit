@@ -1318,6 +1318,59 @@ it.effect("cockpit client posts Jarvis-owned archive intents", () =>
   }),
 );
 
+it.effect("cockpit client sends lifecycle delete and close requests", () =>
+  Effect.gen(function* () {
+    const requests: Array<{ url: string; method: string; body: string | null }> = [];
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async (url, init) => {
+        requests.push({
+          url: String(url),
+          method: init?.method ?? "GET",
+          body: typeof init?.body === "string" ? init.body : null,
+        });
+        return jsonResponse({
+          ok: true,
+          deleted: true,
+          reclamation: {
+            records: 1,
+            events: 2,
+            worktrees: 1,
+            bytes: 4096,
+          },
+        });
+      },
+    });
+
+    const sessionDelete = yield* client.deleteSession(sessionRef, {
+      idempotency_key: "cmd_delete_session",
+    });
+    yield* client.deleteRun("run_1", {
+      idempotency_key: "cmd_delete_run",
+    });
+    yield* client.closeSession(sessionRef, {
+      idempotency_key: "cmd_close_session",
+    });
+
+    assert.strictEqual(
+      requests[0]?.url,
+      "http://jarvis.local:8787/v1/sessions/sessref_macbook-worker_sess_1",
+    );
+    assert.strictEqual(requests[0]?.method, "DELETE");
+    assert.match(requests[0]?.body ?? "", /cmd_delete_session/);
+    assert.strictEqual(requests[1]?.url, "http://jarvis.local:8787/v1/runs/run_1");
+    assert.strictEqual(requests[1]?.method, "DELETE");
+    assert.match(requests[1]?.body ?? "", /cmd_delete_run/);
+    assert.strictEqual(
+      requests[2]?.url,
+      "http://jarvis.local:8787/v1/sessions/sessref_macbook-worker_sess_1/close",
+    );
+    assert.strictEqual(requests[2]?.method, "POST");
+    assert.match(requests[2]?.body ?? "", /cmd_close_session/);
+    assert.strictEqual(sessionDelete.reclamation.worktrees, 1);
+  }),
+);
+
 it.effect("cockpit client preserves safe HTTP error bodies", () =>
   Effect.gen(function* () {
     const client = makeJarvisCockpitClient({
