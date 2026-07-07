@@ -14,6 +14,7 @@ import { type ComposerImageAttachment, type DraftThreadState } from "../composer
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
+import { formatProviderDriverKindLabel } from "../providerModels";
 import {
   filterTerminalContextsWithText,
   stripInlineTerminalContextPlaceholders,
@@ -282,6 +283,37 @@ export function deriveLockedProvider(input: {
       ? input.selectedProvider
       : null;
   return narrowedThreadProvider ?? narrowedSelectedProvider ?? null;
+}
+
+/**
+ * Maps a non-ready provider status into the shared composer-banner content
+ * (variant/title/description). Returns null when there's nothing to surface
+ * (ready/disabled/absent). Keeps provider-status messaging on the single
+ * `ComposerBannerStack` surface above the composer instead of a separate,
+ * width-collapsing banner.
+ */
+export function deriveProviderStatusBannerContent(
+  status: ServerProvider | null | undefined,
+): { variant: "warning" | "error"; title: string; description: string } | null {
+  if (!status || status.status === "ready" || status.status === "disabled") {
+    return null;
+  }
+  const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
+  const isUnauthenticated = status.status === "error" && status.auth.status === "unauthenticated";
+  const title = isUnauthenticated
+    ? `${providerName} is unauthenticated`
+    : `${providerName} provider status`;
+  const description = isUnauthenticated
+    ? "Sign in via the CLI to authenticate again."
+    : (status.message ??
+      (status.status === "error"
+        ? `${providerName} provider is unavailable.`
+        : `${providerName} provider has limited availability.`));
+  return {
+    variant: status.status === "warning" ? "warning" : "error",
+    title,
+    description,
+  };
 }
 
 export function getStartedThreadModelChangeBlockReason(input: {

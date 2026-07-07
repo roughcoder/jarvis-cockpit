@@ -9,6 +9,7 @@ import {
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  deriveProviderStatusBannerContent,
   getStartedThreadModelChangeBlockReason,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
@@ -452,5 +453,60 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingApproval: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingUserInput: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, threadError: "failed" })).toBe(true);
+  });
+});
+
+describe("deriveProviderStatusBannerContent", () => {
+  const baseStatus = {
+    instanceId: ProviderInstanceId.make("codex"),
+    driver: "codex",
+    displayName: "Codex",
+    auth: { status: "authenticated" },
+  };
+
+  it("returns null for absent, ready, or disabled providers", () => {
+    expect(deriveProviderStatusBannerContent(null)).toBeNull();
+    expect(deriveProviderStatusBannerContent(undefined)).toBeNull();
+    expect(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      deriveProviderStatusBannerContent({ ...baseStatus, status: "ready" } as any),
+    ).toBeNull();
+    expect(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      deriveProviderStatusBannerContent({ ...baseStatus, status: "disabled" } as any),
+    ).toBeNull();
+  });
+
+  it("maps an error status to an error banner using the provider message", () => {
+    const content = deriveProviderStatusBannerContent(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { ...baseStatus, status: "error", message: "Failed to deliver turn." } as any,
+    );
+    expect(content).toEqual({
+      variant: "error",
+      title: "Codex provider status",
+      description: "Failed to deliver turn.",
+    });
+  });
+
+  it("maps a warning status to a warning banner", () => {
+    const content = deriveProviderStatusBannerContent(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { ...baseStatus, status: "warning" } as any,
+    );
+    expect(content?.variant).toBe("warning");
+    expect(content?.description).toContain("limited availability");
+  });
+
+  it("special-cases an unauthenticated provider", () => {
+    const content = deriveProviderStatusBannerContent(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { ...baseStatus, status: "error", auth: { status: "unauthenticated" } } as any,
+    );
+    expect(content).toEqual({
+      variant: "error",
+      title: "Codex is unauthenticated",
+      description: "Sign in via the CLI to authenticate again.",
+    });
   });
 });
