@@ -67,8 +67,10 @@ import {
   markPromotedDraftThreads,
   markPromotedDraftThreadsByRef,
   type ComposerImageAttachment,
+  createEmptyThreadDraft,
   useComposerDraftStore,
   DraftId,
+  jarvisProjectThreadDraftId,
 } from "./composerDraftStore";
 import { removeLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
 import {
@@ -1683,6 +1685,139 @@ describe("composerDraftStore runtime and interaction settings", () => {
     store.setInteractionMode(threadRef, null);
 
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+});
+
+describe("composerDraftStore Jarvis routing drafts", () => {
+  const threadId = ThreadId.make("thread-jarvis-routing");
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+  const routing = {
+    projectId: "jarvis-project-a",
+    repoRemote: "git@github.com:example/repo.git",
+    workerOverrideId: "worker-local",
+  };
+
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  it("persists and clears jarvis routing on otherwise empty drafts", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setJarvisRouting(threadRef, routing);
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.jarvisRouting).toEqual(routing);
+
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const persisted = persistApi.getOptions().partialize(useComposerDraftStore.getState()) as {
+      draftsByThreadKey?: Record<string, { jarvisRouting?: typeof routing }>;
+    };
+    const threadKey = threadKeyFor(threadId, TEST_ENVIRONMENT_ID);
+    expect(persisted.draftsByThreadKey?.[threadKey]?.jarvisRouting).toEqual(routing);
+
+    const merged = persistApi
+      .getOptions()
+      .merge(persisted, useComposerDraftStore.getInitialState());
+    expect(merged.draftsByThreadKey[threadKey]?.jarvisRouting).toEqual(routing);
+
+    store.setJarvisRouting(threadRef, null);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+
+  it("migrates v8 drafts without jarvis routing unchanged", async () => {
+    const threadKey = threadKeyFor(threadId, TEST_ENVIRONMENT_ID);
+    const v8State = {
+      draftsByThreadKey: {
+        [threadKey]: {
+          prompt: "existing v8 draft",
+          attachments: [],
+          runtimeMode: "approval-required",
+        },
+      },
+      draftThreadsByThreadKey: {},
+      logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+      stickyModelSelectionByProvider: {},
+      stickyActiveProvider: null,
+    };
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        version: number;
+        migrate: (persistedState: unknown, version: number) => unknown | Promise<unknown>;
+      };
+    };
+
+    const migrated = (await persistApi.getOptions().migrate(v8State, 8)) as {
+      draftsByThreadKey?: Record<string, { prompt?: string; jarvisRouting?: unknown }>;
+    };
+
+    expect(persistApi.getOptions().version).toBe(9);
+    expect(migrated.draftsByThreadKey?.[threadKey]).toMatchObject({
+      prompt: "existing v8 draft",
+      attachments: [],
+      runtimeMode: "approval-required",
+    });
+    expect(migrated.draftsByThreadKey?.[threadKey]?.jarvisRouting).toBeUndefined();
+  });
+
+  it("uses stable brain project-thread draft keys for prompt and attachment drafts", () => {
+    const brainDraftId = jarvisProjectThreadDraftId(
+      TEST_ENVIRONMENT_ID,
+      ProjectId.make("brain-project"),
+      ThreadId.make("brain-thread"),
+    );
+    const secondBrainDraftId = jarvisProjectThreadDraftId(
+      TEST_ENVIRONMENT_ID,
+      ProjectId.make("brain-project"),
+      ThreadId.make("brain-thread"),
+    );
+    const persistedAttachment = {
+      id: "img-brain",
+      name: "brain.png",
+      mimeType: "image/png",
+      sizeBytes: 1,
+      dataUrl: "data:image/png;base64,AQ==",
+    };
+
+    expect(brainDraftId).toBe(secondBrainDraftId);
+    expect(brainDraftId).toBe("jarvis-project:environment-local:brain-project:brain-thread");
+
+    useComposerDraftStore.getState().setPrompt(brainDraftId, "brain prompt");
+    useComposerDraftStore.setState((state) => ({
+      draftsByThreadKey: {
+        ...state.draftsByThreadKey,
+        [brainDraftId]: {
+          ...(state.draftsByThreadKey[brainDraftId] ?? createEmptyThreadDraft()),
+          persistedAttachments: [persistedAttachment],
+        },
+      },
+    }));
+
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const persisted = persistApi.getOptions().partialize(useComposerDraftStore.getState());
+    const merged = persistApi
+      .getOptions()
+      .merge(persisted, useComposerDraftStore.getInitialState());
+
+    expect(merged.getComposerDraft(brainDraftId)?.prompt).toBe("brain prompt");
+    expect(merged.getComposerDraft(brainDraftId)?.persistedAttachments).toEqual([
+      persistedAttachment,
+    ]);
   });
 });
 
