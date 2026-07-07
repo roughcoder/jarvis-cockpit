@@ -14,6 +14,7 @@ import {
   isProjectConversationArchived,
   latestProjectConversation,
   projectConversationHistoryMessages,
+  projectConversationMergedMessages,
   reduceProjectConversationSendState,
   resolveProjectConversationRouteParams,
   resolveProjectConversationRouteRenderState,
@@ -229,6 +230,107 @@ describe("project conversation history", () => {
       ["assistant", "Second"],
     ]);
     expect(messages.every((message) => message.source === "history")).toBe(true);
+  });
+
+  it("collapses a confirmed optimistic user turn and keeps the real assistant reply", () => {
+    const historyMessages = projectConversationHistoryMessages({
+      messages: [
+        {
+          role: "user",
+          peer_id: "neil",
+          content: "Hello there",
+          observed_at: "2026-07-07T10:00:02.000Z",
+        },
+        {
+          role: "assistant",
+          peer_id: "jarvis",
+          content: "Hello, Neil. What's on your mind today?",
+          observed_at: "2026-07-07T10:00:03.000Z",
+        },
+      ],
+    });
+
+    const messages = projectConversationMergedMessages({
+      historyMessages,
+      localTurns: [
+        {
+          id: "turn-1",
+          prompt: "Hello there",
+          response: "",
+          status: "completed",
+          error: null,
+          createdAt: "2026-07-07T10:00:00.000Z",
+        },
+      ],
+    });
+
+    expect(messages.map((message) => [message.role, message.content, message.source])).toEqual([
+      ["user", "Hello there", "history"],
+      ["assistant", "Hello, Neil. What's on your mind today?", "history"],
+    ]);
+  });
+
+  it("does not render a hollow assistant bubble for contentless completion", () => {
+    const messages = projectConversationMergedMessages({
+      historyMessages: [],
+      localTurns: [
+        {
+          id: "turn-1",
+          prompt: "Hello there",
+          response: "",
+          status: "completed",
+          error: null,
+          createdAt: "2026-07-07T10:00:00.000Z",
+        },
+      ],
+    });
+
+    expect(messages.map((message) => [message.role, message.content])).toEqual([
+      ["user", "Hello there"],
+    ]);
+    expect(messages.some((message) => message.content === "Jarvis completed the turn.")).toBe(
+      false,
+    );
+  });
+
+  it("preserves multi-turn user-assistant ordering while merging history and local state", () => {
+    const historyMessages = projectConversationHistoryMessages({
+      messages: [
+        {
+          role: "assistant",
+          peer_id: "jarvis",
+          content: "First answer",
+          observed_at: "2026-07-07T10:00:03.000Z",
+        },
+        {
+          role: "user",
+          peer_id: "neil",
+          content: "First question",
+          observed_at: "2026-07-07T10:00:02.000Z",
+        },
+      ],
+    });
+
+    const messages = projectConversationMergedMessages({
+      historyMessages,
+      localTurns: [
+        {
+          id: "turn-2",
+          prompt: "Second question",
+          response: "Second answer",
+          status: "completed",
+          error: null,
+          createdAt: "2026-07-07T10:01:00.000Z",
+        },
+      ],
+    });
+
+    expect(messages.map((message) => [message.role, message.content])).toEqual([
+      ["user", "First question"],
+      ["assistant", "First answer"],
+      ["user", "Second question"],
+      ["assistant", "Second answer"],
+    ]);
   });
 });
 

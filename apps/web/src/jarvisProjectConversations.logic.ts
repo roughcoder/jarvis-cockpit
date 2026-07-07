@@ -35,6 +35,15 @@ export interface ProjectConversationTurnDraft {
   readonly error: string | null;
 }
 
+export interface ProjectConversationLocalTurnView {
+  readonly id: string;
+  readonly prompt: string;
+  readonly response: string;
+  readonly status: ProjectConversationSendStatus;
+  readonly error: string | null;
+  readonly createdAt: string;
+}
+
 export interface ProjectConversationMessageView {
   readonly id: string;
   readonly role: "user" | "assistant";
@@ -44,6 +53,8 @@ export interface ProjectConversationMessageView {
   readonly source: "history" | "local";
   readonly status: ProjectConversationSendStatus;
   readonly error: string | null;
+  readonly localTurnId: string | null;
+  readonly retryPrompt: string | null;
 }
 
 export interface ProjectConversationRouteInput {
@@ -186,6 +197,23 @@ export function projectConversationHistoryMessages(
     .sort((left, right) => left.observedAt.localeCompare(right.observedAt));
 }
 
+export function projectConversationMergedMessages(input: {
+  readonly historyMessages: ReadonlyArray<ProjectConversationMessageView>;
+  readonly localTurns: ReadonlyArray<ProjectConversationLocalTurnView>;
+}): ProjectConversationMessageView[] {
+  const historyMessages = input.historyMessages.filter((message) => message.source === "history");
+  const historyMatches = historyMessages.map((message, index) => ({
+    index,
+    message,
+    claimed: false,
+  }));
+  const localMessages = input.localTurns
+    .flatMap(localTurnMessages)
+    .filter((message) => !isConfirmedByHistory(message, historyMatches));
+
+  return [...historyMessages, ...localMessages].sort(compareProjectConversationMessages);
+}
+
 export function extractProjectConversationReply(result: JarvisProjectThreadTurnResult): string {
   const explicit = result.text.trim();
   if (explicit.length > 0) {
@@ -233,7 +261,141 @@ function historyMessageView(
     source: "history",
     status: "completed",
     error: null,
+    localTurnId: null,
+    retryPrompt: null,
   };
+}
+
+function localTurnMessages(
+  turn: ProjectConversationLocalTurnView,
+): ProjectConversationMessageView[] {
+  const prompt = turn.prompt.trim();
+  const messages: ProjectConversationMessageView[] = [];
+  if (prompt.length > 0) {
+    messages.push({
+      id: `local-${turn.id}-user`,
+      role: "user",
+      content: prompt,
+      observedAt: turn.createdAt,
+      peerId: null,
+      source: "local",
+      status: turn.status,
+      error: null,
+      localTurnId: turn.id,
+      retryPrompt: null,
+    });
+  }
+
+  const response = turn.response.trim();
+  if (turn.status === "pending" || turn.status === "streaming") {
+    messages.push(localAssistantMessage(turn, response));
+  } else if (turn.status === "failed") {
+    messages.push(localAssistantMessage(turn, turn.error?.trim() ?? ""));
+  } else if (response.length > 0) {
+    messages.push(localAssistantMessage(turn, response));
+  }
+
+  return messages;
+}
+
+function localAssistantMessage(
+  turn: ProjectConversationLocalTurnView,
+  content: string,
+): ProjectConversationMessageView {
+  return {
+    id: `local-${turn.id}-assistant`,
+    role: "assistant",
+    content,
+    observedAt: turn.createdAt,
+    peerId: null,
+    source: "local",
+    status: turn.status,
+    error: turn.error,
+    localTurnId: turn.id,
+    retryPrompt: turn.prompt,
+  };
+}
+
+function isConfirmedByHistory(
+  localMessage: ProjectConversationMessageView,
+  historyMatches: Array<{
+    readonly index: number;
+    readonly message: ProjectConversationMessageView;
+    claimed: boolean;
+  }>,
+): boolean {
+  if (localMessage.source !== "local") {
+    return false;
+  }
+  if (
+    localMessage.role === "assistant" &&
+    localMessage.status !== "completed" &&
+    localMessage.status !== "streaming"
+  ) {
+    return false;
+  }
+  if (localMessage.content.trim().length === 0) {
+    return false;
+  }
+
+  const match = historyMatches.find(
+    (candidate) =>
+      !candidate.claimed && isHistoryEchoOfLocalMessage(candidate.message, localMessage),
+  );
+  if (!match) {
+    return false;
+  }
+  match.claimed = true;
+  return true;
+}
+
+function isHistoryEchoOfLocalMessage(
+  historyMessage: ProjectConversationMessageView,
+  localMessage: ProjectConversationMessageView,
+): boolean {
+  if (historyMessage.role !== localMessage.role) {
+    return false;
+  }
+  if (
+    normalizeMessageContent(historyMessage.content) !==
+    normalizeMessageContent(localMessage.content)
+  ) {
+    return false;
+  }
+
+  const historyTime = Date.parse(historyMessage.observedAt);
+  const localTime = Date.parse(localMessage.observedAt);
+  if (!Number.isFinite(historyTime) || !Number.isFinite(localTime)) {
+    return false;
+  }
+
+  const delta = historyTime - localTime;
+  return delta >= -30_000 && delta <= 10 * 60_000;
+}
+
+function compareProjectConversationMessages(
+  left: ProjectConversationMessageView,
+  right: ProjectConversationMessageView,
+): number {
+  const observedOrder = left.observedAt.localeCompare(right.observedAt);
+  if (observedOrder !== 0) {
+    return observedOrder;
+  }
+  if (left.localTurnId && right.localTurnId && left.localTurnId === right.localTurnId) {
+    return roleSortOrder(left.role) - roleSortOrder(right.role);
+  }
+  if (left.source !== right.source) {
+    return left.source === "history" ? -1 : 1;
+  }
+  return roleSortOrder(left.role) - roleSortOrder(right.role);
+}
+
+function roleSortOrder(role: ProjectConversationMessageView["role"]): number {
+  return role === "user" ? 0 : 1;
+}
+
+function normalizeMessageContent(content: string): string {
+  return content.trim().replace(/\s+/gu, " ");
 }
 
 function formatArchivedValue(value: string | null | undefined): string {
