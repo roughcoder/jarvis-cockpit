@@ -525,6 +525,37 @@ it.effect("accepts live Jarvis terminal run snapshots with absent repo and branc
   }),
 );
 
+it.effect("accepts live Jarvis worker sessions with empty workspace labels", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeSnapshot({
+      api_version: "v1",
+      schema_version: 1,
+      cursor: "evt_live_session",
+      generated_at: generatedAt,
+      sync: {
+        mode: "probe",
+        status: "fresh",
+        synced_at: generatedAt,
+        errors: [],
+      },
+      runs: [],
+      sessions: [
+        {
+          ...sessionFixture,
+          repo: "",
+          branch: "",
+          cwd_label: "",
+        },
+      ],
+      workers: [],
+      artifacts: [],
+    });
+
+    assert.strictEqual(parsed.sessions.length, 1);
+    assert.strictEqual(parsed.sessions[0]?.cwd_label, "");
+  }),
+);
+
 it.effect("accepts live Jarvis active run snapshots with lightweight branch artifacts", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeSnapshot({

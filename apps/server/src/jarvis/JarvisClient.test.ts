@@ -789,10 +789,35 @@ it.effect("cockpit client attaches bearer token and reads the v1 snapshot endpoi
     });
 
     const parsedSnapshot = yield* client.getSnapshot();
-    assert.strictEqual(requests[0]?.url, "http://jarvis.local:8787/v1/cockpit/snapshot?sync=probe");
+    assert.strictEqual(requests[0]?.url, "http://jarvis.local:8787/v1/cockpit/snapshot?sync=none");
     assert.strictEqual(requests[0]?.authorization, "Bearer worker-token");
     assert.strictEqual(parsedSnapshot.runs[0]?.run_id, "run_1");
     assert.strictEqual(parsedSnapshot.runs[0]?.objective, "Do the work");
+  }),
+);
+
+it.effect("cockpit client retains live sessions with an empty cwd label", () =>
+  Effect.gen(function* () {
+    const liveSession = {
+      ...session,
+      repo: "",
+      branch: "",
+      cwd_label: "",
+    };
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async () =>
+        jsonResponse({
+          ...snapshot,
+          sessions: [liveSession],
+        }),
+    });
+
+    const parsedSnapshot = yield* client.getSnapshot();
+
+    assert.strictEqual(parsedSnapshot.sessions.length, 1);
+    assert.strictEqual(parsedSnapshot.sessions[0]?.session_ref, sessionRef);
+    assert.strictEqual(parsedSnapshot.sessions[0]?.cwd_label, "");
   }),
 );
 
@@ -952,7 +977,7 @@ it.effect("configured OAuth tokens are not sent to saved settings URLs", () =>
     );
 
     assert.strictEqual(oauthRequested, false);
-    assert.strictEqual(requests[0]?.url, "https://attacker.example/v1/cockpit/snapshot?sync=probe");
+    assert.strictEqual(requests[0]?.url, "https://attacker.example/v1/cockpit/snapshot?sync=none");
     assert.strictEqual(requests[0]?.authorization, null);
     assert.strictEqual(parsedSnapshot.runs[0]?.run_id, "run_1");
   }),
@@ -991,7 +1016,7 @@ it.effect("configured OAuth tokens are sent to the default brain URL", () =>
     );
 
     assert.strictEqual(oauthRequested, true);
-    assert.strictEqual(requests[0]?.url, "http://127.0.0.1:8791/v1/cockpit/snapshot?sync=probe");
+    assert.strictEqual(requests[0]?.url, "http://127.0.0.1:8791/v1/cockpit/snapshot?sync=none");
     assert.strictEqual(requests[0]?.authorization, "Bearer oauth-token");
     assert.strictEqual(parsedSnapshot.runs[0]?.run_id, "run_1");
   }),
@@ -1050,7 +1075,7 @@ it.effect("worker-session client export remains an alias for cockpit v1 live mod
 
     yield* client.getSnapshot();
 
-    assert.deepStrictEqual(requests, ["http://jarvis.local:8787/v1/cockpit/snapshot?sync=probe"]);
+    assert.deepStrictEqual(requests, ["http://jarvis.local:8787/v1/cockpit/snapshot?sync=none"]);
   }),
 );
 

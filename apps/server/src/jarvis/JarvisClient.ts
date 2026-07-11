@@ -874,7 +874,7 @@ export function makeJarvisCockpitClient(input: {
         Effect.flatMap(decodeFor("mcp.status", decodeMcpStatus)),
       ),
     getSnapshot: () =>
-      requestJson("cockpit.snapshot", "/v1/cockpit/snapshot?sync=probe").pipe(
+      requestJson("cockpit.snapshot", "/v1/cockpit/snapshot?sync=none").pipe(
         Effect.flatMap(
           decodeSnapshotDroppingMalformedSessions(decodeFor("cockpit.snapshot", decodeSnapshot)),
         ),

@@ -1,6 +1,6 @@
 # Jarvis Cockpit Current State And End Goal
 
-Last updated: 2026-07-04
+Last updated: 2026-07-11
 
 ## Purpose
 
@@ -132,6 +132,16 @@ volta run --node 24.13.1 --pnpm 10.24.0 pnpm dev
 
 ## Current Known Gaps
 
+### Live Fleet Stability
+
+- Steady-state cockpit snapshot reads use `sync=none`; expensive worker probing is
+  no longer forced on every shell or thread refresh.
+- Shell and thread compatibility polling runs every 10 seconds while the SSE
+  proxy remains unfinished, and the start-work worker snapshot refresh runs
+  every 30 seconds.
+- Live worker sessions tolerate an empty display-only `cwd_label`, matching the
+  existing compatibility handling for empty public `repo` and `branch` fields.
+
 ### Jarvis API Capabilities Now Available
 
 - `/v1/cockpit/catalog.start_options` describes start sources, defaults,
@@ -146,7 +156,7 @@ volta run --node 24.13.1 --pnpm 10.24.0 pnpm dev
 ### Cockpit Product Gaps
 
 - SSE proxying for `/v1/cockpit/events` remains the next live-update slice; this
-  branch keeps the existing server-side polling fallback.
+  branch keeps a reduced-frequency server-side polling fallback.
 - Start-work is still a minimal `Describe work` path, not the full wizard.
 - Worker, engine, source, repository, branch policy, and landing policy selectors
   are not complete.

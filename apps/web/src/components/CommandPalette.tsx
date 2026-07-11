@@ -144,7 +144,7 @@ import { ComposerHandleContext, useComposerHandleContext } from "../composerHand
 import type { ChatComposerHandle } from "./chat/ChatComposer";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
-const JARVIS_WORKER_SNAPSHOT_POLL_MS = 2_000;
+const JARVIS_WORKER_SNAPSHOT_POLL_MS = 30_000;
 
 function getLocalFileManagerName(platform: string): string {
   if (isMacPlatform(platform)) {
