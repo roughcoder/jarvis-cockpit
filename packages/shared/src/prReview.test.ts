@@ -50,6 +50,7 @@ describe("buildPrReviewOrchestratorPrompt", () => {
     expect(prompt).toContain("1-based line number in the file at the PR head");
     expect(prompt).toContain("not the ordinal line number of `gh pr diff` output");
     expect(prompt).toContain("verify every proposed inline anchor");
+    expect(prompt).toContain('`line_kind="FILE"`');
     expect(prompt).toContain("non-empty hexadecimal `headRefOid` values identify the same commit");
     expect(prompt).toContain("7-39 character hexadecimal prefix");
     expect(prompt).toContain("prefix exactly matches the full SHA");

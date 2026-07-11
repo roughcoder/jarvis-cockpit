@@ -141,7 +141,7 @@ export function buildPrReviewOrchestratorPrompt(
     ? [
         `Read both watched child results exactly once. If either failed or lacks a hexadecimal headRefOid, stop without publishing and report the failure. Normally both must report the same full 40-character SHA. If exactly one child reports a 7-39 character hexadecimal prefix and the other reports a full 40-character SHA, accept it only when that prefix exactly matches the full SHA; use the full SHA for publication. Any other mismatch must stop without publishing.`,
         `Otherwise reconcile and deduplicate the findings, verify every proposed inline anchor uses a real file line from the fetched diff rather than a global diff-output position, then MUST call ${PR_REVIEW_ORCHESTRATOR_TOOLS.publishReview} exactly once for ${input.repo}#${input.prNumber} before producing any final textual answer. A textual summary without a successful publish call is incomplete.`,
-        `Use the agreed SHA as commit_id and a stable idempotency_key for this repo, PR, SHA, and joined review. Publish valid inline findings with path, changed line, side, severity, title, body, and safe replacement suggestion when available; put unanchored findings in the summary.`,
+        `Use the agreed SHA as commit_id and a stable idempotency_key for this repo, PR, SHA, and joined review. Publish valid inline findings with path, changed line, \`line_kind="FILE"\`, side, severity, title, body, and safe replacement suggestion when available; put unanchored findings in the summary. Set FILE only after verifying the number is the actual file line, not a global diff-output position.`,
         `After the tool succeeds, report the exact posted comment count and skipped comment count returned by the tool plus its URL. Do not describe skipped comments as inline findings.`,
       ].join(" ")
     : `Read both watched child results exactly once, verify their full headRefOid values match, reconcile and deduplicate the findings, do not publish externally, then report the combined result.`;
@@ -163,7 +163,7 @@ export function buildPrReviewOrchestratorPrompt(
     ? [
         `Publish the reconciled result with one \`${PR_REVIEW_ORCHESTRATOR_TOOLS.publishReview}\` call for \`${input.repo}#${input.prNumber}\`.`,
         `- Set \`commit_id\` to the identical \`headRefOid\` reported by both child reviewers. The publishing tool will reject a stale PR head.`,
-        `- Supply one structured comment per inline finding with \`path\`, changed \`line\`, \`side\`, \`severity\` (P1/P2/P3), \`title\`, and \`body\`.`,
+        `- Supply one structured comment per inline finding with \`path\`, changed \`line\`, \`line_kind="FILE"\`, \`side\`, \`severity\` (P1/P2/P3), \`title\`, and \`body\`. FILE asserts that the orchestrator verified the number is the 1-based line in the actual file.`,
         `- The published comment title must render as \`[P1] <title>\`, \`[P2] <title>\`, or \`[P3] <title>\`. The publishing tool formats that prefix from severity and title; do not duplicate it in the body.`,
         `- When a precise safe replacement is available, set the comment's \`suggestion\` to replacement code only; the publishing tool will emit a GitHub-applicable \`suggestion\` block. Do not place speculative fixes in suggestions.`,
         `- Findings that do not map to a changed diff line belong in the review \`summary\`, not as unanchored inline comments.`,
