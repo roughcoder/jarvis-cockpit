@@ -116,7 +116,7 @@ export function buildPrReviewOrchestratorPrompt(
           reviewer.providerInstanceId,
         )}\`, \`engine=${JSON.stringify(reviewer.engine)}\`, \`model=${JSON.stringify(
           reviewer.model,
-        )}\`, \`repo=${JSON.stringify(input.repo)}\`, and a task that independently reviews only this PR diff against the dimensions below. Give the child a clear review title and require findings to include severity, title, explanation, changed path/line/side when inline-addressable, and an exact replacement suggestion when one is safe.`,
+        )}\`, \`repo=${JSON.stringify(input.repo)}\`, and a task that independently reviews only this PR diff against the dimensions below. The child must first fetch the pull request metadata with \`gh pr view ${input.prNumber} --repo ${input.repo} --json headRefOid\` and the exact PR diff with \`gh pr diff ${input.prNumber} --repo ${input.repo}\`. It must review that fetched diff, not the checkout's current branch or unrelated repository code, and return the exact \`headRefOid\` it reviewed. Give the child a clear review title and require findings to include severity, title, explanation, changed path/line/side when inline-addressable, and an exact replacement suggestion when one is safe.`,
     )
     .join("\n");
 
@@ -126,13 +126,14 @@ export function buildPrReviewOrchestratorPrompt(
       ? `Spawn exactly these two independent child review chats:`
       : `The request is malformed unless it contains exactly two reviewers; report that problem and do not publish.`,
     reviewerAssignments || "No valid reviewers were supplied.",
-    `Record both returned \`child_chat_id\` values. Before ending this initial turn, call \`${PR_REVIEW_ORCHESTRATOR_TOOLS.watchChildren}\` exactly once with \`child_chat_ids\` containing both IDs. It returns immediately; do not poll or continue the review in this initial turn. The runtime will automatically continue this parent once after both children are terminal.`,
-    `In that resumed parent turn, call \`${PR_REVIEW_ORCHESTRATOR_TOOLS.readChildResult}\` once for each \`child_chat_id\`. Read both complete results, then reconcile and deduplicate them into one evidence-backed finding set. Keep the highest defensible severity when findings overlap; discard findings that are unsupported by the changed code; mention material reviewer disagreement in the final conversation summary.`,
+    `Record both returned \`child_chat_id\` values. If either spawn fails, report the failure and stop this initial turn: do not substitute legacy coding-job tools and do not register a partial watch. After both spawns succeed, call \`${PR_REVIEW_ORCHESTRATOR_TOOLS.watchChildren}\` exactly once with \`child_chat_ids\` containing both IDs and \`expected_count=2\`. It returns immediately; do not poll or continue the review in this initial turn. The runtime will automatically continue this parent once after both children are terminal.`,
+    `In that resumed parent turn, call \`${PR_REVIEW_ORCHESTRATOR_TOOLS.readChildResult}\` once for each \`child_chat_id\`. Read both complete results and verify that both report the same non-empty \`headRefOid\`. If either result failed, omitted its SHA, or reviewed a different SHA, stop without publishing and report the problem. Otherwise reconcile and deduplicate them into one evidence-backed finding set. Keep the highest defensible severity when findings overlap; discard findings that are unsupported by the changed code; mention material reviewer disagreement in the final conversation summary.`,
   ].join("\n");
 
   const postInstruction = input.post
     ? [
         `Publish the reconciled result with one \`${PR_REVIEW_ORCHESTRATOR_TOOLS.publishReview}\` call for \`${input.repo}#${input.prNumber}\`.`,
+        `- Set \`commit_id\` to the identical \`headRefOid\` reported by both child reviewers. The publishing tool will reject a stale PR head.`,
         `- Supply one structured comment per inline finding with \`path\`, changed \`line\`, \`side\`, \`severity\` (P1/P2/P3), \`title\`, and \`body\`.`,
         `- The published comment title must render as \`[P1] <title>\`, \`[P2] <title>\`, or \`[P3] <title>\`. The publishing tool formats that prefix from severity and title; do not duplicate it in the body.`,
         `- When a precise safe replacement is available, set the comment's \`suggestion\` to replacement code only; the publishing tool will emit a GitHub-applicable \`suggestion\` block. Do not place speculative fixes in suggestions.`,
@@ -145,7 +146,7 @@ export function buildPrReviewOrchestratorPrompt(
   return [
     `You are the PR review orchestrator. Review pull request #${input.prNumber} in ${input.repo}.`,
     reviewInstruction,
-    `The child reviewers may fetch the diff and read surrounding code as needed, but every finding must be caused by or materially exposed by this pull request.`,
+    `The child reviewers must use the exact fetched PR diff as the review boundary. They may read surrounding code from the reviewed PR head as needed, but every finding must be caused by or materially exposed by this pull request.`,
     `Review dimensions (restrict findings to these):\n${selected
       .map((dimension) => `- ${dimension.promptFragment}`)
       .join("\n")}`,

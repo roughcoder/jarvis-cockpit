@@ -155,19 +155,7 @@ export function PrReviewDialog({
     }
 
     const threadId = created.value.thread.thread_id;
-    const sent = await sendTurn({
-      environmentId,
-      input: { projectId, threadId: String(threadId), input: { text: prompt } },
-    });
     setSubmitting(false);
-    if (sent._tag === "Failure") {
-      if (!isAtomCommandInterrupted(sent)) {
-        const failure = squashAtomCommandFailure(sent);
-        setError(failure instanceof Error ? failure.message : "Could not send the review prompt.");
-      }
-      return;
-    }
-
     onOpenChange(false);
     toastManager.add({
       type: "info",
@@ -182,6 +170,20 @@ export function PrReviewDialog({
         threadId: String(threadId),
       }),
     });
+    void sendTurn({
+      environmentId,
+      input: { projectId, threadId: String(threadId), input: { text: prompt } },
+    }).then((sent) => {
+      if (sent._tag === "Failure" && !isAtomCommandInterrupted(sent)) {
+        const failure = squashAtomCommandFailure(sent);
+        toastManager.add({
+          type: "error",
+          title: "PR review orchestration failed",
+          description:
+            failure instanceof Error ? failure.message : "Could not send the review prompt.",
+        });
+      }
+    });
   };
 
   return (
@@ -195,6 +197,10 @@ export function PrReviewDialog({
             Starts a parent conversation in this project. Choose exactly two reviewers; the
             orchestrator creates their child chats, reconciles both results, and{" "}
             {post ? "posts P1/P2/P3 comments to it" : "reports back here"}.
+            <span className="mt-1 block">
+              Requires Jarvis authority to create worker sessions
+              {post ? " and comment on pull requests" : ""}.
+            </span>
           </DialogDescription>
         </DialogHeader>
 
