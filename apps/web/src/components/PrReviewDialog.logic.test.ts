@@ -1,7 +1,17 @@
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  JarvisWorkerId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type JarvisWorkerProfile,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { defaultReviewerKeys, deriveReviewerOptions } from "./PrReviewDialog.logic";
+import {
+  defaultReviewerKeys,
+  deriveReviewerOptions,
+  selectCommonReviewWorker,
+} from "./PrReviewDialog.logic";
 
 function provider(input: {
   readonly instanceId: string;
@@ -26,6 +36,45 @@ function provider(input: {
     })),
     slashCommands: [],
     skills: [],
+  };
+}
+
+function worker(input: {
+  readonly id: string;
+  readonly engines: ReadonlyArray<string>;
+  readonly max: number;
+  readonly active?: number;
+  readonly authenticated?: boolean;
+}): JarvisWorkerProfile {
+  return {
+    worker_id: JarvisWorkerId.make(input.id),
+    display_name: input.id,
+    status: "online",
+    health: "healthy",
+    capabilities: [],
+    engines: input.engines.map((engine) => ({
+      engine,
+      display_name: engine,
+      status: "available",
+      default: false,
+      supports: {
+        streaming: true,
+        resume: true,
+        interrupt: true,
+        approval_requests: true,
+        input_requests: true,
+        checkpoints: true,
+      },
+    })),
+    capacity: {
+      max_sessions: input.max,
+      active_sessions: input.active ?? 0,
+      queued_sessions: 0,
+    },
+    repositories: [{ repo: "jarvis", can_start_work: true, default_branch: "main", is_default: true }],
+    git_identity: { authenticated: input.authenticated ?? false },
+    system: {},
+    public_metadata: {},
   };
 }
 
@@ -90,5 +139,35 @@ describe("deriveReviewerOptions", () => {
       "claudeAgent::claude-opus-4-7",
       "codex::gpt-5.5",
     ]);
+  });
+});
+
+describe("selectCommonReviewWorker", () => {
+  it("pins both reviewers to a healthy authenticated worker with both engines and two slots", () => {
+    const selected = selectCommonReviewWorker({
+      workers: [
+        worker({ id: "brain", engines: ["codex"], max: 1 }),
+        worker({
+          id: "laptop",
+          engines: ["codex", "claude"],
+          max: 2,
+          authenticated: true,
+        }),
+      ],
+      reviewers: [{ engine: "claude" }, { engine: "codex" }],
+      repo: "roughcoder/jarvis",
+    });
+
+    expect(selected).toBe("laptop");
+  });
+
+  it("does not pin when no single worker can host the complete review", () => {
+    const selected = selectCommonReviewWorker({
+      workers: [worker({ id: "laptop", engines: ["codex", "claude"], max: 1 })],
+      reviewers: [{ engine: "claude" }, { engine: "codex" }],
+      repo: "roughcoder/jarvis",
+    });
+
+    expect(selected).toBeUndefined();
   });
 });

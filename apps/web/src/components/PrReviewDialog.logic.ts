@@ -1,5 +1,15 @@
-import type { ProviderDriverKind, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
+import type {
+  JarvisWorkerProfile,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ServerProvider,
+} from "@t3tools/contracts";
 
+import {
+  workerCanStartRepo,
+  workerIsHealthyEnough,
+  workerSupportsEngine,
+} from "./composer/composerJarvisRouting.logic";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 
 export interface ReviewerOption {
@@ -63,4 +73,36 @@ export function defaultReviewerKeys(options: ReadonlyArray<ReviewerOption>): Rea
     }
   }
   return keys;
+}
+
+export function selectCommonReviewWorker(input: {
+  readonly workers: ReadonlyArray<JarvisWorkerProfile>;
+  readonly reviewers: ReadonlyArray<Pick<ReviewerOption, "engine">>;
+  readonly repo: string;
+}): string | undefined {
+  const engines = [...new Set(input.reviewers.map((reviewer) => reviewer.engine))];
+  if (engines.length === 0) return undefined;
+
+  const eligible = input.workers.filter((worker) => {
+    const used = worker.capacity.active_sessions + worker.capacity.queued_sessions;
+    return (
+      workerIsHealthyEnough(worker) &&
+      workerCanStartRepo(worker, input.repo) &&
+      used + input.reviewers.length <= worker.capacity.max_sessions &&
+      engines.every((engine) => workerSupportsEngine(worker, engine))
+    );
+  });
+
+  eligible.sort((left, right) => {
+    const leftAuthenticated = left.git_identity?.authenticated === true ? 1 : 0;
+    const rightAuthenticated = right.git_identity?.authenticated === true ? 1 : 0;
+    if (leftAuthenticated !== rightAuthenticated) return rightAuthenticated - leftAuthenticated;
+    const leftFree =
+      left.capacity.max_sessions - left.capacity.active_sessions - left.capacity.queued_sessions;
+    const rightFree =
+      right.capacity.max_sessions - right.capacity.active_sessions - right.capacity.queued_sessions;
+    return rightFree - leftFree;
+  });
+
+  return eligible[0]?.worker_id;
 }

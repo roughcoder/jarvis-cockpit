@@ -22,6 +22,7 @@ describe("buildPrReviewOrchestratorPrompt", () => {
           label: "Codex · GPT-5.5",
         },
       ],
+      workerId: "review-worker",
       post: true,
     });
     expect(prompt).toContain("pull request #42 in acme/widgets");
@@ -32,9 +33,14 @@ describe("buildPrReviewOrchestratorPrompt", () => {
     expect(prompt).toContain('model="claude-opus-4-7"');
     expect(prompt).toContain('provider_instance_id="codex"');
     expect(prompt).toContain('model="gpt-5.5"');
+    expect(prompt).toContain('worker_id="review-worker"');
+    expect(prompt).toContain("CHILD_TASK (pass this exact complete text to each spawn)");
+    expect(prompt).toContain("headRefOid: <full SHA>");
     expect(prompt).toContain("watch_child_work_sessions");
     expect(prompt).toContain("child_chat_ids");
     expect(prompt).toContain("expected_count=2");
+    expect(prompt).toContain("continuation_instruction=");
+    expect(prompt).toContain("A textual summary without a successful publish call is incomplete");
     expect(prompt).toContain("do not register a partial watch");
     expect(prompt).toContain("automatically continue this parent once");
     expect(prompt).toContain("read_child_work_result");

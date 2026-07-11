@@ -70,6 +70,8 @@ export interface BuildPrReviewOrchestratorPromptInput {
   readonly extraInstructions?: string;
   /** When true, the orchestrator posts findings to the PR; otherwise it reports them here. */
   readonly post: boolean;
+  /** Common fleet worker chosen by the cockpit when one can run both reviewers. */
+  readonly workerId?: string;
 }
 
 export interface PrReviewerSelection {
@@ -109,6 +111,20 @@ export function buildPrReviewOrchestratorPrompt(
       reviewer.model.trim().length > 0,
   );
 
+  const reviewDimensions = selected
+    .map((dimension) => `- ${dimension.promptFragment}`)
+    .join("\n");
+  const childTask = [
+    `Review PR #${input.prNumber} in ${input.repo} independently and read-only.`,
+    `Run \`gh pr view ${input.prNumber} --repo ${input.repo} --json headRefOid\`, record its full non-empty \`headRefOid\`, then run \`gh pr diff ${input.prNumber} --repo ${input.repo}\`. Review only that fetched diff, not the checkout's current branch. You may inspect surrounding code at that PR head; every finding must be introduced or exposed by the diff.`,
+    `Restrict findings to:\n${reviewDimensions}`,
+    SEVERITY_RUBRIC,
+    `The final report MUST start \`headRefOid: <full SHA>\`. Each finding MUST include severity, title, explanation, changed path, changed line, side (LEFT/RIGHT), and safe exact replacement code when available. Say explicitly if there are no findings. Do not edit, push, merge, release, or post to GitHub.`,
+  ].join("\n\n");
+  const workerRoute = input.workerId?.trim()
+    ? `, \`worker_id=${JSON.stringify(input.workerId.trim())}\``
+    : "";
+
   const reviewerAssignments = reviewers
     .map(
       (reviewer, index) =>
@@ -116,17 +132,31 @@ export function buildPrReviewOrchestratorPrompt(
           reviewer.providerInstanceId,
         )}\`, \`engine=${JSON.stringify(reviewer.engine)}\`, \`model=${JSON.stringify(
           reviewer.model,
-        )}\`, \`repo=${JSON.stringify(input.repo)}\`, and a task that independently reviews only this PR diff against the dimensions below. The child must first fetch the pull request metadata with \`gh pr view ${input.prNumber} --repo ${input.repo} --json headRefOid\` and the exact PR diff with \`gh pr diff ${input.prNumber} --repo ${input.repo}\`. It must review that fetched diff, not the checkout's current branch or unrelated repository code, and return the exact \`headRefOid\` it reviewed. Give the child a clear review title and require findings to include severity, title, explanation, changed path/line/side when inline-addressable, and an exact replacement suggestion when one is safe.`,
+        )}\`, \`repo=${JSON.stringify(input.repo)}\`${workerRoute}, and set \`task\` to the exact CHILD_TASK below. Do not summarize or rewrite it. Give the child the title ${JSON.stringify(
+          `${reviewer.label} Review for PR #${input.prNumber}`,
+        )}.`,
     )
     .join("\n");
+
+  const continuationInstruction = input.post
+    ? [
+        `Read both watched child results exactly once. If either failed, lacks a full headRefOid, or reports a different SHA, stop without publishing and report the failure.`,
+        `Otherwise reconcile and deduplicate the findings, then MUST call ${PR_REVIEW_ORCHESTRATOR_TOOLS.publishReview} exactly once for ${input.repo}#${input.prNumber} before producing any final textual answer. A textual summary without a successful publish call is incomplete.`,
+        `Use the agreed SHA as commit_id and a stable idempotency_key for this repo, PR, SHA, and joined review. Publish valid inline findings with path, changed line, side, severity, title, body, and safe replacement suggestion when available; put unanchored findings in the summary.`,
+        `After the tool succeeds, report its posted comment count and URL.`,
+      ].join(" ")
+    : `Read both watched child results exactly once, verify their full headRefOid values match, reconcile and deduplicate the findings, do not publish externally, then report the combined result.`;
 
   const reviewInstruction = [
     `This is a parent/child orchestration workflow. Do not substitute your own single-model review for the child reviews.`,
     reviewers.length === 2
       ? `Spawn exactly these two independent child review chats:`
       : `The request is malformed unless it contains exactly two reviewers; report that problem and do not publish.`,
+    `CHILD_TASK (pass this exact complete text to each spawn):\n<child-task>\n${childTask}\n</child-task>`,
     reviewerAssignments || "No valid reviewers were supplied.",
-    `Record both returned \`child_chat_id\` values. If either spawn fails, report the failure and stop this initial turn: do not substitute legacy coding-job tools and do not register a partial watch. After both spawns succeed, call \`${PR_REVIEW_ORCHESTRATOR_TOOLS.watchChildren}\` exactly once with \`child_chat_ids\` containing both IDs and \`expected_count=2\`. It returns immediately; do not poll or continue the review in this initial turn. The runtime will automatically continue this parent once after both children are terminal.`,
+    `Record both returned \`child_chat_id\` values. If either spawn fails, report the failure and stop this initial turn: do not substitute legacy coding-job tools and do not register a partial watch. After both spawns succeed, call \`${PR_REVIEW_ORCHESTRATOR_TOOLS.watchChildren}\` exactly once with \`child_chat_ids\` containing both IDs, \`expected_count=2\`, and \`continuation_instruction=${JSON.stringify(
+      continuationInstruction,
+    )}\`. It returns immediately; do not poll or continue the review in this initial turn. The runtime will automatically continue this parent once after both children are terminal.`,
     `In that resumed parent turn, call \`${PR_REVIEW_ORCHESTRATOR_TOOLS.readChildResult}\` once for each \`child_chat_id\`. Read both complete results and verify that both report the same non-empty \`headRefOid\`. If either result failed, omitted its SHA, or reviewed a different SHA, stop without publishing and report the problem. Otherwise reconcile and deduplicate them into one evidence-backed finding set. Keep the highest defensible severity when findings overlap; discard findings that are unsupported by the changed code; mention material reviewer disagreement in the final conversation summary.`,
   ].join("\n");
 
@@ -147,9 +177,7 @@ export function buildPrReviewOrchestratorPrompt(
     `You are the PR review orchestrator. Review pull request #${input.prNumber} in ${input.repo}.`,
     reviewInstruction,
     `The child reviewers must use the exact fetched PR diff as the review boundary. They may read surrounding code from the reviewed PR head as needed, but every finding must be caused by or materially exposed by this pull request.`,
-    `Review dimensions (restrict findings to these):\n${selected
-      .map((dimension) => `- ${dimension.promptFragment}`)
-      .join("\n")}`,
+    `Review dimensions (restrict findings to these):\n${reviewDimensions}`,
     SEVERITY_RUBRIC,
     ...(input.extraInstructions?.trim()
       ? [`Additional instructions:\n${input.extraInstructions.trim()}`]

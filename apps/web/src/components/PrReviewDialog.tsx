@@ -5,13 +5,18 @@ import { useNavigate } from "@tanstack/react-router";
 import { LoaderIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { defaultReviewerKeys, deriveReviewerOptions } from "./PrReviewDialog.logic";
+import {
+  defaultReviewerKeys,
+  deriveReviewerOptions,
+  selectCommonReviewWorker,
+} from "./PrReviewDialog.logic";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { buildProjectConversationRouteParams } from "../jarvisProjectConversations.logic";
 import { serverEnvironment } from "../state/server";
+import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -53,6 +58,10 @@ export function PrReviewDialog({
       serverEnvironment.providersValueAtom(environmentId),
     ) as ReadonlyArray<ServerProvider> | null) ?? [];
   const reviewerOptions = useMemo(() => deriveReviewerOptions(providers), [providers]);
+  const snapshotQuery = useEnvironmentQuery(
+    serverEnvironment.jarvisSnapshot({ environmentId, input: {} }),
+  );
+  const workers = snapshotQuery.data?.snapshot?.workers ?? [];
 
   const [selectedReviewers, setSelectedReviewers] = useState<ReadonlySet<string>>(new Set());
   const [selectedDimensions, setSelectedDimensions] = useState<ReadonlySet<string>>(
@@ -89,6 +98,10 @@ export function PrReviewDialog({
     () => reviewerOptions.filter((option) => selectedReviewers.has(option.key)),
     [reviewerOptions, selectedReviewers],
   );
+  const workerId = useMemo(
+    () => selectCommonReviewWorker({ workers, reviewers, repo }),
+    [workers, reviewers, repo],
+  );
 
   const prompt = useMemo(
     () =>
@@ -97,10 +110,11 @@ export function PrReviewDialog({
         prNumber,
         dimensions: dimensions.map((dimension) => dimension.id),
         reviewers,
+        ...(workerId ? { workerId } : {}),
         ...(extraInstructions.trim() ? { extraInstructions } : {}),
         post,
       }),
-    [repo, prNumber, dimensions, reviewers, extraInstructions, post],
+    [repo, prNumber, dimensions, reviewers, workerId, extraInstructions, post],
   );
 
   const toggle = (
