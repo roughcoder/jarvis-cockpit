@@ -165,7 +165,9 @@ function activeSnapshotSessions(
   if (!snapshot) return [];
   const archivedRunIds = new Set(snapshot.runs.filter(isArchivedRun).map((run) => run.run_id));
   return snapshot.sessions.filter(
-    (session) => session.archived_at == null && !archivedRunIds.has(session.run_id),
+    (session) =>
+      session.archived_at == null &&
+      (session.run_id === null || !archivedRunIds.has(session.run_id)),
   );
 }
 

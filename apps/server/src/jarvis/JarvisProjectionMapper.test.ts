@@ -114,6 +114,23 @@ it("maps one Jarvis run with two sessions into one project and two thread shells
   assert.strictEqual(snapshot.threads[0]?.worktreePath, null);
 });
 
+it("keeps worker-local sessions out of the run-backed orchestration projection", () => {
+  const snapshot = mapJarvisRunsSnapshotToShellSnapshot({
+    api_version: "v1",
+    schema_version: 1,
+    cursor: "evt_1",
+    sync: { mode: "fast", status: "fresh", synced_at: now, errors: [] },
+    runs: [],
+    sessions: [{ ...makeSession("sess_local"), run_id: null }],
+    workers: [],
+    artifacts: [],
+    generated_at: now,
+  });
+
+  assert.strictEqual(snapshot.projects.length, 0);
+  assert.strictEqual(snapshot.threads.length, 0);
+});
+
 it("normalizes empty Jarvis repo and branch labels before projection", () => {
   const session = {
     ...makeSession("sess_empty_labels"),

@@ -482,6 +482,30 @@ it.effect("decodes a Jarvis cockpit snapshot fixture", () =>
   }),
 );
 
+it.effect("retains worker-local sessions that are not linked to a run", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeSnapshot({
+      api_version: "v1",
+      schema_version: 1,
+      cursor: "evt_worker_local",
+      generated_at: generatedAt,
+      sync: {
+        mode: "fast",
+        status: "fresh",
+        synced_at: generatedAt,
+        errors: [],
+      },
+      runs: [],
+      sessions: [{ ...sessionFixture, run_id: null }],
+      workers: [],
+      artifacts: [],
+    });
+
+    assert.strictEqual(parsed.sessions.length, 1);
+    assert.strictEqual(parsed.sessions[0]?.run_id, null);
+  }),
+);
+
 it.effect("accepts live Jarvis terminal run snapshots with absent repo and branch labels", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeSnapshot({

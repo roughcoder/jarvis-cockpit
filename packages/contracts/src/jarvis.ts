@@ -842,7 +842,8 @@ export const JarvisWorkerSession = Schema.Struct({
   session_ref: JarvisSessionRef,
   worker_id: JarvisWorkerId,
   session_id: JarvisWorkerSessionId,
-  run_id: JarvisRunId,
+  // Worker-local sessions are valid before they are linked to an orchestration run.
+  run_id: Schema.NullOr(JarvisRunId),
   // Registry project linkage (optional; see JarvisRun.project_id).
   project_id: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   parent_chat_id: OptionalPossiblyEmptyPublicString,

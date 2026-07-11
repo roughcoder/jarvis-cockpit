@@ -1713,7 +1713,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       event_id: JarvisSessionEvent.fields.event_id.make("evt_fixture_1"),
       sequence: 1,
       session_ref: session.session_ref,
-      run_id: session.run_id,
+      run_id: runId,
       type: "session.created",
       occurred_at: now,
       turn_id: null,
@@ -1727,7 +1727,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       event_id: JarvisSessionEvent.fields.event_id.make("evt_fixture_2"),
       sequence: 2,
       session_ref: session.session_ref,
-      run_id: session.run_id,
+      run_id: runId,
       type: "input.requested",
       occurred_at: now,
       turn_id: "turn_fixture_1",
@@ -1961,7 +1961,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
   const request = {
     request_id: JarvisRequestId.make("input_fixture_1"),
     session_ref: session.session_ref,
-    run_id: session.run_id,
+    run_id: runId,
     kind: "input" as const,
     status: "pending" as const,
     title: "Worker direction needed",
@@ -2246,7 +2246,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
 
   const appendSyntheticTurn = (candidateSessionRef: string, turnInput: JarvisTurnInput) => {
     const targetSession = findSession(candidateSessionRef) ?? session;
-    const targetRun = findRun(targetSession.run_id) ?? run;
+    const targetRun = findRun(targetSession.run_id ?? run.run_id) ?? run;
     const existingEvents = eventsBySession.get(targetSession.session_ref) ?? [];
     const nextSequence = existingEvents.length + 1;
     const turnId = `turn_fixture_${fixtureIdSlug(targetSession.session_id)}_${nextSequence}`;
@@ -3109,7 +3109,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
         status: "stopped",
         updated_at: now,
       }));
-      const updatedRun = findRun(updatedSession.run_id) ?? run;
+      const updatedRun = findRun(updatedSession.run_id ?? run.run_id) ?? run;
       return Effect.succeed({
         ok: true,
         cursor: "evt_fixture_3",
@@ -3123,7 +3123,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
         archived_at: now,
         updated_at: now,
       }));
-      const updatedRun = findRun(updatedSession.run_id) ?? run;
+      const updatedRun = findRun(updatedSession.run_id ?? run.run_id) ?? run;
       return Effect.succeed({
         ok: true,
         cursor: "evt_fixture_3",

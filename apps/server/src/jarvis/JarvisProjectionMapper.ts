@@ -41,6 +41,16 @@ import {
   projectJarvisSessionForCockpit,
 } from "./JarvisCockpitProjection.ts";
 
+type LinkedJarvisWorkerSession = JarvisWorkerSession & {
+  readonly run_id: JarvisRun["run_id"];
+};
+
+function isLinkedJarvisWorkerSession(
+  session: JarvisWorkerSession,
+): session is LinkedJarvisWorkerSession {
+  return session.run_id !== null;
+}
+
 export function mapJarvisRunsSnapshotToShellSnapshot(
   snapshot: JarvisRunsSnapshot,
 ): OrchestrationShellSnapshot {
@@ -66,7 +76,7 @@ export function mapJarvisArchivedRunsSnapshotToShellSnapshot(
 function mapJarvisRunsSnapshotToShellSnapshotWithSessions(
   snapshot: JarvisRunsSnapshot,
   runs: ReadonlyArray<JarvisRun>,
-  sessions: ReadonlyArray<JarvisWorkerSession>,
+  sessions: ReadonlyArray<LinkedJarvisWorkerSession>,
   options: {
     readonly includeStartWorkProject: boolean;
   },
@@ -77,10 +87,7 @@ function mapJarvisRunsSnapshotToShellSnapshotWithSessions(
     snapshotSequence: 0,
     projects: startWorkProjectShellsForSnapshot(snapshot, projects, options),
     threads: sessions.map((session) =>
-      mapSessionToThreadShell(
-        session,
-        session.run_id !== undefined ? runsById.get(session.run_id) : undefined,
-      ),
+      mapSessionToThreadShell(session, runsById.get(session.run_id)),
     ),
     updatedAt: snapshot.generated_at,
   };
@@ -104,7 +111,7 @@ export function mapJarvisRunsSnapshotToReadModel(input: {
       deletedAt: null,
     })),
     threads: activeSessions.map((session) => {
-      const run = session.run_id !== undefined ? runsById.get(session.run_id) : undefined;
+      const run = runsById.get(session.run_id);
       return run
         ? mapJarvisSessionToThreadDetail({
             session,
@@ -124,19 +131,24 @@ export function mapJarvisRunsSnapshotToReadModel(input: {
 
 export function activeJarvisSessionsForSnapshot(
   snapshot: JarvisRunsSnapshot,
-): ReadonlyArray<JarvisWorkerSession> {
+): ReadonlyArray<LinkedJarvisWorkerSession> {
   const archivedRunIds = new Set(archivedJarvisRuns(snapshot.runs).map((run) => run.run_id));
   return snapshot.sessions.filter(
-    (session) => session.archived_at == null && !archivedRunIds.has(session.run_id),
+    (session): session is LinkedJarvisWorkerSession =>
+      isLinkedJarvisWorkerSession(session) &&
+      session.archived_at == null &&
+      !archivedRunIds.has(session.run_id),
   );
 }
 
 function archivedJarvisSessionsForSnapshot(
   snapshot: JarvisRunsSnapshot,
-): ReadonlyArray<JarvisWorkerSession> {
+): ReadonlyArray<LinkedJarvisWorkerSession> {
   const archivedRunIds = new Set(archivedJarvisRuns(snapshot.runs).map((run) => run.run_id));
   return snapshot.sessions.filter(
-    (session) => session.archived_at != null || archivedRunIds.has(session.run_id),
+    (session): session is LinkedJarvisWorkerSession =>
+      isLinkedJarvisWorkerSession(session) &&
+      (session.archived_at != null || archivedRunIds.has(session.run_id)),
   );
 }
 
@@ -155,10 +167,17 @@ export function mapJarvisSessionToThreadDetail(input: {
   readonly checkpoints?: ReadonlyArray<JarvisSessionCheckpoint>;
   readonly snapshotSequence?: number;
 }): OrchestrationThread {
-  const threadId = jarvisThreadIdForSession(input.session.session_ref);
-  const projectId = jarvisProjectIdForRun(input.session.run_id);
+  if (input.session.run_id === null) {
+    throw new Error("Cannot project a worker-local session without a Jarvis run");
+  }
+  const session: LinkedJarvisWorkerSession = {
+    ...input.session,
+    run_id: input.session.run_id,
+  };
+  const threadId = jarvisThreadIdForSession(session.session_ref);
+  const projectId = jarvisProjectIdForRun(session.run_id);
   const cockpit = projectJarvisSessionForCockpit({
-    session: input.session,
+    session,
     events: input.events,
     checkpoints: input.checkpoints ?? [],
   });
@@ -168,29 +187,29 @@ export function mapJarvisSessionToThreadDetail(input: {
   return {
     id: threadId,
     projectId,
-    jarvisRegistryProjectId: jarvisRegistryProjectIdForSession(input.session, input.run),
-    title: titleForSession(input.session, input.run),
-    modelSelection: modelSelectionForSession(input.session),
+    jarvisRegistryProjectId: jarvisRegistryProjectIdForSession(session, input.run),
+    title: titleForSession(session, input.run),
+    modelSelection: modelSelectionForSession(session),
     runtimeMode: DEFAULT_RUNTIME_MODE,
     interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-    branch: branchForSession(input.session, input.run),
+    branch: branchForSession(session, input.run),
     worktreePath: null,
     latestTurn,
-    createdAt: input.session.created_at,
-    updatedAt: cockpit.latestEventTime ?? input.session.updated_at,
-    archivedAt: input.session.archived_at ?? input.run?.archived_at ?? null,
+    createdAt: session.created_at,
+    updatedAt: cockpit.latestEventTime ?? session.updated_at,
+    archivedAt: session.archived_at ?? input.run?.archived_at ?? null,
     deletedAt: null,
     messages,
     proposedPlans: [],
     activities,
     checkpoints: cockpit.checkpoints.map(mapCockpitCheckpoint),
-    session: sessionForWorkerSession(input.session, latestTurn),
+    session: sessionForWorkerSession(session, latestTurn),
   };
 }
 
 function mapRunToProjectShell(
   run: JarvisRun,
-  _sessions: ReadonlyArray<JarvisWorkerSession>,
+  _sessions: ReadonlyArray<LinkedJarvisWorkerSession>,
 ): OrchestrationProjectShell {
   return {
     id: jarvisProjectIdForRun(run.run_id),
@@ -206,7 +225,7 @@ function mapRunToProjectShell(
 
 function mapRunsAndSessionsToProjectShells(
   runs: ReadonlyArray<JarvisRun>,
-  sessions: ReadonlyArray<JarvisWorkerSession>,
+  sessions: ReadonlyArray<LinkedJarvisWorkerSession>,
 ): ReadonlyArray<OrchestrationProjectShell> {
   const mappedRunIds = new Set(runs.map((run) => run.run_id));
   const projects = runs.map((run) => mapRunToProjectShell(run, sessions));
@@ -250,7 +269,7 @@ function startWorkProjectShell(generatedAt: string): OrchestrationProjectShell {
   };
 }
 
-function mapSessionToProjectShell(session: JarvisWorkerSession): OrchestrationProjectShell {
+function mapSessionToProjectShell(session: LinkedJarvisWorkerSession): OrchestrationProjectShell {
   return {
     id: jarvisProjectIdForRun(session.run_id),
     title: normalizeJarvisPublicLabel(session.repo) ?? session.title,
@@ -268,7 +287,7 @@ function jarvisWorkspaceRootForRun(runId: string): string {
 }
 
 function mapSessionToThreadShell(
-  session: JarvisWorkerSession,
+  session: LinkedJarvisWorkerSession,
   run: JarvisRun | undefined,
 ): OrchestrationThreadShell {
   return {

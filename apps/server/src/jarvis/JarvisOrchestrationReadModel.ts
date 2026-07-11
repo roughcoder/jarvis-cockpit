@@ -111,10 +111,14 @@ export function loadJarvisThreadDetail(
     requests: loadAllJarvisSessionRequests(client, sessionRef),
   }).pipe(
     Effect.map(({ snapshot, session, events, checkpoints, requests }) => {
-      const run = snapshot.runs.find((candidate) => candidate.run_id === session.run_id);
+      if (session.run_id === null) {
+        return Option.none();
+      }
+      const linkedSession = { ...session, run_id: session.run_id };
+      const run = snapshot.runs.find((candidate) => candidate.run_id === linkedSession.run_id);
       return Option.some(
         mapJarvisSessionToThreadDetail({
-          session,
+          session: linkedSession,
           ...(run ? { run } : {}),
           events: appendPendingRequestEvents(events, requests),
           checkpoints,

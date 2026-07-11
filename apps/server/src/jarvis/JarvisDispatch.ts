@@ -83,7 +83,11 @@ export function dispatchJarvisCommand(input: {
   return ensureJarvisControlSupported(input.client, sessionRef, input.command).pipe(
     Effect.flatMap(
       (session): Effect.Effect<JarvisSessionDispatchResult, OrchestrationDispatchCommandError> => {
-        if (input.command.type === "thread.turn.start" && session !== null) {
+        if (
+          input.command.type === "thread.turn.start" &&
+          session !== null &&
+          session.run_id !== null
+        ) {
           return dispatchJarvisTurnWithResume(
             input.client,
             sessionRef,
