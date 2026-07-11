@@ -35,7 +35,7 @@ describe("buildPrReviewOrchestratorPrompt", () => {
     expect(prompt).toContain('model="gpt-5.5"');
     expect(prompt).toContain('worker_id="review-worker"');
     expect(prompt).toContain("CHILD_TASK (pass this exact complete text to each spawn)");
-    expect(prompt).toContain("headRefOid: <full SHA>");
+    expect(prompt).toContain("headRefOid: <full 40-character SHA>");
     expect(prompt).toContain("watch_child_work_sessions");
     expect(prompt).toContain("child_chat_ids");
     expect(prompt).toContain("expected_count=2");
@@ -50,7 +50,9 @@ describe("buildPrReviewOrchestratorPrompt", () => {
     expect(prompt).toContain("1-based line number in the file at the PR head");
     expect(prompt).toContain("not the ordinal line number of `gh pr diff` output");
     expect(prompt).toContain("verify every proposed inline anchor");
-    expect(prompt).toContain("both report the same non-empty `headRefOid`");
+    expect(prompt).toContain("non-empty hexadecimal `headRefOid` values identify the same commit");
+    expect(prompt).toContain("7-39 character hexadecimal prefix");
+    expect(prompt).toContain("prefix exactly matches the full SHA");
     expect(prompt).toContain("Correctness:");
     expect(prompt).toContain("Security:");
     expect(prompt).not.toContain("Performance:");
