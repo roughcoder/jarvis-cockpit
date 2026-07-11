@@ -97,6 +97,7 @@ import { projectConversationCapabilities } from "./composer/composerCapabilities
 import { BrainWorkspaceStrip } from "./composer/BrainWorkspaceStrip";
 import {
   buildProjectConversationRenameInput,
+  isActiveProjectConversationStatus,
   PROJECT_CONTEXT_PANEL_COLLAPSED_STORAGE_KEY,
   resolveProjectConversationHeaderStatus,
   resolveProjectContextPanelToggleState,
@@ -286,6 +287,8 @@ export function ProjectConversationView({
     turnRequestedWorkspace,
     workspace: conversationWorkspace,
   });
+  const pollProjectConversationLive =
+    sendBusy || pollWorkspaceProvision || isActiveProjectConversationStatus(conversation?.status);
 
   const setWorkspaceStaging = (staging: ProjectConversationWorkspaceStaging) => {
     setWorkspaceStagingByThread((existing) => ({
@@ -328,22 +331,30 @@ export function ProjectConversationView({
   }, [conversationWorkspace?.engine, workspaceStagingKey]);
 
   const threadDetailRefreshRef = useRef(threadDetailQuery.refresh);
+  const threadsRefreshRef = useRef(threadsQuery.refresh);
   useEffect(() => {
     threadDetailRefreshRef.current = threadDetailQuery.refresh;
-  }, [threadDetailQuery.refresh]);
+    threadsRefreshRef.current = threadsQuery.refresh;
+  }, [threadDetailQuery.refresh, threadsQuery.refresh]);
 
   useEffect(() => {
-    if (!pollWorkspaceProvision) {
-      return;
+    const refresh = () => {
+      threadDetailRefreshRef.current();
+      threadsRefreshRef.current();
+    };
+    if (pollProjectConversationLive) {
+      refresh();
     }
-    threadDetailRefreshRef.current();
-    const id = window.setInterval(() => {
-      if (!document.hidden) {
-        threadDetailRefreshRef.current();
-      }
-    }, 2_500);
+    const id = window.setInterval(
+      () => {
+        if (!document.hidden) {
+          refresh();
+        }
+      },
+      pollProjectConversationLive ? 2_500 : 10_000,
+    );
     return () => window.clearInterval(id);
-  }, [pollWorkspaceProvision, workspaceStagingKey]);
+  }, [pollProjectConversationLive, workspaceStagingKey]);
 
   const refreshConversationData = () => {
     threadsQuery.refresh();

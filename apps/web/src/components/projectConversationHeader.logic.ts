@@ -37,6 +37,10 @@ export interface ProjectConversationHeaderStatus {
   readonly endedNote: string | null;
 }
 
+export function isActiveProjectConversationStatus(status: string | null | undefined): boolean {
+  return status === "created" || status === "running";
+}
+
 export function normalizeProjectConversationTitleInput(title: string): string {
   return title.trim().replace(/\s+/g, " ").slice(0, PROJECT_CONVERSATION_TITLE_MAX_LENGTH);
 }

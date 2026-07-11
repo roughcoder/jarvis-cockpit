@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildProjectConversationRenameInput,
+  isActiveProjectConversationStatus,
   PROJECT_CONVERSATION_TITLE_MAX_LENGTH,
   resolveProjectContextPanelToggleState,
   resolveProjectConversationHeaderStatus,
@@ -76,6 +77,14 @@ describe("project conversation header rename state", () => {
 });
 
 describe("project conversation header status", () => {
+  it("identifies statuses that need live refresh", () => {
+    expect(isActiveProjectConversationStatus("created")).toBe(true);
+    expect(isActiveProjectConversationStatus("running")).toBe(true);
+    expect(isActiveProjectConversationStatus("completed")).toBe(false);
+    expect(isActiveProjectConversationStatus("failed")).toBe(false);
+    expect(isActiveProjectConversationStatus(null)).toBe(false);
+  });
+
   it("resolves running, completed, and failed status indicators", () => {
     expect(
       resolveProjectConversationHeaderStatus({ status: "running", endedReason: null }),

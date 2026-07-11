@@ -47,6 +47,9 @@ describe("buildPrReviewOrchestratorPrompt", () => {
     expect(prompt).toContain("gh pr view 42 --repo acme/widgets --json headRefOid");
     expect(prompt).toContain("gh pr diff 42 --repo acme/widgets");
     expect(prompt).toContain("not the checkout's current branch");
+    expect(prompt).toContain("1-based line number in the file at the PR head");
+    expect(prompt).toContain("not the ordinal line number of `gh pr diff` output");
+    expect(prompt).toContain("verify every proposed inline anchor");
     expect(prompt).toContain("both report the same non-empty `headRefOid`");
     expect(prompt).toContain("Correctness:");
     expect(prompt).toContain("Security:");

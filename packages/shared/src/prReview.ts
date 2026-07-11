@@ -117,7 +117,8 @@ export function buildPrReviewOrchestratorPrompt(
     `Run \`gh pr view ${input.prNumber} --repo ${input.repo} --json headRefOid\`, record its full non-empty \`headRefOid\`, then run \`gh pr diff ${input.prNumber} --repo ${input.repo}\`. Review only that fetched diff, not the checkout's current branch. You may inspect surrounding code at that PR head; every finding must be introduced or exposed by the diff.`,
     `Restrict findings to:\n${reviewDimensions}`,
     SEVERITY_RUBRIC,
-    `The final report MUST start \`headRefOid: <full SHA>\`. Each finding MUST include severity, title, explanation, changed path, changed line, side (LEFT/RIGHT), and safe exact replacement code when available. Say explicitly if there are no findings. Do not edit, push, merge, release, or post to GitHub.`,
+    `For every finding, \`line\` means the 1-based line number in the file at the PR head: for RIGHT-side comments, track the new-file counter from the nearest \`@@ ... +start,count @@\` hunk header; for LEFT-side comments, track the old-file counter. It is not the ordinal line number of \`gh pr diff\` output, a patch position, or an editor/display offset. Before reporting a finding, verify its path, side, and line against the fetched diff hunk and, for RIGHT-side findings, against the file at \`headRefOid\`. If you cannot verify an inline anchor, label the finding unanchored and omit its line instead of guessing.`,
+    `The final report MUST start \`headRefOid: <full SHA>\`. Each anchored finding MUST include severity, title, explanation, changed path, changed line, side (LEFT/RIGHT), and safe exact replacement code when available. Say explicitly if there are no findings. Do not edit, push, merge, release, or post to GitHub.`,
   ].join("\n\n");
   const workerRoute = input.workerId?.trim()
     ? `, \`worker_id=${JSON.stringify(input.workerId.trim())}\``
@@ -139,9 +140,9 @@ export function buildPrReviewOrchestratorPrompt(
   const continuationInstruction = input.post
     ? [
         `Read both watched child results exactly once. If either failed, lacks a full headRefOid, or reports a different SHA, stop without publishing and report the failure.`,
-        `Otherwise reconcile and deduplicate the findings, then MUST call ${PR_REVIEW_ORCHESTRATOR_TOOLS.publishReview} exactly once for ${input.repo}#${input.prNumber} before producing any final textual answer. A textual summary without a successful publish call is incomplete.`,
+        `Otherwise reconcile and deduplicate the findings, verify every proposed inline anchor uses a real file line from the fetched diff rather than a global diff-output position, then MUST call ${PR_REVIEW_ORCHESTRATOR_TOOLS.publishReview} exactly once for ${input.repo}#${input.prNumber} before producing any final textual answer. A textual summary without a successful publish call is incomplete.`,
         `Use the agreed SHA as commit_id and a stable idempotency_key for this repo, PR, SHA, and joined review. Publish valid inline findings with path, changed line, side, severity, title, body, and safe replacement suggestion when available; put unanchored findings in the summary.`,
-        `After the tool succeeds, report its posted comment count and URL.`,
+        `After the tool succeeds, report the exact posted comment count and skipped comment count returned by the tool plus its URL. Do not describe skipped comments as inline findings.`,
       ].join(" ")
     : `Read both watched child results exactly once, verify their full headRefOid values match, reconcile and deduplicate the findings, do not publish externally, then report the combined result.`;
 

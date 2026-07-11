@@ -149,6 +149,7 @@ import {
   resolveProjectConversationRouteParams,
   type ProjectConversationRouteParams,
 } from "../jarvisProjectConversations.logic";
+import { isActiveProjectConversationStatus } from "./projectConversationHeader.logic";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
@@ -1100,6 +1101,7 @@ function SidebarJarvisProjectConversations({
     serverEnvironment.jarvisSnapshot({ environmentId, input: {} }),
   );
   const refreshSnapshot = snapshotQuery.refresh;
+  const refreshProjectThreads = projectThreadsQuery.refresh;
   const conversations =
     projectThreadsQuery.data?.ok === true ? (projectThreadsQuery.data.threads ?? []) : [];
   const workerSessions: ReadonlyArray<JarvisWorkerSession> =
@@ -1109,17 +1111,21 @@ function SidebarJarvisProjectConversations({
       session.status,
     ),
   );
+  const hasActiveProjectThreads = conversations.some((conversation) =>
+    isActiveProjectConversationStatus(conversation.status),
+  );
   useEffect(() => {
     const interval = window.setInterval(
       () => {
         if (!document.hidden) {
           refreshSnapshot();
+          refreshProjectThreads();
         }
       },
-      hasActiveWorkerSessions ? 2_000 : 10_000,
+      hasActiveWorkerSessions || hasActiveProjectThreads ? 2_000 : 10_000,
     );
     return () => window.clearInterval(interval);
-  }, [hasActiveWorkerSessions, refreshSnapshot]);
+  }, [hasActiveProjectThreads, hasActiveWorkerSessions, refreshProjectThreads, refreshSnapshot]);
   const conversationItems = useMemo(
     () =>
       projectConversationTreeItems({
