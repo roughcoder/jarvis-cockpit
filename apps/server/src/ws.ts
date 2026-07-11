@@ -135,7 +135,7 @@ import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-const JARVIS_COCKPIT_POLL_INTERVAL = Duration.seconds(2);
+const JARVIS_COCKPIT_POLL_INTERVAL = Duration.seconds(10);
 
 function jarvisShellPollingStream(
   jarvisClient: JarvisClient,

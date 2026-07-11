@@ -851,7 +851,7 @@ export const JarvisWorkerSession = Schema.Struct({
   provision_phase: OptionalPossiblyEmptyPublicString,
   repo: OptionalPossiblyEmptyPublicString,
   branch: OptionalPossiblyEmptyPublicString,
-  cwd_label: OptionalPublicString,
+  cwd_label: OptionalPossiblyEmptyPublicString,
   latest_event_cursor: OptionalPossiblyEmptyPublicString,
   pending_input_count: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   pending_approval_count: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
