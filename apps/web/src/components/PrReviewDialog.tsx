@@ -61,6 +61,12 @@ export function PrReviewDialog({
   const snapshotQuery = useEnvironmentQuery(
     serverEnvironment.jarvisSnapshot({ environmentId, input: {} }),
   );
+  const projectThreadsQuery = useEnvironmentQuery(
+    serverEnvironment.jarvisProjectThreads({
+      environmentId,
+      input: { projectId, includeArchived: false },
+    }),
+  );
   const workers = snapshotQuery.data?.snapshot?.workers ?? [];
 
   const [selectedReviewers, setSelectedReviewers] = useState<ReadonlySet<string>>(new Set());
@@ -169,6 +175,7 @@ export function PrReviewDialog({
     }
 
     const threadId = created.value.thread.thread_id;
+    projectThreadsQuery.refresh();
     setSubmitting(false);
     onOpenChange(false);
     toastManager.add({
@@ -196,7 +203,10 @@ export function PrReviewDialog({
           description:
             failure instanceof Error ? failure.message : "Could not send the review prompt.",
         });
+        return;
       }
+      projectThreadsQuery.refresh();
+      snapshotQuery.refresh();
     });
   };
 

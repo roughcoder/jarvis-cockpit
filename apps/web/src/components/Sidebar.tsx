@@ -1100,18 +1100,26 @@ function SidebarJarvisProjectConversations({
     serverEnvironment.jarvisSnapshot({ environmentId, input: {} }),
   );
   const refreshSnapshot = snapshotQuery.refresh;
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      if (!document.hidden) {
-        refreshSnapshot();
-      }
-    }, 10_000);
-    return () => window.clearInterval(interval);
-  }, [refreshSnapshot]);
   const conversations =
     projectThreadsQuery.data?.ok === true ? (projectThreadsQuery.data.threads ?? []) : [];
   const workerSessions: ReadonlyArray<JarvisWorkerSession> =
     snapshotQuery.data?.ok === true ? (snapshotQuery.data.snapshot?.sessions ?? []) : [];
+  const hasActiveWorkerSessions = workerSessions.some((session) =>
+    ["created", "provisioning", "ready", "running", "waiting", "needs_input"].includes(
+      session.status,
+    ),
+  );
+  useEffect(() => {
+    const interval = window.setInterval(
+      () => {
+        if (!document.hidden) {
+          refreshSnapshot();
+        }
+      },
+      hasActiveWorkerSessions ? 2_000 : 10_000,
+    );
+    return () => window.clearInterval(interval);
+  }, [hasActiveWorkerSessions, refreshSnapshot]);
   const conversationItems = useMemo(
     () =>
       projectConversationTreeItems({
@@ -3991,8 +3999,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     () => sortedProjects.filter((project) => project.sidebarSourceKind !== "jarvis-work-artifact"),
     [sortedProjects],
   );
-  // Dispatched work linked to a registry project nests under that project (below); only unlinked
-  // work remains in the standalone "Recent work" section.
+  // Parent-linked work is rendered once by SidebarJarvisProjectConversations.
+  // Only unlinked work remains in the standalone "Recent work" section.
   const legacyWorkProjects = useMemo(
     () =>
       sortedProjects.filter(
@@ -4002,23 +4010,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
       ),
     [sortedProjects],
   );
-  const linkedWorkByRegistryId = useMemo(() => {
-    const grouped = new Map<string, SidebarProjectView[]>();
-    for (const project of sortedProjects) {
-      if (
-        project.sidebarSourceKind === "jarvis-work-artifact" &&
-        project.linkedRegistryProjectId !== null
-      ) {
-        const existing = grouped.get(project.linkedRegistryProjectId);
-        if (existing) {
-          existing.push(project);
-        } else {
-          grouped.set(project.linkedRegistryProjectId, [project]);
-        }
-      }
-    }
-    return grouped;
-  }, [sortedProjects]);
   const legacyHasActiveProject =
     activeRouteProjectKey !== null &&
     legacyWorkProjects.some((project) => project.projectKey === activeRouteProjectKey);
@@ -4202,10 +4193,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
         ) : (
           <SidebarMenu ref={attachProjectListAutoAnimateRef}>
             {primaryProjects.map((project) => {
-              const linkedWork =
-                project.sidebarSourceKind === "jarvis-registry" && project.jarvisRegistryProjectId
-                  ? (linkedWorkByRegistryId.get(project.jarvisRegistryProjectId) ?? [])
-                  : [];
               return (
                 <React.Fragment key={project.projectKey}>
                   <SidebarProjectListRow
@@ -4232,39 +4219,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                     surfaceCopy={surfaceCopy}
                     refreshJarvisSnapshot={refreshJarvisSnapshot}
                   />
-                  {linkedWork.length > 0 ? (
-                    <div className="ml-3 border-l border-sidebar-border/40 pl-1">
-                      {linkedWork.map((child) => (
-                        <SidebarProjectListRow
-                          key={child.projectKey}
-                          project={child}
-                          isThreadListExpanded={expandedThreadListsByProject.has(child.projectKey)}
-                          activeRouteThreadKey={
-                            activeRouteProjectKey === child.projectKey ? routeThreadKey : null
-                          }
-                          activeProjectConversationRoute={routeProjectConversationRef}
-                          newThreadShortcutLabel={newThreadShortcutLabel}
-                          handleNewThread={handleNewThread}
-                          archiveThread={archiveThread}
-                          deleteThread={deleteThread}
-                          threadJumpLabelByKey={threadJumpLabelByKey}
-                          attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
-                          expandThreadListForProject={expandThreadListForProject}
-                          collapseThreadListForProject={collapseThreadListForProject}
-                          dragInProgressRef={dragInProgressRef}
-                          suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
-                          suppressProjectClickForContextMenuRef={
-                            suppressProjectClickForContextMenuRef
-                          }
-                          isManualProjectSorting={false}
-                          dragHandleProps={null}
-                          isJarvisCockpitMode={isJarvisCockpitMode}
-                          surfaceCopy={surfaceCopy}
-                          refreshJarvisSnapshot={refreshJarvisSnapshot}
-                        />
-                      ))}
-                    </div>
-                  ) : null}
                 </React.Fragment>
               );
             })}
