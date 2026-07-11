@@ -898,6 +898,56 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
   });
 
+  const branchNamespaceConflicts = Effect.fn("branchNamespaceConflicts")(function* (
+    cwd: string,
+    refName: string,
+  ) {
+    const segments = refName.split("/");
+    for (let index = 1; index < segments.length; index += 1) {
+      const prefix = segments.slice(0, index).join("/");
+      if (yield* branchExists(cwd, prefix)) {
+        return true;
+      }
+    }
+
+    const descendants = yield* runGitStdout(
+      "GitVcsDriver.branchNamespaceConflicts",
+      cwd,
+      ["for-each-ref", "--format=%(refname:short)", `refs/heads/${refName}/`],
+      true,
+    );
+    return descendants.trim().length > 0;
+  });
+
+  const resolveAvailableWorktreeBranchName = Effect.fn("resolveAvailableWorktreeBranchName")(
+    function* (cwd: string, desiredBranch: string) {
+      const desiredExists = yield* branchExists(cwd, desiredBranch);
+      const desiredConflicts = yield* branchNamespaceConflicts(cwd, desiredBranch);
+      if (!desiredExists && !desiredConflicts) {
+        return desiredBranch;
+      }
+
+      const flattened = desiredBranch.replace(/\/+/g, "-");
+      for (let suffix = 0; suffix <= 100; suffix += 1) {
+        const candidate = suffix === 0 ? flattened : `${flattened}-${suffix}`;
+        const candidateExists = yield* branchExists(cwd, candidate);
+        const candidateConflicts = yield* branchNamespaceConflicts(cwd, candidate);
+        if (!candidateExists && !candidateConflicts) {
+          return candidate;
+        }
+      }
+
+      return yield* new GitCommandError({
+        ...gitCommandContext({
+          operation: "GitVcsDriver.createWorktree",
+          cwd,
+          args: ["worktree", "add", "-b", desiredBranch],
+        }),
+        detail: `Could not find an available worktree branch name for '${desiredBranch}'.`,
+      });
+    },
+  );
+
   const resolveCurrentUpstream = Effect.fn("resolveCurrentUpstream")(function* (cwd: string) {
     const upstreamRef = yield* runGitStdout(
       "GitVcsDriver.resolveCurrentUpstream",
@@ -2245,19 +2295,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input) {
-    const targetBranch = input.newRefName ?? input.refName;
+    const newRefName =
+      input.newRefName === undefined
+        ? undefined
+        : yield* resolveAvailableWorktreeBranchName(input.cwd, input.newRefName);
+    const targetBranch = newRefName ?? input.refName;
     const sanitizedBranch = targetBranch.replace(/\//g, "-");
     const repoName = path.basename(input.cwd);
     const worktreePath = input.path ?? path.join(worktreesDir, repoName, sanitizedBranch);
-    const args = input.newRefName
-      ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
+    const args = newRefName
+      ? ["worktree", "add", "-b", newRefName, worktreePath, input.refName]
       : ["worktree", "add", worktreePath, input.refName];
 
     yield* executeGit("GitVcsDriver.createWorktree", input.cwd, args, {
       fallbackErrorDetail: "git worktree add failed",
     });
 
-    if (input.newRefName && input.baseRefName) {
+    if (newRefName && input.baseRefName) {
       const remoteNames = yield* listRemoteNames(input.cwd).pipe(Effect.orElseSucceed(() => []));
       const parsedBaseRef = parseRemoteRefWithRemoteNames(
         input.baseRefName,
@@ -2266,7 +2320,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const baseBranch = parsedBaseRef?.branchName ?? input.baseRefName;
       yield* runGit("GitVcsDriver.createWorktree.configureBaseRef", input.cwd, [
         "config",
-        `branch.${input.newRefName}.gh-merge-base`,
+        `branch.${newRefName}.gh-merge-base`,
         baseBranch,
       ]);
     }

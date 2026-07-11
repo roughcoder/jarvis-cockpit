@@ -595,6 +595,38 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(yield* fileSystem.exists(worktreePath), false);
       }),
     );
+
+    it.effect(
+      "falls back when a new worktree branch conflicts with an existing ref namespace",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const pathService = yield* Path.Path;
+          const worktreePath = pathService.join(
+            yield* makeTmpDir("git-worktrees-"),
+            "jarvis-worktree",
+          );
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+
+          yield* git(cwd, ["branch", "jarvis"]);
+          const created = yield* driver.createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "jarvis/jarvis-manual-123-docs-review",
+          });
+
+          assert.equal(created.worktree.path, worktreePath);
+          assert.equal(created.worktree.refName, "jarvis-jarvis-manual-123-docs-review");
+          assert.equal(
+            yield* git(worktreePath, ["branch", "--show-current"]),
+            "jarvis-jarvis-manual-123-docs-review",
+          );
+
+          yield* driver.removeWorktree({ cwd, path: worktreePath });
+        }),
+    );
   });
 
   describe("commit context", () => {
