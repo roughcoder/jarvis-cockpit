@@ -9,7 +9,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   defaultReviewerKeys,
+  deriveOrchestratorOptions,
   deriveReviewerOptions,
+  resolveOrchestratorKey,
   selectCommonReviewWorker,
   selectReviewOrchestratorWorker,
 } from "./PrReviewDialog.logic";
@@ -145,6 +147,54 @@ describe("deriveReviewerOptions", () => {
   });
 });
 
+describe("orchestrator model selection", () => {
+  const providers = [
+    provider({
+      instanceId: "claudeAgent",
+      driver: "claudeAgent",
+      displayName: "Claude",
+      models: [{ slug: "claude-opus-4-7", name: "Claude Opus 4.7" }],
+    }),
+    provider({
+      instanceId: "codex",
+      driver: "codex",
+      displayName: "Codex",
+      models: [{ slug: "gpt-5.5", name: "GPT-5.5" }],
+    }),
+    provider({
+      instanceId: "cursor",
+      driver: "cursor",
+      displayName: "Cursor",
+      models: [{ slug: "composer", name: "Composer" }],
+    }),
+  ];
+
+  it("offers only code-agent engines that can host an orchestrator", () => {
+    expect(deriveOrchestratorOptions(providers).map((option) => option.engine)).toEqual([
+      "claude",
+      "codex",
+    ]);
+  });
+
+  it("resolves the persisted default and falls back to Codex GPT-5.5", () => {
+    const options = deriveOrchestratorOptions(providers);
+    expect(
+      resolveOrchestratorKey({
+        options,
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-opus-4-7",
+      }),
+    ).toBe("claudeAgent::claude-opus-4-7");
+    expect(
+      resolveOrchestratorKey({
+        options,
+        instanceId: ProviderInstanceId.make("missing"),
+        model: "missing",
+      }),
+    ).toBe("codex::gpt-5.5");
+  });
+});
+
 describe("selectCommonReviewWorker", () => {
   it("pins both reviewers to a healthy authenticated worker with both engines and two slots", () => {
     const selected = selectCommonReviewWorker({
@@ -183,6 +233,7 @@ describe("selectReviewOrchestratorWorker", () => {
         worker({ id: "laptop", engines: ["codex", "claude"], max: 2 }),
       ],
       childWorkerId: "laptop",
+      engine: "codex",
     });
 
     expect(selected).toBe("brain");
@@ -191,6 +242,7 @@ describe("selectReviewOrchestratorWorker", () => {
   it("returns no route when every Codex worker is full", () => {
     const selected = selectReviewOrchestratorWorker({
       workers: [worker({ id: "brain", engines: ["codex"], max: 1, active: 1 })],
+      engine: "codex",
     });
 
     expect(selected).toBeUndefined();
@@ -200,8 +252,21 @@ describe("selectReviewOrchestratorWorker", () => {
     const selected = selectReviewOrchestratorWorker({
       workers: [worker({ id: "laptop", engines: ["codex", "claude"], max: 2 })],
       childWorkerId: "laptop",
+      engine: "codex",
     });
 
     expect(selected).toBeUndefined();
+  });
+
+  it("routes a Claude parent only to a Claude-capable worker", () => {
+    const selected = selectReviewOrchestratorWorker({
+      workers: [
+        worker({ id: "brain", engines: ["codex"], max: 1 }),
+        worker({ id: "laptop", engines: ["codex", "claude"], max: 1 }),
+      ],
+      engine: "claude",
+    });
+
+    expect(selected).toBe("laptop");
   });
 });

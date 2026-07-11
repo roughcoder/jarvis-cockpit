@@ -362,6 +362,7 @@ export const ObservabilitySettings = Schema.Struct({
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
 export const DEFAULT_JARVIS_API_BASE_URL = "http://127.0.0.1:8791";
+export const DEFAULT_ORCHESTRATOR_MODEL = "gpt-5.5";
 
 export const JarvisSettings = Schema.Struct({
   apiBaseUrl: TrimmedString.pipe(
@@ -425,6 +426,14 @@ export const ServerSettings = Schema.Struct({
       Effect.succeed({
         instanceId: ProviderInstanceId.make("codex"),
         model: DEFAULT_GIT_TEXT_GENERATION_MODEL,
+      }),
+    ),
+  ),
+  orchestratorModelSelection: ModelSelection.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({
+        instanceId: ProviderInstanceId.make("codex"),
+        model: DEFAULT_ORCHESTRATOR_MODEL,
       }),
     ),
   ),
@@ -553,6 +562,7 @@ export const ServerSettingsPatch = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  orchestratorModelSelection: Schema.optionalKey(ModelSelectionPatch),
   observability: Schema.optionalKey(
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),

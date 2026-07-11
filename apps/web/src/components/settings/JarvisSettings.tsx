@@ -22,13 +22,19 @@ import {
   type JarvisRun,
   type JarvisWorkerSession,
 } from "@t3tools/contracts";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import * as Equal from "effect/Equal";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 
 import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
-import { serverEnvironment, primaryServerConfigAtom } from "../../state/server";
+import {
+  serverEnvironment,
+  primaryServerConfigAtom,
+  primaryServerProvidersAtom,
+} from "../../state/server";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -37,7 +43,14 @@ import { Input } from "../ui/input";
 import { Badge } from "../ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Spinner } from "../ui/spinner";
-import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import {
+  SettingResetButton,
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+} from "./settingsLayout";
+import { deriveOrchestratorOptions } from "../../orchestratorModelOptions";
 
 function formatCommandFailure(error: unknown): string {
   return error instanceof Error && error.message.trim().length > 0
@@ -295,7 +308,19 @@ export function JarvisSettingsPanel() {
   const updateSettings = useUpdatePrimarySettings();
   const primaryEnvironment = usePrimaryEnvironment();
   const serverConfig = useAtomValue(primaryServerConfigAtom);
+  const providers = useAtomValue(primaryServerProvidersAtom);
   const connection = serverConfig?.jarvisBrain ?? null;
+  const orchestratorOptions = useMemo(() => deriveOrchestratorOptions(providers), [providers]);
+  const selectedOrchestrator = orchestratorOptions.find(
+    (option) =>
+      option.providerInstanceId === settings.orchestratorModelSelection.instanceId &&
+      option.model === settings.orchestratorModelSelection.model,
+  );
+  const selectedOrchestratorKey = selectedOrchestrator?.key;
+  const isOrchestratorModelDirty = !Equal.equals(
+    settings.orchestratorModelSelection,
+    DEFAULT_UNIFIED_SETTINGS.orchestratorModelSelection,
+  );
   const checkJarvisBrain = useAtomCommand(serverEnvironment.checkJarvisBrain, {
     label: "Jarvis brain check",
     reportFailure: false,
@@ -468,6 +493,58 @@ export function JarvisSettingsPanel() {
 
   return (
     <SettingsPageContainer className="max-w-4xl">
+      <SettingsSection title="Orchestration" icon={<BoxesIcon className="size-3.5" />}>
+        <SettingsRow
+          title="Default orchestrator model"
+          description="Used for parent orchestration conversations. Workflows such as PR Review start with this model and can override it for one run."
+          resetAction={
+            isOrchestratorModelDirty ? (
+              <SettingResetButton
+                label="default orchestrator model"
+                onClick={() =>
+                  updateSettings({
+                    orchestratorModelSelection: DEFAULT_UNIFIED_SETTINGS.orchestratorModelSelection,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            orchestratorOptions.length === 0 ? (
+              <Badge variant="warning">No code-agent models</Badge>
+            ) : (
+              <Select
+                value={selectedOrchestratorKey}
+                onValueChange={(key) => {
+                  const option = orchestratorOptions.find((candidate) => candidate.key === key);
+                  if (!option) return;
+                  updateSettings({
+                    orchestratorModelSelection: {
+                      instanceId: option.providerInstanceId,
+                      model: option.model,
+                    },
+                  });
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-64" aria-label="Default orchestrator model">
+                  <SelectValue>
+                    {selectedOrchestrator?.label ??
+                      `Unavailable · ${settings.orchestratorModelSelection.model}`}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {orchestratorOptions.map((option) => (
+                    <SelectItem hideIndicator key={option.key} value={option.key}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            )
+          }
+        />
+      </SettingsSection>
+
       <SettingsSection
         title="Jarvis Brain"
         icon={<ServerCogIcon className="size-3.5" />}

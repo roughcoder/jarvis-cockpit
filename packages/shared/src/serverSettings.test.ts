@@ -161,6 +161,20 @@ describe("serverSettings helpers", () => {
     });
   });
 
+  it("replaces the default orchestrator provider and model together", () => {
+    expect(
+      applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+        orchestratorModelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-opus-4-7",
+        },
+      }).orchestratorModelSelection,
+    ).toEqual({
+      instanceId: "claudeAgent",
+      model: "claude-opus-4-7",
+    });
+  });
+
   it("replaces providerInstances maps so omitted instance fields are cleared", () => {
     const codexId = ProviderInstanceId.make("codex");
     const current = {

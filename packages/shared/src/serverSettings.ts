@@ -42,8 +42,11 @@ export function parsePersistedServerObservabilitySettings(
   return { otlpTracesUrl: undefined, otlpMetricsUrl: undefined };
 }
 
-function shouldReplaceTextGenerationModelSelection(
-  patch: ServerSettingsPatch["textGenerationModelSelection"] | undefined,
+function shouldReplaceModelSelection(
+  patch:
+    | ServerSettingsPatch["textGenerationModelSelection"]
+    | ServerSettingsPatch["orchestratorModelSelection"]
+    | undefined,
 ): boolean {
   return Boolean(patch && (patch.instanceId !== undefined || patch.model !== undefined));
 }
@@ -67,7 +70,7 @@ function mergeModelSelectionOptionsById(input: {
 }
 
 /**
- * Applies a server settings patch while treating textGenerationModelSelection as
+ * Applies a server settings patch while treating model selections as
  * replace-on-provider/model updates. This prevents stale nested options from
  * surviving a reset patch that intentionally omits options.
  */
@@ -76,6 +79,7 @@ export function applyServerSettingsPatch(
   patch: ServerSettingsPatch,
 ): ServerSettings {
   const selectionPatch = patch.textGenerationModelSelection;
+  const orchestratorSelectionPatch = patch.orchestratorModelSelection;
   const { automaticGitFetchInterval, ...patchForMerge } = patch;
   const next = deepMerge(current, patchForMerge);
   const nextWithReplacements = {
@@ -85,21 +89,34 @@ export function applyServerSettingsPatch(
       : {}),
     ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
   };
-  if (!selectionPatch) {
-    return nextWithReplacements;
-  }
-
-  const instanceId = selectionPatch.instanceId ?? current.textGenerationModelSelection.instanceId;
-  const model = selectionPatch.model ?? current.textGenerationModelSelection.model;
-  const options = shouldReplaceTextGenerationModelSelection(selectionPatch)
-    ? selectionPatch.options
-    : mergeModelSelectionOptionsById({
-        current: current.textGenerationModelSelection.options,
-        patch: selectionPatch.options,
-      });
+  const mergeSelection = (
+    currentSelection: ServerSettings["textGenerationModelSelection"],
+    selection:
+      | ServerSettingsPatch["textGenerationModelSelection"]
+      | ServerSettingsPatch["orchestratorModelSelection"]
+      | undefined,
+  ) => {
+    if (!selection) return currentSelection;
+    const instanceId = selection.instanceId ?? currentSelection.instanceId;
+    const model = selection.model ?? currentSelection.model;
+    const options = shouldReplaceModelSelection(selection)
+      ? selection.options
+      : mergeModelSelectionOptionsById({
+          current: currentSelection.options,
+          patch: selection.options,
+        });
+    return createModelSelection(instanceId, model, options);
+  };
 
   return {
     ...nextWithReplacements,
-    textGenerationModelSelection: createModelSelection(instanceId, model, options),
+    textGenerationModelSelection: mergeSelection(
+      current.textGenerationModelSelection,
+      selectionPatch,
+    ),
+    orchestratorModelSelection: mergeSelection(
+      current.orchestratorModelSelection,
+      orchestratorSelectionPatch,
+    ),
   };
 }

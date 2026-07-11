@@ -381,6 +381,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
+  const isOrchestratorModelDirty = !Equal.equals(
+    settings.orchestratorModelSelection ?? null,
+    DEFAULT_UNIFIED_SETTINGS.orchestratorModelSelection ?? null,
+  );
 
   const changedSettingLabels = useMemo(
     () => [
@@ -422,9 +426,11 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Delete confirmation"]
         : []),
       ...(isGitWritingModelDirty ? ["Git writing model"] : []),
+      ...(isOrchestratorModelDirty ? ["Default orchestrator model"] : []),
     ],
     [
       isGitWritingModelDirty,
+      isOrchestratorModelDirty,
       settings.autoOpenPlanSidebar,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
@@ -466,6 +472,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
+      orchestratorModelSelection: DEFAULT_UNIFIED_SETTINGS.orchestratorModelSelection,
     });
     onRestored?.();
   }, [changedSettingLabels, onRestored, setTheme, updateSettings]);

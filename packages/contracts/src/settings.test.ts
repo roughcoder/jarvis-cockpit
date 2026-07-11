@@ -99,6 +99,29 @@ describe("ServerSettings worktree defaults", () => {
   });
 });
 
+describe("ServerSettings orchestrator model", () => {
+  it("defaults legacy configs to Codex GPT-5.5", () => {
+    expect(decodeServerSettings({}).orchestratorModelSelection).toEqual({
+      instanceId: "codex",
+      model: "gpt-5.5",
+    });
+  });
+
+  it("accepts an explicit Claude orchestrator selection", () => {
+    expect(
+      decodeServerSettingsPatch({
+        orchestratorModelSelection: {
+          instanceId: "claudeAgent",
+          model: "claude-opus-4-7",
+        },
+      }).orchestratorModelSelection,
+    ).toEqual({
+      instanceId: "claudeAgent",
+      model: "claude-opus-4-7",
+    });
+  });
+});
+
 describe("ServerSettingsPatch.providerInstances", () => {
   it("treats providerInstances as an optional whole-map replacement", () => {
     const patch = decodeServerSettingsPatch({});

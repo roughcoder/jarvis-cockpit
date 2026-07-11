@@ -7,10 +7,13 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   defaultReviewerKeys,
+  deriveOrchestratorOptions,
   deriveReviewerOptions,
+  resolveOrchestratorKey,
   selectCommonReviewWorker,
   selectReviewOrchestratorWorker,
 } from "./PrReviewDialog.logic";
+import { useEnvironmentSettings } from "../hooks/useSettings";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -31,6 +34,7 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 import { Switch } from "./ui/switch";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { Textarea } from "./ui/textarea";
 import { toastManager } from "./ui/toast";
 
@@ -59,6 +63,11 @@ export function PrReviewDialog({
       serverEnvironment.providersValueAtom(environmentId),
     ) as ReadonlyArray<ServerProvider> | null) ?? [];
   const reviewerOptions = useMemo(() => deriveReviewerOptions(providers), [providers]);
+  const orchestratorOptions = useMemo(() => deriveOrchestratorOptions(providers), [providers]);
+  const defaultOrchestrator = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.orchestratorModelSelection,
+  );
   const snapshotQuery = useEnvironmentQuery(
     serverEnvironment.jarvisSnapshot({ environmentId, input: {} }),
   );
@@ -71,6 +80,7 @@ export function PrReviewDialog({
   const workers = snapshotQuery.data?.snapshot?.workers ?? [];
 
   const [selectedReviewers, setSelectedReviewers] = useState<ReadonlySet<string>>(new Set());
+  const [selectedOrchestrator, setSelectedOrchestrator] = useState<string | undefined>();
   const [selectedDimensions, setSelectedDimensions] = useState<ReadonlySet<string>>(
     new Set(DEFAULT_DIMENSIONS),
   );
@@ -90,6 +100,17 @@ export function PrReviewDialog({
     });
   }, [open, reviewerOptions]);
 
+  useEffect(() => {
+    if (!open) return;
+    setSelectedOrchestrator(
+      resolveOrchestratorKey({
+        options: orchestratorOptions,
+        instanceId: defaultOrchestrator.instanceId,
+        model: defaultOrchestrator.model,
+      }),
+    );
+  }, [defaultOrchestrator.instanceId, defaultOrchestrator.model, open, orchestratorOptions]);
+
   const createThread = useAtomCommand(serverEnvironment.createJarvisProjectThread, {
     reportFailure: false,
   });
@@ -105,6 +126,10 @@ export function PrReviewDialog({
     () => reviewerOptions.filter((option) => selectedReviewers.has(option.key)),
     [reviewerOptions, selectedReviewers],
   );
+  const orchestrator = useMemo(
+    () => orchestratorOptions.find((option) => option.key === selectedOrchestrator),
+    [orchestratorOptions, selectedOrchestrator],
+  );
   const workerId = useMemo(
     () => selectCommonReviewWorker({ workers, reviewers, repo }),
     [workers, reviewers, repo],
@@ -113,9 +138,10 @@ export function PrReviewDialog({
     () =>
       selectReviewOrchestratorWorker({
         workers,
+        engine: orchestrator?.engine ?? "codex",
         ...(workerId ? { childWorkerId: workerId } : {}),
       }),
-    [workers, workerId],
+    [orchestrator?.engine, workers, workerId],
   );
 
   const prompt = useMemo(
@@ -156,6 +182,7 @@ export function PrReviewDialog({
     dimensions.length > 0 &&
     workerId !== undefined &&
     orchestratorWorkerId !== undefined &&
+    orchestrator !== undefined &&
     !submitting;
 
   // Conversation title format: `review: #12 jarvis-cockpit` — the PR number and
@@ -166,6 +193,11 @@ export function PrReviewDialog({
   const handleStart = async () => {
     setSubmitting(true);
     setError(null);
+    if (!orchestrator || !orchestratorWorkerId) {
+      setSubmitting(false);
+      setError("Choose an available orchestrator model with a healthy worker.");
+      return;
+    }
 
     const created = await createThread({
       environmentId,
@@ -174,8 +206,8 @@ export function PrReviewDialog({
         input: {
           title: reviewTitle,
           chat_type: "orchestrator",
-          engine: "codex",
-          model: "gpt-5.5",
+          engine: orchestrator.engine,
+          model: orchestrator.model,
           worker_id: orchestratorWorkerId,
         },
       },
@@ -250,6 +282,34 @@ export function PrReviewDialog({
 
         <div className="max-h-[60vh] space-y-5 overflow-y-auto px-4 py-4">
           <section className="space-y-2">
+            <h3 className="text-xs font-semibold uppercase text-muted-foreground">Orchestrator</h3>
+            {orchestratorOptions.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No available Codex or Claude model can run the parent conversation.
+              </p>
+            ) : (
+              <Select
+                value={selectedOrchestrator}
+                onValueChange={(value) => setSelectedOrchestrator(value ?? undefined)}
+              >
+                <SelectTrigger className="w-full" aria-label="PR review orchestrator model">
+                  <SelectValue>{orchestrator?.label ?? "Choose an orchestrator model"}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="start" alignItemWithTrigger={false}>
+                  {orchestratorOptions.map((option) => (
+                    <SelectItem hideIndicator key={option.key} value={option.key}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Starts with the default from Jarvis settings. This choice applies only to this review.
+            </p>
+          </section>
+
+          <section className="space-y-2">
             <h3 className="text-xs font-semibold uppercase text-muted-foreground">
               Reviewers ({reviewers.length}/2)
             </h3>
@@ -281,7 +341,8 @@ export function PrReviewDialog({
             ) : null}
             {workerId !== undefined && orchestratorWorkerId === undefined ? (
               <p className="text-xs text-destructive">
-                No Codex worker has a separate free slot for the parent orchestrator.
+                No healthy {orchestrator?.engine ?? "selected"} worker has a separate free slot for
+                the parent orchestrator.
               </p>
             ) : null}
           </section>

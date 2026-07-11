@@ -1,65 +1,30 @@
-import type {
-  JarvisWorkerProfile,
-  ProviderDriverKind,
-  ProviderInstanceId,
-  ServerProvider,
-} from "@t3tools/contracts";
+import type { JarvisWorkerProfile, ServerProvider } from "@t3tools/contracts";
 
 import {
   workerCanStartRepo,
   workerIsHealthyEnough,
   workerSupportsEngine,
 } from "./composer/composerJarvisRouting.logic";
-import { deriveProviderInstanceEntries } from "../providerInstances";
+import {
+  deriveCodeAgentModelOptions,
+  type CodeAgentModelOption,
+} from "../orchestratorModelOptions";
+export { deriveOrchestratorOptions, resolveOrchestratorKey } from "../orchestratorModelOptions";
 
-export interface ReviewerOption {
-  readonly key: string;
-  readonly providerInstanceId: ProviderInstanceId;
-  readonly engine: string;
-  readonly model: string;
-  readonly label: string;
-}
+export type ReviewerOption = CodeAgentModelOption;
 
 const DEFAULT_REVIEWER_MODELS = [
   { engine: "claude", model: "claude-opus-4-7" },
   { engine: "codex", model: "gpt-5.5" },
 ] as const;
 
-function reviewEngineForDriver(driver: ProviderDriverKind): string {
-  return driver === "claudeAgent" ? "claude" : String(driver);
-}
-
 /**
- * Flattens the enabled, available provider instances into a flat list of
- * selectable models. Keep the provider instance, runtime engine, and model
- * together: an orchestrator must be able to reproduce the user's exact route,
- * including when several instances share the same engine.
+ * PR reviewers can use every code-agent provider route exposed by the fleet.
  */
 export function deriveReviewerOptions(
   providers: ReadonlyArray<ServerProvider>,
 ): ReadonlyArray<ReviewerOption> {
-  const seen = new Set<string>();
-  const options: Array<ReviewerOption> = [];
-  for (const entry of deriveProviderInstanceEntries(providers)) {
-    if (!entry.enabled || !entry.isAvailable) {
-      continue;
-    }
-    for (const model of entry.models) {
-      const key = `${entry.instanceId}::${model.slug}`;
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      options.push({
-        key,
-        providerInstanceId: entry.instanceId,
-        engine: reviewEngineForDriver(entry.driverKind),
-        model: model.slug,
-        label: `${entry.displayName} · ${model.shortName ?? model.name}`,
-      });
-    }
-  }
-  return options;
+  return deriveCodeAgentModelOptions(providers);
 }
 
 export function defaultReviewerKeys(options: ReadonlyArray<ReviewerOption>): ReadonlySet<string> {
@@ -110,13 +75,14 @@ export function selectCommonReviewWorker(input: {
 export function selectReviewOrchestratorWorker(input: {
   readonly workers: ReadonlyArray<JarvisWorkerProfile>;
   readonly childWorkerId?: string;
+  readonly engine: string;
 }): string | undefined {
   const eligible = input.workers.filter((worker) => {
     const used = worker.capacity.active_sessions + worker.capacity.queued_sessions;
     const requiredSlots = worker.worker_id === input.childWorkerId ? 3 : 1;
     return (
       workerIsHealthyEnough(worker) &&
-      workerSupportsEngine(worker, "codex") &&
+      workerSupportsEngine(worker, input.engine) &&
       used + requiredSlots <= worker.capacity.max_sessions
     );
   });
