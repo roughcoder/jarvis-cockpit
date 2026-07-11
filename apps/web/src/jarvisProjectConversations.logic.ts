@@ -199,9 +199,17 @@ export function projectConversationHistoryMessages(
   thread: Pick<JarvisProjectThreadDetail, "messages"> | null,
 ): ProjectConversationMessageView[] {
   return (thread?.messages ?? [])
+    .filter((message) => !isRawProjectConversationToolFrame(message))
     .map((message, index) => historyMessageView(message, index))
     .filter((message) => message.content.trim().length > 0)
     .sort((left, right) => left.observedAt.localeCompare(right.observedAt));
+}
+
+export function isRawProjectConversationToolFrame(message: JarvisProjectThreadMessage): boolean {
+  if (message.role === "user") {
+    return false;
+  }
+  return /^tool\.(?:call|result)\b/u.test(message.content.trim());
 }
 
 export function projectConversationMergedMessages(input: {

@@ -11,6 +11,7 @@ import {
   defaultProjectRepo,
   extractProjectConversationReply,
   formatProjectConversationFailure,
+  isRawProjectConversationToolFrame,
   isProjectConversationArchived,
   latestProjectConversation,
   projectConversationHistoryMessages,
@@ -230,6 +231,61 @@ describe("project conversation history", () => {
       ["assistant", "Second"],
     ]);
     expect(messages.every((message) => message.source === "history")).toBe(true);
+  });
+
+  it("filters raw tool protocol frames from history messages", () => {
+    const messages = projectConversationHistoryMessages({
+      messages: [
+        {
+          role: "assistant",
+          peer_id: "jarvis",
+          content: "Hello, Neil.",
+          observed_at: "2026-07-07T10:00:00.000Z",
+        },
+        {
+          role: "assistant",
+          peer_id: "jarvis",
+          content: "tool.call spawn_child_work_session",
+          observed_at: "2026-07-07T10:00:01.000Z",
+        },
+        {
+          role: "assistant",
+          peer_id: "jarvis",
+          content: "tool.result spawn_child_work_session",
+          observed_at: "2026-07-07T10:00:02.000Z",
+        },
+        {
+          role: "user",
+          peer_id: "neil",
+          content: "tool.call is text here, not a protocol frame.",
+          observed_at: "2026-07-07T10:00:03.000Z",
+        },
+      ],
+    });
+
+    expect(messages.map((message) => message.content)).toEqual([
+      "Hello, Neil.",
+      "tool.call is text here, not a protocol frame.",
+    ]);
+  });
+
+  it("identifies only non-user raw tool protocol history frames", () => {
+    expect(
+      isRawProjectConversationToolFrame({
+        role: "assistant",
+        peer_id: "jarvis",
+        content: "tool.result spawn_child_work_session",
+        observed_at: "2026-07-07T10:00:02.000Z",
+      }),
+    ).toBe(true);
+    expect(
+      isRawProjectConversationToolFrame({
+        role: "user",
+        peer_id: "neil",
+        content: "tool.result is just text",
+        observed_at: "2026-07-07T10:00:02.000Z",
+      }),
+    ).toBe(false);
   });
 
   it("collapses a confirmed optimistic user turn and keeps the real assistant reply", () => {

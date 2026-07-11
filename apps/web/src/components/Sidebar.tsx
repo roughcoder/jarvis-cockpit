@@ -1408,7 +1408,7 @@ function SidebarProjectConversationRow({
   readonly onCancelArchiveConfirmation: () => void;
   readonly onArchive: () => void;
 }) {
-  const rowButtonRender = useMemo(() => <button type="button" />, []);
+  const rowButtonRender = useMemo(() => <div role="button" tabIndex={0} />, []);
   const EngineIcon =
     engineIconKey === "codex"
       ? CodexColor
@@ -1447,6 +1447,16 @@ function SidebarProjectConversationRow({
     },
     [onToggleExpanded],
   );
+  const handleRowKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLElement>) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      event.preventDefault();
+      onClick();
+    },
+    [onClick],
+  );
 
   return (
     <SidebarMenuSubItem
@@ -1462,6 +1472,7 @@ function SidebarProjectConversationRow({
         style={{ paddingLeft: `${0.5 + depth * 0.875}rem` }}
         aria-expanded={hasChildren ? isExpanded : undefined}
         onClick={onClick}
+        onKeyDown={handleRowKeyDown}
       >
         {hasChildren ? (
           <button
