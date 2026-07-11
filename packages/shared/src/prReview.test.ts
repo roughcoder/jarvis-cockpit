@@ -8,17 +8,42 @@ describe("buildPrReviewOrchestratorPrompt", () => {
       repo: "acme/widgets",
       prNumber: 42,
       dimensions: ["correctness", "security"],
-      models: ["claude-opus"],
+      reviewers: [
+        {
+          providerInstanceId: "claudeAgent",
+          engine: "claude",
+          model: "claude-opus-4-7",
+          label: "Claude · Claude Opus 4.7",
+        },
+        {
+          providerInstanceId: "codex",
+          engine: "codex",
+          model: "gpt-5.5",
+          label: "Codex · GPT-5.5",
+        },
+      ],
       post: true,
     });
     expect(prompt).toContain("pull request #42 in acme/widgets");
-    expect(prompt).toContain("using claude-opus");
+    expect(prompt).toContain("Spawn exactly these two independent child review chats");
+    expect(prompt).toContain("spawn_child_work_session");
+    expect(prompt).toContain('provider_instance_id="claudeAgent"');
+    expect(prompt).toContain('engine="claude"');
+    expect(prompt).toContain('model="claude-opus-4-7"');
+    expect(prompt).toContain('provider_instance_id="codex"');
+    expect(prompt).toContain('model="gpt-5.5"');
+    expect(prompt).toContain("watch_child_work_sessions");
+    expect(prompt).toContain("child_chat_ids");
+    expect(prompt).toContain("Before ending this initial turn");
+    expect(prompt).toContain("automatically continue this parent once");
+    expect(prompt).toContain("read_child_work_result");
     expect(prompt).toContain("Correctness:");
     expect(prompt).toContain("Security:");
     expect(prompt).not.toContain("Performance:");
     expect(prompt).toContain("P1: must fix before merge");
-    expect(prompt).toContain("repos/acme/widgets/pulls/42/reviews");
-    expect(prompt).toContain("**P1** — <title>");
+    expect(prompt).toContain("publish_github_pr_review");
+    expect(prompt).toContain("[P1] <title>");
+    expect(prompt).toContain("suggestion");
   });
 
   it("asks the orchestrator to reconcile multiple models", () => {
@@ -26,11 +51,26 @@ describe("buildPrReviewOrchestratorPrompt", () => {
       repo: "acme/widgets",
       prNumber: 1,
       dimensions: ["correctness"],
-      models: ["claude-opus", "gpt-5-codex"],
+      reviewers: [
+        {
+          providerInstanceId: "claudeAgent",
+          engine: "claude",
+          model: "claude-opus-4-7",
+          label: "Claude · Claude Opus 4.7",
+        },
+        {
+          providerInstanceId: "codex",
+          engine: "codex",
+          model: "gpt-5.5",
+          label: "Codex · GPT-5.5",
+        },
+      ],
       post: false,
     });
-    expect(prompt).toContain("independently with each of these models");
-    expect(prompt).toContain("claude-opus, gpt-5-codex");
+    expect(prompt).toContain("Spawn exactly these two independent child review chats");
+    expect(prompt).toContain("Claude · Claude Opus 4.7");
+    expect(prompt).toContain("Codex · GPT-5.5");
+    expect(prompt).toContain("reconcile and deduplicate");
   });
 
   it("falls back to correctness when no dimensions are selected", () => {
@@ -38,11 +78,11 @@ describe("buildPrReviewOrchestratorPrompt", () => {
       repo: "acme/widgets",
       prNumber: 1,
       dimensions: [],
-      models: [],
+      reviewers: [],
       post: false,
     });
     expect(prompt).toContain("Correctness:");
-    expect(prompt).toContain("your best judgement");
+    expect(prompt).toContain("malformed unless it contains exactly two reviewers");
   });
 
   it("instructs not to post when post is false and appends extra instructions", () => {
@@ -50,7 +90,20 @@ describe("buildPrReviewOrchestratorPrompt", () => {
       repo: "acme/widgets",
       prNumber: 1,
       dimensions: ["correctness"],
-      models: ["claude-opus"],
+      reviewers: [
+        {
+          providerInstanceId: "claudeAgent",
+          engine: "claude",
+          model: "claude-opus-4-7",
+          label: "Claude · Claude Opus 4.7",
+        },
+        {
+          providerInstanceId: "codex",
+          engine: "codex",
+          model: "gpt-5.5",
+          label: "Codex · GPT-5.5",
+        },
+      ],
       extraInstructions: "Measure against the RFC-104 error-handling rules.",
       post: false,
     });

@@ -803,6 +803,9 @@ export const JarvisRun = Schema.Struct({
   // Optional so older snapshots still decode; lets the cockpit nest dispatched work under its
   // project instead of a synthetic "legacy recent work" row.
   project_id: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  // Child orchestration linkage. Empty/absent values represent root or legacy work.
+  parent_chat_id: OptionalPossiblyEmptyPublicString,
+  model: OptionalPossiblyEmptyPublicString,
   title: TrimmedNonEmptyString,
   objective: OptionalPublicString,
   status: JarvisRunStatus,
@@ -842,6 +845,8 @@ export const JarvisWorkerSession = Schema.Struct({
   run_id: JarvisRunId,
   // Registry project linkage (optional; see JarvisRun.project_id).
   project_id: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  parent_chat_id: OptionalPossiblyEmptyPublicString,
+  model: OptionalPossiblyEmptyPublicString,
   title: TrimmedNonEmptyString,
   provider: JarvisProviderId,
   engine: JarvisEngineId,

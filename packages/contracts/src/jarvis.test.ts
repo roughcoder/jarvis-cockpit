@@ -62,6 +62,9 @@ const sessionFixture = {
   worker_id: "macbook-worker",
   session_id: "sess_123",
   run_id: runId,
+  project_id: "jarvis",
+  parent_chat_id: "review_thread_42",
+  model: "gpt-5.5",
   title: "Codex implementation",
   provider: "codex",
   engine: "codex",
@@ -462,6 +465,9 @@ it.effect("decodes a Jarvis cockpit snapshot fixture", () =>
 
     assert.strictEqual(parsed.runs[0]?.pending_approval_count, 1);
     assert.strictEqual(parsed.sessions[0]?.session_ref, sessionRef);
+    assert.strictEqual(parsed.sessions[0]?.project_id, "jarvis");
+    assert.strictEqual(parsed.sessions[0]?.parent_chat_id, "review_thread_42");
+    assert.strictEqual(parsed.sessions[0]?.model, "gpt-5.5");
     assert.strictEqual(parsed.workers[0]?.engines[0]?.supports.resume, true);
     const worker = parsed.workers[0];
     assert.ok(worker);

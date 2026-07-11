@@ -50,6 +50,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   type EnvironmentId,
   type JarvisProjectThread,
+  type JarvisWorkerSession,
   ProjectId,
   type ScopedThreadRef,
   type ResolvedKeybindingsConfig,
@@ -145,7 +146,6 @@ import {
 import {
   buildProjectConversationRouteParams,
   formatProjectConversationFailure,
-  isProjectConversationArchived,
   resolveProjectConversationRouteParams,
   type ProjectConversationRouteParams,
 } from "../jarvisProjectConversations.logic";
@@ -247,6 +247,10 @@ import {
 } from "./Sidebar.logic";
 import { buildProjectRouteParams } from "./ProjectView.logic";
 import { buildChatTree, type ChatTreeNode } from "./chatTree.logic";
+import {
+  projectConversationTreeItems,
+  type ProjectConversationTreeItem,
+} from "./projectConversationTree.logic";
 import { sortThreads } from "../lib/threadSort";
 import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -1070,6 +1074,10 @@ function SidebarJarvisProjectConversations({
   readonly activeThreadId: string | null;
 }) {
   const navigate = useNavigate();
+  const activeRouteThreadId = useParams({
+    strict: false,
+    select: (params) => params.threadId ?? null,
+  });
   const { isMobile, setOpenMobile } = useSidebar();
   const [showArchived, setShowArchived] = useState(false);
   const [confirmingArchiveThreadId, setConfirmingArchiveThreadId] = useState<string | null>(null);
@@ -1088,9 +1096,33 @@ function SidebarJarvisProjectConversations({
       input: { projectId, includeArchived: showArchived },
     }),
   );
+  const snapshotQuery = useEnvironmentQuery(
+    serverEnvironment.jarvisSnapshot({ environmentId, input: {} }),
+  );
+  const refreshSnapshot = snapshotQuery.refresh;
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      if (!document.hidden) {
+        refreshSnapshot();
+      }
+    }, 10_000);
+    return () => window.clearInterval(interval);
+  }, [refreshSnapshot]);
   const conversations =
     projectThreadsQuery.data?.ok === true ? (projectThreadsQuery.data.threads ?? []) : [];
-  const conversationTree = useMemo(() => buildChatTree(conversations), [conversations]);
+  const workerSessions: ReadonlyArray<JarvisWorkerSession> =
+    snapshotQuery.data?.ok === true ? (snapshotQuery.data.snapshot?.sessions ?? []) : [];
+  const conversationItems = useMemo(
+    () =>
+      projectConversationTreeItems({
+        projectId,
+        projectThreads: conversations,
+        workerSessions,
+        includeArchived: showArchived,
+      }),
+    [conversations, projectId, showArchived, workerSessions],
+  );
+  const conversationTree = useMemo(() => buildChatTree(conversationItems), [conversationItems]);
   const showPending = !projectThreadsQuery.data && projectThreadsQuery.isPending;
   const showFailed = projectThreadsQuery.error !== null || projectThreadsQuery.data?.ok === false;
   const toggleConversationExpanded = useCallback((threadId: string) => {
@@ -1105,18 +1137,27 @@ function SidebarJarvisProjectConversations({
     });
   }, []);
   const navigateToProjectConversation = useCallback(
-    (conversation: { readonly thread_id: string }) => {
+    (conversation: ProjectConversationTreeItem | JarvisProjectThread) => {
       if (isMobile) {
         setOpenMobile(false);
       }
-      void navigate({
-        to: "/jarvis-project/$environmentId/$projectId/$threadId",
-        params: buildProjectConversationRouteParams({
-          environmentId,
-          projectId,
-          threadId: conversation.thread_id,
-        }),
-      });
+      if (!("kind" in conversation) || conversation.kind === "project-thread") {
+        void navigate({
+          to: "/jarvis-project/$environmentId/$projectId/$threadId",
+          params: buildProjectConversationRouteParams({
+            environmentId,
+            projectId,
+            threadId: conversation.thread_id,
+          }),
+        });
+      } else {
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(
+            scopeThreadRef(environmentId, ThreadId.make(conversation.thread_id)),
+          ),
+        });
+      }
     },
     [environmentId, isMobile, navigate, projectId, setOpenMobile],
   );
@@ -1267,7 +1308,7 @@ function SidebarJarvisProjectConversations({
         renderProjectConversationTreeNode({
           node,
           depth: 0,
-          activeThreadId,
+          activeThreadId: activeRouteThreadId ?? activeThreadId,
           confirmingArchiveThreadId,
           collapsedConversationIds,
           navigateToProjectConversation,
@@ -1295,12 +1336,12 @@ function renderProjectConversationTreeNode({
   toggleConversationExpanded,
   handleArchiveProjectConversation,
 }: {
-  readonly node: ChatTreeNode<JarvisProjectThread>;
+  readonly node: ChatTreeNode<ProjectConversationTreeItem>;
   readonly depth: number;
   readonly activeThreadId: string | null;
   readonly confirmingArchiveThreadId: string | null;
   readonly collapsedConversationIds: ReadonlySet<string>;
-  readonly navigateToProjectConversation: (conversation: { readonly thread_id: string }) => void;
+  readonly navigateToProjectConversation: (conversation: ProjectConversationTreeItem) => void;
   readonly setConfirmingArchiveThreadId: React.Dispatch<React.SetStateAction<string | null>>;
   readonly toggleConversationExpanded: (threadId: string) => void;
   readonly handleArchiveProjectConversation: (conversation: {
@@ -1319,7 +1360,8 @@ function renderProjectConversationTreeNode({
         engineIconKey={resolveJarvisProjectConversationEngineIconKey(conversation.engine)}
         modelLabel={resolveJarvisProjectConversationModelLabel(conversation.model)}
         statusPill={resolveJarvisProjectConversationStatusPill(conversation.status)}
-        archived={isProjectConversationArchived(conversation)}
+        archived={conversation.archived_at != null && conversation.archived_at !== ""}
+        canArchive={conversation.kind === "project-thread"}
         depth={depth}
         hasChildren={hasChildren}
         isExpanded={isExpanded}
@@ -1333,7 +1375,11 @@ function renderProjectConversationTreeNode({
             current === conversation.thread_id ? null : current,
           )
         }
-        onArchive={() => handleArchiveProjectConversation(conversation)}
+        onArchive={() => {
+          if (conversation.kind === "project-thread") {
+            handleArchiveProjectConversation(conversation);
+          }
+        }}
       />
       {isExpanded
         ? node.children.map((childNode) =>
@@ -1381,6 +1427,7 @@ function SidebarProjectConversationRow({
   modelLabel,
   statusPill,
   archived,
+  canArchive,
   depth,
   hasChildren,
   isExpanded,
@@ -1397,6 +1444,7 @@ function SidebarProjectConversationRow({
   readonly modelLabel: string | null;
   readonly statusPill: ThreadStatusPill | null;
   readonly archived: boolean;
+  readonly canArchive: boolean;
   readonly depth: number;
   readonly hasChildren: boolean;
   readonly isExpanded: boolean;
@@ -1516,7 +1564,7 @@ function SidebarProjectConversationRow({
         {archived ? (
           <span className="text-[9px] uppercase text-muted-foreground/60">Archived</span>
         ) : null}
-        {!archived ? (
+        {!archived && canArchive ? (
           confirmingArchive ? (
             <button
               type="button"

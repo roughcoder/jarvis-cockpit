@@ -3,9 +3,9 @@ import { useAtomValue } from "@effect/atom-react";
 import { PR_REVIEW_DIMENSIONS, buildPrReviewOrchestratorPrompt } from "@t3tools/shared/prReview";
 import { useNavigate } from "@tanstack/react-router";
 import { LoaderIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import { deriveReviewerOptions } from "./PrReviewDialog.logic";
+import { defaultReviewerKeys, deriveReviewerOptions } from "./PrReviewDialog.logic";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -63,6 +63,17 @@ export function PrReviewDialog({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    setSelectedReviewers((current) => {
+      const availableKeys = new Set(reviewerOptions.map((option) => option.key));
+      const retained = new Set([...current].filter((key) => availableKeys.has(key)));
+      return retained.size > 0 ? retained : defaultReviewerKeys(reviewerOptions);
+    });
+  }, [open, reviewerOptions]);
+
   const createThread = useAtomCommand(serverEnvironment.createJarvisProjectThread, {
     reportFailure: false,
   });
@@ -74,11 +85,8 @@ export function PrReviewDialog({
     () => PR_REVIEW_DIMENSIONS.filter((dimension) => selectedDimensions.has(dimension.id)),
     [selectedDimensions],
   );
-  const models = useMemo(
-    () =>
-      reviewerOptions
-        .filter((option) => selectedReviewers.has(option.key))
-        .map((option) => option.model),
+  const reviewers = useMemo(
+    () => reviewerOptions.filter((option) => selectedReviewers.has(option.key)),
     [reviewerOptions, selectedReviewers],
   );
 
@@ -88,29 +96,33 @@ export function PrReviewDialog({
         repo,
         prNumber,
         dimensions: dimensions.map((dimension) => dimension.id),
-        models,
+        reviewers,
         ...(extraInstructions.trim() ? { extraInstructions } : {}),
         post,
       }),
-    [repo, prNumber, dimensions, models, extraInstructions, post],
+    [repo, prNumber, dimensions, reviewers, extraInstructions, post],
   );
 
   const toggle = (
     setter: (updater: (previous: ReadonlySet<string>) => ReadonlySet<string>) => void,
     id: string,
+    maxSelected?: number,
   ) => {
     setter((previous) => {
       const next = new Set(previous);
       if (next.has(id)) {
         next.delete(id);
       } else {
+        if (maxSelected !== undefined && next.size >= maxSelected) {
+          return previous;
+        }
         next.add(id);
       }
       return next;
     });
   };
 
-  const canSubmit = dimensions.length > 0 && !submitting;
+  const canSubmit = reviewers.length === 2 && dimensions.length > 0 && !submitting;
 
   // Conversation title format: `review: #12 jarvis-cockpit` — the PR number and
   // the repo's short name (owner stripped).
@@ -180,8 +192,8 @@ export function PrReviewDialog({
             Review {repo} #{prNumber}
           </DialogTitle>
           <DialogDescription>
-            Starts a review conversation in this project. Pick models and what to check; the
-            orchestrator reviews the PR and{" "}
+            Starts a parent conversation in this project. Choose exactly two reviewers; the
+            orchestrator creates their child chats, reconciles both results, and{" "}
             {post ? "posts P1/P2/P3 comments to it" : "reports back here"}.
           </DialogDescription>
         </DialogHeader>
@@ -189,11 +201,11 @@ export function PrReviewDialog({
         <div className="max-h-[60vh] space-y-5 overflow-y-auto px-4 py-4">
           <section className="space-y-2">
             <h3 className="text-xs font-semibold uppercase text-muted-foreground">
-              Models to review with
+              Reviewers ({reviewers.length}/2)
             </h3>
             {reviewerOptions.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No enabled provider models found — the orchestrator will use its default model.
+                No enabled provider models found. Two available reviewers are required.
               </p>
             ) : (
               <div className="grid gap-2 sm:grid-cols-2">
@@ -204,7 +216,8 @@ export function PrReviewDialog({
                   >
                     <Checkbox
                       checked={selectedReviewers.has(option.key)}
-                      onCheckedChange={() => toggle(setSelectedReviewers, option.key)}
+                      disabled={!selectedReviewers.has(option.key) && reviewers.length >= 2}
+                      onCheckedChange={() => toggle(setSelectedReviewers, option.key, 2)}
                     />
                     <span className="min-w-0 truncate">{option.label}</span>
                   </label>
