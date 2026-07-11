@@ -106,3 +106,29 @@ export function selectCommonReviewWorker(input: {
 
   return eligible[0]?.worker_id;
 }
+
+export function selectReviewOrchestratorWorker(input: {
+  readonly workers: ReadonlyArray<JarvisWorkerProfile>;
+  readonly childWorkerId?: string;
+}): string | undefined {
+  const eligible = input.workers.filter((worker) => {
+    const used = worker.capacity.active_sessions + worker.capacity.queued_sessions;
+    const requiredSlots = worker.worker_id === input.childWorkerId ? 3 : 1;
+    return (
+      workerIsHealthyEnough(worker) &&
+      workerSupportsEngine(worker, "codex") &&
+      used + requiredSlots <= worker.capacity.max_sessions
+    );
+  });
+  eligible.sort((left, right) => {
+    const leftSeparate = left.worker_id === input.childWorkerId ? 0 : 1;
+    const rightSeparate = right.worker_id === input.childWorkerId ? 0 : 1;
+    if (leftSeparate !== rightSeparate) return rightSeparate - leftSeparate;
+    const leftFree =
+      left.capacity.max_sessions - left.capacity.active_sessions - left.capacity.queued_sessions;
+    const rightFree =
+      right.capacity.max_sessions - right.capacity.active_sessions - right.capacity.queued_sessions;
+    return rightFree - leftFree;
+  });
+  return eligible[0]?.worker_id;
+}

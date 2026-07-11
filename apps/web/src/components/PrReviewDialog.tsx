@@ -9,6 +9,7 @@ import {
   defaultReviewerKeys,
   deriveReviewerOptions,
   selectCommonReviewWorker,
+  selectReviewOrchestratorWorker,
 } from "./PrReviewDialog.logic";
 import {
   isAtomCommandInterrupted,
@@ -108,6 +109,14 @@ export function PrReviewDialog({
     () => selectCommonReviewWorker({ workers, reviewers, repo }),
     [workers, reviewers, repo],
   );
+  const orchestratorWorkerId = useMemo(
+    () =>
+      selectReviewOrchestratorWorker({
+        workers,
+        ...(workerId ? { childWorkerId: workerId } : {}),
+      }),
+    [workers, workerId],
+  );
 
   const prompt = useMemo(
     () =>
@@ -142,7 +151,12 @@ export function PrReviewDialog({
     });
   };
 
-  const canSubmit = reviewers.length === 2 && dimensions.length > 0 && !submitting;
+  const canSubmit =
+    reviewers.length === 2 &&
+    dimensions.length > 0 &&
+    workerId !== undefined &&
+    orchestratorWorkerId !== undefined &&
+    !submitting;
 
   // Conversation title format: `review: #12 jarvis-cockpit` — the PR number and
   // the repo's short name (owner stripped).
@@ -157,7 +171,13 @@ export function PrReviewDialog({
       environmentId,
       input: {
         projectId,
-        input: { title: reviewTitle },
+        input: {
+          title: reviewTitle,
+          chat_type: "orchestrator",
+          engine: "codex",
+          model: "gpt-5.5",
+          worker_id: orchestratorWorkerId,
+        },
       },
     });
     if (created._tag === "Failure") {
@@ -254,6 +274,16 @@ export function PrReviewDialog({
                 ))}
               </div>
             )}
+            {reviewers.length === 2 && workerId === undefined ? (
+              <p className="text-xs text-destructive">
+                No healthy repo-capable worker has two free slots for both reviewers.
+              </p>
+            ) : null}
+            {workerId !== undefined && orchestratorWorkerId === undefined ? (
+              <p className="text-xs text-destructive">
+                No Codex worker has a separate free slot for the parent orchestrator.
+              </p>
+            ) : null}
           </section>
 
           <section className="space-y-2">

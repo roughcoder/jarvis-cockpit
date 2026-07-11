@@ -608,6 +608,7 @@ export const JarvisProjectThread = Schema.Struct({
   parent_chat_id: OptionalPossiblyEmptyPublicString,
   session_id: TrimmedNonEmptyString,
   title: TrimmedNonEmptyString,
+  chat_type: Schema.optional(Schema.Literals(["assistant", "orchestrator"])),
   // Enrichment fields (2026-07-07 brain release). Optional so older deployments still decode.
   // status/ended_reason are accepted as tolerant strings (not strict Literals) so a single
   // future/unknown value from an evolving brain cannot fail the whole threads-list/detail
@@ -666,6 +667,10 @@ export type JarvisProjectThreadDetailResponse = typeof JarvisProjectThreadDetail
 
 export const JarvisProjectCreateThreadInput = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
+  chat_type: Schema.optional(Schema.Literals(["assistant", "orchestrator"])),
+  engine: Schema.optional(TrimmedNonEmptyString),
+  model: Schema.optional(TrimmedNonEmptyString),
+  worker_id: Schema.optional(TrimmedNonEmptyString),
   idempotency_key: Schema.optional(TrimmedNonEmptyString),
   metadata: Schema.optionalKey(JarvisWriteMetadata).pipe(
     Schema.withDecodingDefault(Effect.succeed({ surface: "jarvis-cockpit" })),

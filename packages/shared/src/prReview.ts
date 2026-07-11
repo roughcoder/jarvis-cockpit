@@ -111,9 +111,7 @@ export function buildPrReviewOrchestratorPrompt(
       reviewer.model.trim().length > 0,
   );
 
-  const reviewDimensions = selected
-    .map((dimension) => `- ${dimension.promptFragment}`)
-    .join("\n");
+  const reviewDimensions = selected.map((dimension) => `- ${dimension.promptFragment}`).join("\n");
   const childTask = [
     `Review PR #${input.prNumber} in ${input.repo} independently and read-only.`,
     `Run \`gh pr view ${input.prNumber} --repo ${input.repo} --json headRefOid\`, record its full non-empty \`headRefOid\`, then run \`gh pr diff ${input.prNumber} --repo ${input.repo}\`. Review only that fetched diff, not the checkout's current branch. You may inspect surrounding code at that PR head; every finding must be introduced or exposed by the diff.`,

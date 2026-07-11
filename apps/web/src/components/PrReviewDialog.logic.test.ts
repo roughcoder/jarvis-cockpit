@@ -11,6 +11,7 @@ import {
   defaultReviewerKeys,
   deriveReviewerOptions,
   selectCommonReviewWorker,
+  selectReviewOrchestratorWorker,
 } from "./PrReviewDialog.logic";
 
 function provider(input: {
@@ -71,7 +72,9 @@ function worker(input: {
       active_sessions: input.active ?? 0,
       queued_sessions: 0,
     },
-    repositories: [{ repo: "jarvis", can_start_work: true, default_branch: "main", is_default: true }],
+    repositories: [
+      { repo: "jarvis", can_start_work: true, default_branch: "main", is_default: true },
+    ],
     git_identity: { authenticated: input.authenticated ?? false },
     system: {},
     public_metadata: {},
@@ -166,6 +169,37 @@ describe("selectCommonReviewWorker", () => {
       workers: [worker({ id: "laptop", engines: ["codex", "claude"], max: 1 })],
       reviewers: [{ engine: "claude" }, { engine: "codex" }],
       repo: "roughcoder/jarvis",
+    });
+
+    expect(selected).toBeUndefined();
+  });
+});
+
+describe("selectReviewOrchestratorWorker", () => {
+  it("keeps the Codex parent off the two-slot child worker when another worker is available", () => {
+    const selected = selectReviewOrchestratorWorker({
+      workers: [
+        worker({ id: "brain", engines: ["codex"], max: 1 }),
+        worker({ id: "laptop", engines: ["codex", "claude"], max: 2 }),
+      ],
+      childWorkerId: "laptop",
+    });
+
+    expect(selected).toBe("brain");
+  });
+
+  it("returns no route when every Codex worker is full", () => {
+    const selected = selectReviewOrchestratorWorker({
+      workers: [worker({ id: "brain", engines: ["codex"], max: 1, active: 1 })],
+    });
+
+    expect(selected).toBeUndefined();
+  });
+
+  it("does not consume one of the two child slots when no separate parent worker exists", () => {
+    const selected = selectReviewOrchestratorWorker({
+      workers: [worker({ id: "laptop", engines: ["codex", "claude"], max: 2 })],
+      childWorkerId: "laptop",
     });
 
     expect(selected).toBeUndefined();
