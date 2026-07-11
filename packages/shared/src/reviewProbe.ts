@@ -1,3 +1,4 @@
+// Lightweight fixture kept intentionally small for live two-model review dogfooding.
 export interface InlineReviewComment {
   readonly path: string;
   readonly line: number;
