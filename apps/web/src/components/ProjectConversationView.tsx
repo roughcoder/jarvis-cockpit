@@ -91,7 +91,6 @@ import {
   createProjectConversationWorkspaceStaging,
   deriveWorkspaceProvisionSteps,
   setProjectConversationWorkspaceEngine,
-  shouldPollProjectConversationWorkspace,
   type ProjectConversationWorkspaceStaging,
 } from "./projectConversationWorkspace.logic";
 import { projectConversationCapabilities } from "./composer/composerCapabilities";
@@ -99,7 +98,6 @@ import { BrainWorkspaceStrip } from "./composer/BrainWorkspaceStrip";
 import {
   buildProjectConversationRenameInput,
   buildProjectConversationTitleGenerationContext,
-  isActiveProjectConversationStatus,
   PROJECT_CONTEXT_PANEL_COLLAPSED_STORAGE_KEY,
   resolveProjectConversationHeaderStatus,
   resolveProjectContextPanelToggleState,
@@ -147,8 +145,8 @@ export function ProjectConversationView({
       input: { projectId, includeArchived: true },
     }),
   );
-  const threadDetailQuery = useEnvironmentQuery(
-    serverEnvironment.jarvisProjectThread({
+  const threadDetailStream = useEnvironmentQuery(
+    serverEnvironment.jarvisProjectThreadStream({
       environmentId,
       input: { projectId, threadId: String(threadId) },
     }),
@@ -193,15 +191,12 @@ export function ProjectConversationView({
     [threadsQuery.data],
   );
   const conversation =
-    threadDetailQuery.data?.ok === true && threadDetailQuery.data.thread
-      ? threadDetailQuery.data.thread
+    threadDetailStream.data !== null && threadDetailStream.data !== undefined
+      ? threadDetailStream.data
       : (conversations.find((candidate) => candidate.thread_id === String(threadId)) ?? null);
   const historyMessages = useMemo(
-    () =>
-      projectConversationHistoryMessages(
-        threadDetailQuery.data?.ok === true ? (threadDetailQuery.data.thread ?? null) : null,
-      ),
-    [threadDetailQuery.data],
+    () => projectConversationHistoryMessages(threadDetailStream.data ?? null),
+    [threadDetailStream.data],
   );
   const files = useMemo(
     () => visibleProjectFiles(filesQuery.data?.ok === true ? (filesQuery.data.files ?? []) : []),
@@ -280,21 +275,10 @@ export function ProjectConversationView({
         ? "Unarchive this conversation to send a turn"
         : null;
   const detailFallback =
-    threadDetailQuery.data?.ok === false &&
-    isProjectConversationDetailRouteGap(threadDetailQuery.data.error?.message)
-      ? formatProjectConversationFailure("detail", threadDetailQuery.data.error?.message)
+    threadDetailStream.error !== null &&
+    isProjectConversationDetailRouteGap(threadDetailStream.error)
+      ? formatProjectConversationFailure("detail", threadDetailStream.error)
       : null;
-  const turnRequestedWorkspace = turns.some(
-    (turn) =>
-      (turn.status === "pending" || turn.status === "streaming") && turn.workspaceInput != null,
-  );
-  const pollWorkspaceProvision = shouldPollProjectConversationWorkspace({
-    turnInFlight: sendBusy,
-    turnRequestedWorkspace,
-    workspace: conversationWorkspace,
-  });
-  const pollProjectConversationLive =
-    sendBusy || pollWorkspaceProvision || isActiveProjectConversationStatus(conversation?.status);
 
   const setWorkspaceStaging = (staging: ProjectConversationWorkspaceStaging) => {
     setWorkspaceStagingByThread((existing) => ({
@@ -336,35 +320,22 @@ export function ProjectConversationView({
     }));
   }, [conversationWorkspace?.engine, workspaceStagingKey]);
 
-  const threadDetailRefreshRef = useRef(threadDetailQuery.refresh);
   const threadsRefreshRef = useRef(threadsQuery.refresh);
   useEffect(() => {
-    threadDetailRefreshRef.current = threadDetailQuery.refresh;
     threadsRefreshRef.current = threadsQuery.refresh;
-  }, [threadDetailQuery.refresh, threadsQuery.refresh]);
+  }, [threadsQuery.refresh]);
 
   useEffect(() => {
-    const refresh = () => {
-      threadDetailRefreshRef.current();
-      threadsRefreshRef.current();
-    };
-    if (pollProjectConversationLive) {
-      refresh();
-    }
-    const id = window.setInterval(
-      () => {
-        if (!document.hidden) {
-          refresh();
-        }
-      },
-      pollProjectConversationLive ? 2_500 : 10_000,
-    );
+    // The durable thread subscription is the live path. The list only needs a
+    // slow, visible-tab reconciliation so archive/rename state remains correct.
+    const id = window.setInterval(() => {
+      if (!document.hidden) threadsRefreshRef.current();
+    }, 30_000);
     return () => window.clearInterval(id);
-  }, [pollProjectConversationLive, workspaceStagingKey]);
+  }, [workspaceStagingKey]);
 
   const refreshConversationData = () => {
     threadsQuery.refresh();
-    threadDetailQuery.refresh();
     memoryQuery.refresh();
     filesQuery.refresh();
   };
@@ -437,7 +408,6 @@ export function ProjectConversationView({
     setRenameDraft("");
     setRenamingConversation(false);
     threadsQuery.refresh();
-    threadDetailQuery.refresh();
   };
 
   const generateConversationTitle = async () => {

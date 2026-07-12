@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
@@ -47,7 +47,6 @@ import {
 } from "./JarvisWorkers.logic";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 
-const WORKER_SNAPSHOT_POLL_MS = 2_000;
 const TERMINAL_SESSION_STATUSES = new Set(["completed", "failed", "stopped", "interrupted"]);
 const WARM_CHECKOUT_SEARCH_THRESHOLD = 10;
 
@@ -594,13 +593,6 @@ export function JarvisWorkersPanel() {
   );
   const result = snapshotQuery.data;
   const workers = result?.snapshot?.workers ?? [];
-  useEffect(() => {
-    if (!primaryEnvironment) return;
-    const id = window.setInterval(() => {
-      snapshotQuery.refresh();
-    }, WORKER_SNAPSHOT_POLL_MS);
-    return () => window.clearInterval(id);
-  }, [primaryEnvironment, snapshotQuery]);
   const sortedWorkers = useMemo(
     () => [...workers].sort((left, right) => left.display_name.localeCompare(right.display_name)),
     [workers],
