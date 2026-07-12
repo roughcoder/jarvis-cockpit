@@ -103,6 +103,39 @@ it.effect("merges only new Jarvis session events after the retained event cursor
   }),
 );
 
+it.effect("replaces mutable Jarvis requests instead of retaining resolved rows", () =>
+  Effect.gen(function* () {
+    const fixture = makeJarvisFixtureClient();
+    const snapshot = yield* fixture.getSnapshot();
+    const session = snapshot.sessions[0];
+    const request = snapshot.requests?.[0];
+    assert.ok(session);
+    assert.ok(request);
+    const requestAfters: Array<string | undefined> = [];
+    let readCount = 0;
+    const client = {
+      ...fixture,
+      getRequests: (_sessionRef: string, options?: { readonly after?: string }) => {
+        requestAfters.push(options?.after);
+        readCount += 1;
+        return Effect.succeed({
+          items: readCount === 1 ? [request] : [],
+          cursor: readCount === 1 ? request.request_id : null,
+          has_more: false,
+        });
+      },
+    };
+    const cache = makeJarvisSessionReadCache();
+
+    const initial = yield* cache.read(client, session);
+    const refreshed = yield* cache.read(client, session);
+
+    assert.deepStrictEqual(initial.requests.items, [request]);
+    assert.deepStrictEqual(refreshed.requests.items, []);
+    assert.deepStrictEqual(requestAfters, [undefined, undefined]);
+  }),
+);
+
 it.effect("serves terminal Jarvis session history from the final cached fetch", () =>
   Effect.gen(function* () {
     const fixture = makeJarvisFixtureClient();

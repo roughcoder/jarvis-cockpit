@@ -292,7 +292,9 @@ export function makeJarvisSessionReadCache(
         maxPages: JARVIS_SESSION_CHECKPOINTS_MAX_PAGES,
       }),
       refreshJarvisHistory({
-        existing: existing?.history.requests,
+        // Requests are mutable and may disappear after resolution, so they
+        // must be refreshed as a current set rather than appended by cursor.
+        existing: undefined,
         loadPage: (after) =>
           client.getRequests(session.session_ref, {
             ...(after ? { after } : {}),

@@ -12,6 +12,7 @@ import * as Stream from "effect/Stream";
 
 import {
   JarvisArtifact,
+  type OrchestrationShellSnapshot,
   JarvisRun,
   JarvisRunsSnapshot,
   JarvisSessionCheckpoint,
@@ -21,9 +22,11 @@ import {
 } from "@t3tools/contracts";
 
 import type { JarvisClient, JarvisClientError, JarvisCockpitEvent } from "./JarvisClient.ts";
+import { mapJarvisRunsSnapshotToShellSnapshot } from "./JarvisProjectionMapper.ts";
 
 const DEFAULT_FAILURE_THRESHOLD = 3;
 const MAX_RECONNECT_DELAY = Duration.seconds(30);
+const RESYNC_COOLDOWN = Duration.seconds(1);
 export const JARVIS_SSE_THREAD_DEBOUNCE = Duration.millis(250);
 export const JARVIS_SSE_SHELL_DEBOUNCE = Duration.millis(500);
 
@@ -34,6 +37,7 @@ interface JarvisEventsState {
 
 interface AppliedJarvisSnapshotState {
   readonly snapshot: JarvisRunsSnapshot | undefined;
+  readonly shellSnapshot?: OrchestrationShellSnapshot | undefined;
   readonly stale: boolean;
 }
 
@@ -56,6 +60,8 @@ export interface JarvisEventsHub {
   readonly isLive: Effect.Effect<boolean>;
   /** The validated projection cache assembled from the current SSE connection. */
   readonly appliedSnapshot: Effect.Effect<Option.Option<JarvisRunsSnapshot>>;
+  /** The shared shell projection derived once per applied snapshot. */
+  readonly appliedShellSnapshot: Effect.Effect<Option.Option<OrchestrationShellSnapshot>>;
   /** Fetches one REST snapshot and replaces the cache if it diverged. */
   readonly reconcileSnapshot: Effect.Effect<JarvisRunsSnapshot, JarvisClientError>;
 }
@@ -63,19 +69,26 @@ export interface JarvisEventsHub {
 export interface MakeJarvisEventsHubOptions {
   readonly enabled?: boolean;
   readonly failureThreshold?: number;
+  readonly restartWhen?: Stream.Stream<unknown>;
 }
 
 /**
- * Debounce a burst, then retain only the newest signal while a sequential
- * refresh is in flight. A signal is only a prompt to re-read authoritative
- * state, so dropping stale prompts is safe and bounds refresh backlog at one.
+ * Emit at most one signal per interval while retaining only one pending signal
+ * behind a sequential refresh. A signal only prompts an authoritative re-read,
+ * so dropping redundant signals is safe and keeps sustained bursts bounded.
  */
 export function coalesceJarvisChanges(
   changes: Stream.Stream<JarvisCockpitEvent>,
   debounce: Duration.Duration = JARVIS_SSE_THREAD_DEBOUNCE,
 ): Stream.Stream<JarvisCockpitEvent> {
   return changes.pipe(
-    Stream.debounce(debounce),
+    Stream.rechunk(1),
+    Stream.throttle({
+      cost: () => 1,
+      units: 1,
+      duration: debounce,
+      strategy: "enforce",
+    }),
     Stream.buffer({ capacity: 1, strategy: "sliding" }),
   );
 }
@@ -118,8 +131,9 @@ function resync(reason: string): ApplyEventResult {
  * Applies only fully validated SSE projection rows. Jarvis intentionally omits
  * `prev_cursor` from granular envelopes: its server-side subscriber gate proves
  * the chain, and all rows from one tick share the resulting cursor. We therefore
- * require a seeded snapshot, allow repeated cursors within a tick, and discard
- * the cache on every malformed or unknown frame rather than guessing.
+ * require a seeded snapshot and allow repeated cursors within a tick. Unknown
+ * well-formed frames advance the cursor without mutating known projections;
+ * malformed or invalid known frames require an authoritative resync.
  */
 export function applyJarvisCockpitEvent(
   state: AppliedJarvisSnapshotState,
@@ -220,7 +234,7 @@ export function applyJarvisCockpitEvent(
       case "session.event":
         return isRecord(event.payload) ? replace({}) : resync(`${event.type} without payload`);
       default:
-        return resync(`unknown SSE frame type: ${event.type}`);
+        return replace({});
     }
   } catch {
     return resync(`invalid ${event.type} payload`);
@@ -245,13 +259,25 @@ export const makeJarvisEventsHub = Effect.fn("makeJarvisEventsHub")(function* (
   const lock = yield* Semaphore.make(1);
   const appliedState = yield* Ref.make<AppliedJarvisSnapshotState>({
     snapshot: undefined,
+    shellSnapshot: undefined,
     stale: true,
   });
   const appliedLock = yield* Semaphore.make(1);
+  const lastResyncAt = yield* Ref.make<number | undefined>(undefined);
+  const resyncScheduled = yield* Ref.make(false);
   const scope = yield* Scope.Scope;
 
   const replaceAppliedSnapshot = (snapshot: JarvisRunsSnapshot) =>
-    Ref.set(appliedState, { snapshot, stale: false });
+    Ref.set(appliedState, {
+      snapshot,
+      shellSnapshot: mapJarvisRunsSnapshotToShellSnapshot(snapshot),
+      stale: false,
+    });
+
+  const markAppliedSnapshotStale = Ref.update(appliedState, (current) => ({
+    ...current,
+    stale: true,
+  }));
 
   const resyncSnapshot = (reason: string): Effect.Effect<void, never> =>
     client.getSnapshot().pipe(
@@ -266,7 +292,43 @@ export const makeJarvisEventsHub = Effect.fn("makeJarvisEventsHub")(function* (
       ),
     );
 
-  const applyEvent = (event: JarvisCockpitEvent): Effect.Effect<void, never> =>
+  const requestResync = (reason: string): Effect.Effect<void, never> =>
+    Effect.gen(function* () {
+      const now = yield* Effect.clockWith((clock) => clock.currentTimeMillis);
+      const previous = yield* Ref.get(lastResyncAt);
+      const remaining =
+        previous === undefined ? 0 : Duration.toMillis(RESYNC_COOLDOWN) - (now - previous);
+      if (remaining <= 0) {
+        yield* Ref.set(lastResyncAt, now);
+        yield* resyncSnapshot(reason);
+        return;
+      }
+      if (yield* Ref.get(resyncScheduled)) {
+        return;
+      }
+      yield* Ref.set(resyncScheduled, true);
+      yield* Effect.forkIn(
+        Effect.sleep(Duration.millis(remaining)).pipe(
+          Effect.andThen(
+            Semaphore.withPermits(
+              appliedLock,
+              1,
+              Effect.gen(function* () {
+                yield* Ref.set(
+                  lastResyncAt,
+                  yield* Effect.clockWith((clock) => clock.currentTimeMillis),
+                );
+                yield* resyncSnapshot(reason);
+              }),
+            ),
+          ),
+          Effect.ensuring(Ref.set(resyncScheduled, false)),
+        ),
+        scope,
+      );
+    });
+
+  const applyEvent = (event: JarvisCockpitEvent): Effect.Effect<boolean, never> =>
     Semaphore.withPermits(
       appliedLock,
       1,
@@ -275,16 +337,17 @@ export const makeJarvisEventsHub = Effect.fn("makeJarvisEventsHub")(function* (
         if (result._tag === "applied") {
           yield* replaceAppliedSnapshot(result.snapshot);
           yield* Ref.set(live, true);
-          return;
+          return event.type === "snapshot";
         }
-        yield* Ref.set(appliedState, { snapshot: undefined, stale: true });
+        yield* markAppliedSnapshotStale;
         yield* Ref.set(live, false);
         yield* Effect.logWarning("Discarding applied Jarvis SSE projection", {
           cursor: event.cursor,
           reason: result.reason,
           type: event.type,
         });
-        yield* resyncSnapshot(result.reason);
+        yield* requestResync(result.reason);
+        return false;
       }),
     );
 
@@ -306,36 +369,54 @@ export const makeJarvisEventsHub = Effect.fn("makeJarvisEventsHub")(function* (
   );
 
   const runConnection = (failures: number): Effect.Effect<void, never> =>
-    Stream.runForEach(client.streamCockpitEvents(), (event) =>
-      Effect.gen(function* () {
-        yield* applyEvent(event);
-        yield* PubSub.publish(events, event);
-      }),
-    ).pipe(
-      Effect.matchCauseEffect({
-        onSuccess: () => Effect.succeed(true),
-        onFailure: (cause) =>
-          Cause.hasInterruptsOnly(cause)
-            ? Effect.succeed(false)
-            : Effect.logWarning("Jarvis SSE connection ended; reconnecting", { cause }).pipe(
-                Effect.as(true),
-              ),
-      }),
-      Effect.flatMap((shouldReconnect) => {
-        if (!shouldReconnect) {
-          return Effect.void;
-        }
-        const nextFailures = failures + 1;
-        const shouldFallback = nextFailures >= failureThreshold;
-        return Effect.gen(function* () {
-          if (shouldFallback) {
-            yield* Ref.set(live, false);
+    Effect.gen(function* () {
+      const connectionHealthy = yield* Ref.make(false);
+      const restartRequested = yield* Ref.make(false);
+      const restartEffect = options.restartWhen?.pipe(
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.tap(() => Ref.set(restartRequested, true)),
+      );
+      const eventStream =
+        restartEffect === undefined
+          ? client.streamCockpitEvents()
+          : client.streamCockpitEvents().pipe(Stream.interruptWhen(restartEffect));
+      const connection = Stream.runForEach(eventStream, (event) =>
+        Effect.gen(function* () {
+          if (yield* applyEvent(event)) {
+            yield* Ref.set(connectionHealthy, true);
           }
-          yield* Effect.sleep(reconnectDelay(nextFailures));
-          return yield* runConnection(nextFailures);
+          yield* PubSub.publish(events, event);
+        }),
+      );
+      const shouldReconnect = yield* connection.pipe(
+        Effect.matchCauseEffect({
+          onSuccess: () => Effect.succeed(true),
+          onFailure: (cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.succeed(false)
+              : Effect.logWarning("Jarvis SSE connection ended; reconnecting", { cause }).pipe(
+                  Effect.as(true),
+                ),
+        }),
+      );
+      if (!shouldReconnect) {
+        return;
+      }
+      yield* markAppliedSnapshotStale;
+      yield* Ref.set(live, false);
+      if (yield* Ref.get(restartRequested)) {
+        return yield* runConnection(0);
+      }
+      const nextFailures = (yield* Ref.get(connectionHealthy)) ? 1 : failures + 1;
+      if (nextFailures >= failureThreshold) {
+        yield* Effect.logWarning("Jarvis SSE remains unavailable; REST polling stays active", {
+          failures: nextFailures,
         });
-      }),
-    );
+      }
+      yield* Effect.sleep(reconnectDelay(nextFailures));
+      return yield* runConnection(nextFailures);
+    });
 
   const acquire = Semaphore.withPermits(
     lock,
@@ -366,6 +447,7 @@ export const makeJarvisEventsHub = Effect.fn("makeJarvisEventsHub")(function* (
         return;
       }
       yield* Ref.set(live, false);
+      yield* markAppliedSnapshotStale;
       yield* Ref.set(state, { subscribers: 0, fiber: undefined });
       if (current.fiber !== undefined) {
         yield* Fiber.interrupt(current.fiber);
@@ -396,6 +478,13 @@ export const makeJarvisEventsHub = Effect.fn("makeJarvisEventsHub")(function* (
         current.stale || current.snapshot === undefined
           ? Option.none<JarvisRunsSnapshot>()
           : Option.some(current.snapshot),
+      ),
+    ),
+    appliedShellSnapshot: Ref.get(appliedState).pipe(
+      Effect.map((current) =>
+        current.stale || current.shellSnapshot === undefined
+          ? Option.none<OrchestrationShellSnapshot>()
+          : Option.some(current.shellSnapshot),
       ),
     ),
     reconcileSnapshot,

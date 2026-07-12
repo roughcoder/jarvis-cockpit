@@ -170,7 +170,7 @@ it.effect("serves a validated applied snapshot without a REST refetch", () =>
   ),
 );
 
-it.effect("resyncs from REST after a cursor mismatch or unknown SSE frame", () =>
+it.effect("resyncs malformed state but advances valid unknown SSE frames without REST", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const fixture = makeJarvisFixtureClient();
@@ -208,8 +208,8 @@ it.effect("resyncs from REST after a cursor mismatch or unknown SSE frame", () =
       yield* Effect.yieldNow;
       yield* Effect.yieldNow;
       const applied = yield* hub.appliedSnapshot;
-      assert.strictEqual(Option.getOrUndefined(applied)?.cursor, restSnapshot.cursor);
-      assert.strictEqual(snapshotReads, 2);
+      assert.strictEqual(Option.getOrUndefined(applied)?.cursor, "evt_future");
+      assert.strictEqual(snapshotReads, 1);
       assert.strictEqual(yield* hub.isLive, true);
       yield* Fiber.interrupt(subscriber);
     }),
@@ -255,6 +255,113 @@ it.effect("reconciliation replaces an applied snapshot when the REST cursor dive
   ),
 );
 
+it.effect("invalidates the applied projection and reopens SSE when settings change", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fixture = makeJarvisFixtureClient();
+      const firstSnapshot = yield* fixture.getSnapshot();
+      const secondSnapshot = { ...firstSnapshot, cursor: "cursor-settings-b" };
+      const restarts = yield* PubSub.unbounded<void>();
+      const secondSnapshotGate = yield* Deferred.make<void>();
+      let opens = 0;
+      const hub = yield* makeJarvisEventsHub(
+        {
+          ...fixture,
+          streamCockpitEvents: () => {
+            opens += 1;
+            const snapshot = opens === 1 ? firstSnapshot : secondSnapshot;
+            const gate = opens === 1 ? Effect.void : Deferred.await(secondSnapshotGate);
+            return Stream.concat(
+              Stream.fromEffect(gate).pipe(
+                Stream.map(() => ({
+                  type: "snapshot",
+                  cursor: snapshot.cursor,
+                  payload: snapshot,
+                  authoritative: true,
+                })),
+              ),
+              Stream.never,
+            );
+          },
+        },
+        { restartWhen: Stream.fromPubSub(restarts) },
+      );
+      const subscriber = yield* Stream.runDrain(hub.changes).pipe(Effect.forkScoped);
+
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      assert.strictEqual(opens, 1);
+      assert.strictEqual(yield* hub.isLive, true);
+
+      yield* PubSub.publish(restarts, undefined);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      assert.strictEqual(opens, 2);
+      assert.strictEqual(yield* hub.isLive, false);
+      assert.strictEqual(Option.isNone(yield* hub.appliedSnapshot), true);
+
+      yield* Deferred.succeed(secondSnapshotGate, undefined);
+      yield* Effect.yieldNow;
+      assert.strictEqual(
+        Option.getOrUndefined(yield* hub.appliedSnapshot)?.cursor,
+        secondSnapshot.cursor,
+      );
+      assert.strictEqual(yield* hub.isLive, true);
+      yield* Fiber.interrupt(subscriber);
+    }),
+  ),
+);
+
+it.effect("coalesces malformed-frame resyncs behind a one-second cooldown", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fixture = makeJarvisFixtureClient();
+      const snapshot = yield* fixture.getSnapshot();
+      let snapshotReads = 0;
+      const malformed = (cursor: string) => ({
+        type: "future.event",
+        cursor,
+        payload: undefined,
+        authoritative: false,
+        malformed: true,
+      });
+      const hub = yield* makeJarvisEventsHub({
+        ...fixture,
+        getSnapshot: () => {
+          snapshotReads += 1;
+          return Effect.succeed({ ...snapshot, cursor: `rest-${snapshotReads}` });
+        },
+        streamCockpitEvents: () =>
+          Stream.concat(
+            Stream.make(
+              {
+                type: "snapshot",
+                cursor: snapshot.cursor,
+                payload: snapshot,
+                authoritative: true,
+              },
+              malformed("bad-1"),
+              malformed("bad-2"),
+              malformed("bad-3"),
+            ),
+            Stream.never,
+          ),
+      });
+      const subscriber = yield* Stream.runDrain(hub.changes).pipe(Effect.forkScoped);
+
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      assert.strictEqual(snapshotReads, 1);
+      yield* TestClock.adjust("1 second");
+      yield* Effect.yieldNow;
+      assert.strictEqual(snapshotReads, 2);
+      yield* Fiber.interrupt(subscriber);
+    }).pipe(Effect.provide(TestClock.layer())),
+  ),
+);
+
 it.effect(
   "shares one connection, reconnects with backoff, and marks fallback while unavailable",
   () =>
@@ -285,6 +392,7 @@ it.effect(
         const first = yield* Stream.runDrain(hub.changes).pipe(Effect.forkScoped);
         const second = yield* Stream.runDrain(hub.changes).pipe(Effect.forkScoped);
 
+        yield* Effect.yieldNow;
         yield* Effect.yieldNow;
         assert.strictEqual(opens, 1);
         assert.strictEqual(yield* hub.isLive, false);
@@ -356,6 +464,42 @@ it.effect("coalesces shell change bursts before a refresh", () =>
       yield* Effect.yieldNow;
 
       assert.strictEqual(yield* Ref.get(refreshes), 1);
+      yield* Fiber.interrupt(consumer);
+    }).pipe(Effect.provide(TestClock.layer())),
+  ),
+);
+
+it.effect("emits refresh signals during a sustained change burst", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const changes = yield* PubSub.unbounded<{
+        readonly type: string;
+        readonly cursor: string;
+        readonly payload: object;
+        readonly authoritative: boolean;
+      }>();
+      const subscription = yield* PubSub.subscribe(changes);
+      const refreshes = yield* Ref.make(0);
+      const consumer = yield* Stream.runDrain(
+        coalesceJarvisChanges(
+          Stream.fromSubscription(subscription),
+          JARVIS_SSE_SHELL_DEBOUNCE,
+        ).pipe(Stream.mapEffect(() => Ref.update(refreshes, (count) => count + 1))),
+      ).pipe(Effect.forkScoped);
+
+      yield* Effect.yieldNow;
+      for (let index = 0; index < 10; index += 1) {
+        yield* PubSub.publish(changes, {
+          type: "run.updated",
+          cursor: `cursor-${index}`,
+          payload: {},
+          authoritative: false,
+        });
+        yield* TestClock.adjust("100 millis");
+        yield* Effect.yieldNow;
+      }
+
+      assert.isAtLeast(yield* Ref.get(refreshes), 2);
       yield* Fiber.interrupt(consumer);
     }).pipe(Effect.provide(TestClock.layer())),
   ),
