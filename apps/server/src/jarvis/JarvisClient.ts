@@ -3022,24 +3022,42 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
               message: `No fixture session ${candidateSessionRef}.`,
             }),
           ),
-    getSessionEvents: (candidateSessionRef) =>
-      Effect.succeed({
-        items: eventsBySession.get(candidateSessionRef) ?? [],
-        cursor: fixtureSnapshot.cursor,
+    getSessionEvents: (candidateSessionRef, options) => {
+      const events = eventsAfter(
+        eventsBySession.get(candidateSessionRef) ?? [],
+        options?.after,
+        (event) => event.event_id,
+      );
+      return Effect.succeed({
+        items: events,
+        cursor: events.at(-1)?.event_id ?? null,
         has_more: false,
-      }),
-    getRequests: (candidateSessionRef) =>
-      Effect.succeed({
-        items: requestsBySession.get(candidateSessionRef) ?? [],
-        cursor: fixtureSnapshot.cursor,
+      });
+    },
+    getRequests: (candidateSessionRef, options) => {
+      const requests = eventsAfter(
+        requestsBySession.get(candidateSessionRef) ?? [],
+        options?.after,
+        (request) => request.request_id,
+      );
+      return Effect.succeed({
+        items: requests,
+        cursor: requests.at(-1)?.request_id ?? null,
         has_more: false,
-      }),
-    getCheckpoints: (candidateSessionRef) =>
-      Effect.succeed({
-        items: checkpointsBySession.get(candidateSessionRef) ?? [],
-        cursor: fixtureSnapshot.cursor,
+      });
+    },
+    getCheckpoints: (candidateSessionRef, options) => {
+      const checkpoints = eventsAfter(
+        checkpointsBySession.get(candidateSessionRef) ?? [],
+        options?.after,
+        (checkpoint) => checkpoint.checkpoint_id,
+      );
+      return Effect.succeed({
+        items: checkpoints,
+        cursor: checkpoints.at(-1)?.checkpoint_id ?? null,
         has_more: false,
-      }),
+      });
+    },
     validateWork: (workInput) => {
       const source = firstTrimmed(workInput.source) ?? "manual";
       const repo = firstTrimmed(workInput.repo) ?? "roughcoder/jarvis";
@@ -3429,6 +3447,18 @@ function firstTrimmed(...values: ReadonlyArray<unknown>): string | null {
     }
   }
   return null;
+}
+
+function eventsAfter<Item>(
+  items: ReadonlyArray<Item>,
+  after: string | undefined,
+  itemId: (item: Item) => string,
+): ReadonlyArray<Item> {
+  if (after === undefined) {
+    return items;
+  }
+  const cursorIndex = items.findIndex((item) => itemId(item) === after);
+  return cursorIndex === -1 ? [] : items.slice(cursorIndex + 1);
 }
 
 function normalizeProjectThreadTitle(title: string): string {
