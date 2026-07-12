@@ -828,7 +828,15 @@ it.effect("cockpit client incrementally reads authenticated SSE frames", () =>
 
     assert.deepStrictEqual(
       [...events],
-      [{ type: "snapshot", cursor: "cursor-1", payload: {}, authoritative: true }],
+      [
+        {
+          type: "snapshot",
+          cursor: "cursor-1",
+          payload: {},
+          authoritative: true,
+          malformed: false,
+        },
+      ],
     );
     assert.deepStrictEqual(requests, [
       {
