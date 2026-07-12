@@ -57,7 +57,7 @@ export function mapJarvisRunsSnapshotToShellSnapshot(
 ): OrchestrationShellSnapshot {
   return mapJarvisRunsSnapshotToShellSnapshotWithSessions(
     snapshot,
-    activeJarvisRuns(snapshot.runs),
+    activeJarvisRuns(snapshot),
     activeJarvisSessionsForSnapshot(snapshot),
     { includeStartWorkProject: true },
   );
@@ -68,7 +68,7 @@ export function mapJarvisArchivedRunsSnapshotToShellSnapshot(
 ): OrchestrationShellSnapshot {
   return mapJarvisRunsSnapshotToShellSnapshotWithSessions(
     snapshot,
-    archivedJarvisRuns(snapshot.runs),
+    archivedJarvisRuns(snapshot),
     archivedJarvisSessionsForSnapshot(snapshot),
     { includeStartWorkProject: false },
   );
@@ -100,7 +100,7 @@ export function mapJarvisRunsSnapshotToReadModel(input: {
   readonly checkpointsBySession?: ReadonlyMap<string, ReadonlyArray<JarvisSessionCheckpoint>>;
 }): OrchestrationReadModel {
   const runsById = new Map(input.snapshot.runs.map((run) => [run.run_id, run]));
-  const activeRuns = activeJarvisRuns(input.snapshot.runs);
+  const activeRuns = activeJarvisRuns(input.snapshot);
   const activeSessions = activeJarvisSessionsForSnapshot(input.snapshot);
   const projects = mapRunsAndSessionsToProjectShells(activeRuns, activeSessions);
   return {
@@ -136,15 +136,37 @@ function hasInternalWorkPurpose(metadata: Readonly<Record<string, unknown>> | un
   return metadata?.["purpose"] === JARVIS_WORK_PURPOSE_WORKER_READINESS;
 }
 
-function internalPurposeRunIds(runs: ReadonlyArray<JarvisRun>): ReadonlySet<JarvisRun["run_id"]> {
-  return new Set(runs.filter((run) => hasInternalWorkPurpose(run.metadata)).map((run) => run.run_id));
+// A run counts as internal when it carries the tag itself, or when every one of
+// its sessions does (Jarvis may echo start-work metadata on sessions only).
+function internalPurposeRunIds(snapshot: JarvisRunsSnapshot): ReadonlySet<JarvisRun["run_id"]> {
+  const internal = new Set(
+    snapshot.runs.filter((run) => hasInternalWorkPurpose(run.metadata)).map((run) => run.run_id),
+  );
+  const sessionCounts = new Map<JarvisRun["run_id"], { total: number; tagged: number }>();
+  for (const session of snapshot.sessions) {
+    if (session.run_id === null) {
+      continue;
+    }
+    const counts = sessionCounts.get(session.run_id) ?? { total: 0, tagged: 0 };
+    counts.total += 1;
+    if (hasInternalWorkPurpose(session.metadata)) {
+      counts.tagged += 1;
+    }
+    sessionCounts.set(session.run_id, counts);
+  }
+  for (const [runId, counts] of sessionCounts) {
+    if (counts.tagged === counts.total) {
+      internal.add(runId);
+    }
+  }
+  return internal;
 }
 
 export function activeJarvisSessionsForSnapshot(
   snapshot: JarvisRunsSnapshot,
 ): ReadonlyArray<LinkedJarvisWorkerSession> {
-  const archivedRunIds = new Set(archivedJarvisRuns(snapshot.runs).map((run) => run.run_id));
-  const internalRunIds = internalPurposeRunIds(snapshot.runs);
+  const archivedRunIds = new Set(archivedJarvisRuns(snapshot).map((run) => run.run_id));
+  const internalRunIds = internalPurposeRunIds(snapshot);
   return snapshot.sessions.filter(
     (session): session is LinkedJarvisWorkerSession =>
       isLinkedJarvisWorkerSession(session) &&
@@ -158,8 +180,10 @@ export function activeJarvisSessionsForSnapshot(
 function archivedJarvisSessionsForSnapshot(
   snapshot: JarvisRunsSnapshot,
 ): ReadonlyArray<LinkedJarvisWorkerSession> {
-  const archivedRunIds = new Set(archivedJarvisRuns(snapshot.runs).map((run) => run.run_id));
-  const internalRunIds = internalPurposeRunIds(snapshot.runs);
+  const archivedRunIds = new Set(
+    snapshot.runs.filter((run) => run.archived_at != null).map((run) => run.run_id),
+  );
+  const internalRunIds = internalPurposeRunIds(snapshot);
   return snapshot.sessions.filter(
     (session): session is LinkedJarvisWorkerSession =>
       isLinkedJarvisWorkerSession(session) &&
@@ -169,12 +193,14 @@ function archivedJarvisSessionsForSnapshot(
   );
 }
 
-function activeJarvisRuns(runs: ReadonlyArray<JarvisRun>): ReadonlyArray<JarvisRun> {
-  return runs.filter((run) => run.archived_at == null && !hasInternalWorkPurpose(run.metadata));
+function activeJarvisRuns(snapshot: JarvisRunsSnapshot): ReadonlyArray<JarvisRun> {
+  const internalRunIds = internalPurposeRunIds(snapshot);
+  return snapshot.runs.filter((run) => run.archived_at == null && !internalRunIds.has(run.run_id));
 }
 
-function archivedJarvisRuns(runs: ReadonlyArray<JarvisRun>): ReadonlyArray<JarvisRun> {
-  return runs.filter((run) => run.archived_at != null && !hasInternalWorkPurpose(run.metadata));
+function archivedJarvisRuns(snapshot: JarvisRunsSnapshot): ReadonlyArray<JarvisRun> {
+  const internalRunIds = internalPurposeRunIds(snapshot);
+  return snapshot.runs.filter((run) => run.archived_at != null && !internalRunIds.has(run.run_id));
 }
 
 export function mapJarvisSessionToThreadDetail(input: {
