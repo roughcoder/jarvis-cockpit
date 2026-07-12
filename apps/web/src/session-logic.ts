@@ -21,6 +21,7 @@ import type {
   ThreadSession,
   TurnDiffSummary,
 } from "./types";
+import type { ConversationActivityStatus } from "@t3tools/client-runtime/conversation";
 
 export type ProviderPickerKind = ProviderDriverKind;
 
@@ -78,6 +79,12 @@ export interface WorkLogEntry {
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
   /** Originating orchestration activity kind (e.g. `user-input.requested`) for row chrome. */
   sourceActivityKind?: OrchestrationThreadActivity["kind"];
+  /** Explicit universal semantic activity marker; these rows remain visible while in flight. */
+  semanticActivityStatus?: ConversationActivityStatus;
+}
+
+export function workLogEntryIsSemanticActivity(entry: WorkLogEntry): boolean {
+  return entry.semanticActivityStatus !== undefined;
 }
 
 interface DerivedWorkLogEntry extends WorkLogEntry {

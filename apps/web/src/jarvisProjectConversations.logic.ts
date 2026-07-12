@@ -9,6 +9,7 @@ import type {
   JarvisTurnWorkspaceInput,
   ThreadId,
 } from "@t3tools/contracts";
+import { projectJarvisMessagePresentation } from "@t3tools/client-runtime/conversation";
 import type { JarvisThreadTurnMergedItem } from "./jarvisThreadToolEvents.logic";
 
 export type ProjectConversationSendStatus =
@@ -453,14 +454,14 @@ function historyMessageView(
   message: JarvisProjectThreadMessage,
   index: number,
 ): ProjectConversationMessageView {
-  const generatedReviewPrompt = summarizeGeneratedPrReviewPrompt(message);
+  const generatedReviewPrompt = projectJarvisMessagePresentation(message);
   return {
     id: `history-${index}-${message.observed_at}`,
     // Contract role is a tolerant string; render "user" on the user side, everything else
     // (assistant / any future role) on the assistant side.
     role: message.role === "user" ? "user" : "assistant",
     content: generatedReviewPrompt?.summary ?? message.content,
-    technicalContent: generatedReviewPrompt?.technicalContent ?? null,
+    technicalContent: generatedReviewPrompt?.disclosure?.text ?? null,
     observedAt: message.observed_at,
     peerId: message.peer_id?.trim() || null,
     source: "history",
@@ -533,21 +534,6 @@ function localAssistantMessage(
     retryPrompt: turn.prompt,
     retryWorkspace: turn.workspaceInput ?? null,
     orchestrationLifecycle: null,
-  };
-}
-
-function summarizeGeneratedPrReviewPrompt(
-  message: JarvisProjectThreadMessage,
-): { readonly summary: string; readonly technicalContent: string } | null {
-  if (message.role !== "user") return null;
-  const match =
-    /^You are the PR review orchestrator\. Review pull request #(\d+) in ([^.\s]+)\./u.exec(
-      message.content.trim(),
-    );
-  if (!match) return null;
-  return {
-    summary: `Review ${match[2]} #${match[1]} with two independent code agents.`,
-    technicalContent: message.content,
   };
 }
 

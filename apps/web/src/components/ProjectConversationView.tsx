@@ -15,6 +15,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { adaptJarvisProjectThread } from "@t3tools/client-runtime/conversation";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as Schema from "effect/Schema";
@@ -118,8 +119,10 @@ import { toastManager } from "./ui/toast";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { mergeJarvisThreadToolEventsWithReply } from "../jarvisThreadToolEvents.logic";
+import { agentConversationTimelineRenderMode } from "../agentConversationTimeline.logic";
 import { ProjectConversationMessage } from "./ProjectConversationMessage";
 import { ChatHeaderTitle } from "./chat/ChatHeaderTitle";
+import { AgentConversationTimeline } from "./chat/AgentConversationTimeline";
 
 interface ProjectConversationViewProps {
   readonly environmentId: EnvironmentId;
@@ -237,6 +240,22 @@ export function ProjectConversationView({
     () => projectConversationMergedMessages({ historyMessages, localTurns: turns }),
     [historyMessages, turns],
   );
+  const agentConversation = useMemo(
+    () =>
+      threadDetailStream.data === null || threadDetailStream.data === undefined
+        ? null
+        : adaptJarvisProjectThread(threadDetailStream.data),
+    [threadDetailStream.data],
+  );
+  const localMessages = useMemo(
+    () => messages.filter((message) => message.source === "local"),
+    [messages],
+  );
+  const agentTimelineRenderMode = agentConversationTimelineRenderMode({
+    hasAgentConversation: agentConversation !== null,
+    timelineEntryCount: agentConversation?.timeline.length ?? 0,
+    localMessageCount: localMessages.length,
+  });
   const [pendingArchiveConfirmation, setPendingArchiveConfirmation] = useState(false);
   const [renamingConversation, setRenamingConversation] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
@@ -942,47 +961,89 @@ export function ProjectConversationView({
           )}
         >
           <main className="relative flex min-h-0 flex-col overflow-hidden">
-            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-5">
-              <div className="mx-auto flex w-full max-w-3xl flex-col pb-4">
-                {loadingProject ? (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Spinner className="size-4" />
-                    Loading project conversation
-                  </div>
-                ) : null}
-                {!loadingProject && conversation === null ? (
-                  <Empty className="min-h-80">
-                    <EmptyHeader>
-                      <EmptyTitle>Conversation not found</EmptyTitle>
-                      <EmptyDescription>
-                        Jarvis did not return this project conversation for {projectName}.
-                      </EmptyDescription>
-                    </EmptyHeader>
-                  </Empty>
-                ) : null}
-                {conversation !== null && messages.length === 0 ? (
-                  <Empty className="min-h-80">
-                    <EmptyHeader>
-                      <MessageSquareIcon className="mb-4 size-7 text-muted-foreground" />
-                      <EmptyTitle>{conversation.title}</EmptyTitle>
-                      <EmptyDescription>
-                        {conversation.workspace
-                          ? `Updated ${formatRelativeTimeLabel(conversation.updated_at)}. Continue the workspace conversation from this surface.`
-                          : "Planning conversation - no repo access. Attach a repo to let it inspect code."}
-                      </EmptyDescription>
-                    </EmptyHeader>
-                  </Empty>
-                ) : null}
-                {messages.map((message) => (
-                  <ProjectConversationMessage
-                    key={message.id}
-                    message={message}
-                    workspaceProvisionPhase={conversationWorkspace?.provision_phase ?? null}
-                    onRetry={retryMessage(message)}
-                    retryDisabled={sendBusy}
+            <div
+              className={cn(
+                "min-h-0 flex-1",
+                agentConversation
+                  ? "flex flex-col overflow-hidden"
+                  : "overflow-y-auto px-3 py-4 sm:px-5",
+              )}
+            >
+              {agentTimelineRenderMode === "native" && agentConversation ? (
+                <div className="min-h-0 flex-1">
+                  <AgentConversationTimeline
+                    conversation={agentConversation}
+                    environmentId={environmentId}
+                    routeThreadKey={`${environmentId}:${String(threadId)}`}
+                    resolvedTheme={resolvedTheme}
+                    timestampFormat={settings.timestampFormat}
+                    showEmptyState={localMessages.length === 0}
                   />
-                ))}
-              </div>
+                </div>
+              ) : agentTimelineRenderMode === "legacy" ? (
+                <div className="mx-auto flex w-full max-w-3xl flex-col pb-4">
+                  {loadingProject ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Spinner className="size-4" />
+                      Loading project conversation
+                    </div>
+                  ) : null}
+                  {!loadingProject && conversation === null ? (
+                    <Empty className="min-h-80">
+                      <EmptyHeader>
+                        <EmptyTitle>Conversation not found</EmptyTitle>
+                        <EmptyDescription>
+                          Jarvis did not return this project conversation for {projectName}.
+                        </EmptyDescription>
+                      </EmptyHeader>
+                    </Empty>
+                  ) : null}
+                  {conversation !== null && messages.length === 0 ? (
+                    <Empty className="min-h-80">
+                      <EmptyHeader>
+                        <MessageSquareIcon className="mb-4 size-7 text-muted-foreground" />
+                        <EmptyTitle>{conversation.title}</EmptyTitle>
+                        <EmptyDescription>
+                          {conversation.workspace
+                            ? `Updated ${formatRelativeTimeLabel(conversation.updated_at)}. Continue the workspace conversation from this surface.`
+                            : "Planning conversation - no repo access. Attach a repo to let it inspect code."}
+                        </EmptyDescription>
+                      </EmptyHeader>
+                    </Empty>
+                  ) : null}
+                  {messages.map((message) => (
+                    <ProjectConversationMessage
+                      key={message.id}
+                      message={message}
+                      workspaceProvisionPhase={conversationWorkspace?.provision_phase ?? null}
+                      onRetry={retryMessage(message)}
+                      retryDisabled={sendBusy}
+                    />
+                  ))}
+                </div>
+              ) : null}
+              {agentConversation && localMessages.length > 0 ? (
+                <div
+                  className={cn(
+                    "overflow-y-auto px-3 pt-2 sm:px-5",
+                    agentConversation.timeline.length === 0
+                      ? "min-h-0 flex-1"
+                      : "max-h-[40%] shrink-0 border-t border-border/40",
+                  )}
+                >
+                  <div className="mx-auto flex w-full max-w-3xl flex-col">
+                    {localMessages.map((message) => (
+                      <ProjectConversationMessage
+                        key={message.id}
+                        message={message}
+                        workspaceProvisionPhase={conversationWorkspace?.provision_phase ?? null}
+                        onRetry={retryMessage(message)}
+                        retryDisabled={sendBusy}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
             <div className="border-t border-border/40 bg-background pt-2">
               <div className="mx-auto w-full max-w-3xl px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:px-5">

@@ -328,6 +328,29 @@ describe("Jarvis universal conversation adapter", () => {
     ]);
   });
 
+  it("preserves raw generated review instructions with compact neutral presentation", () => {
+    const raw =
+      "You are the PR review orchestrator. Review pull request #126 in roughcoder/jarvis. Keep all technical instructions.";
+    const conversation = adaptJarvisProjectThread({
+      ...ENRICHED_JARVIS_CONVERSATION_GOLDEN,
+      messages: [
+        {
+          role: "user",
+          content: raw,
+          observed_at: "2026-07-12T12:00:00.000Z",
+        },
+      ],
+    });
+
+    expect(conversation.messages[0]).toMatchObject({
+      content: raw,
+      presentation: {
+        summary: "Review roughcoder/jarvis #126 with two independent code agents.",
+        disclosure: { label: "Review instructions", text: raw },
+      },
+    });
+  });
+
   it("preserves cancellation and treats unknown terminal phases conservatively", () => {
     const conversation = adaptJarvisProjectThread({
       ...ENRICHED_JARVIS_CONVERSATION_GOLDEN,

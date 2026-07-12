@@ -80,6 +80,7 @@ export function ToolCallTimelineRow({
 
   return (
     <div
+      data-tool-status={status ?? undefined}
       className={cn(
         "flex flex-col rounded-md px-0.5 py-0.5 transition-colors",
         canExpand &&

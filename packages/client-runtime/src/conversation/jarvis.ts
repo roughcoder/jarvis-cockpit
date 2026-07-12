@@ -135,6 +135,7 @@ function projectItems(
       return;
     }
     if (isRedundantTechnicalAcknowledgement(message)) return;
+    const presentation = projectJarvisMessagePresentation(message);
     items.push({
       observedAt: message.observed_at,
       sourceIndex,
@@ -145,6 +146,7 @@ function projectItems(
         content: message.content,
         authorId: clean(message.peer_id),
         observedAt: message.observed_at,
+        ...(presentation ? { presentation } : {}),
       },
     });
   });
@@ -172,6 +174,20 @@ function projectItems(
     (left, right) =>
       left.observedAt.localeCompare(right.observedAt) || left.sourceIndex - right.sourceIndex,
   );
+}
+
+/** Bounded compatibility presentation for known generated orchestration prompts. */
+export function projectJarvisMessagePresentation(message: JarvisConversationMessage) {
+  if (message.role !== "user") return null;
+  const match =
+    /^You are the PR review orchestrator\. Review pull request #(\d+) in ([^.\s]+)\./u.exec(
+      message.content.trim(),
+    );
+  if (!match) return null;
+  return {
+    summary: `Review ${match[2]} #${match[1]} with two independent code agents.`,
+    disclosure: { label: "Review instructions", text: message.content },
+  };
 }
 
 function compareOrderedMessages(

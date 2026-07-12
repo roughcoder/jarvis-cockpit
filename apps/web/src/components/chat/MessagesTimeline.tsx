@@ -25,10 +25,12 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
 import {
   deriveTimelineEntries,
+  type WorkLogEntry,
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
   workEntryIndicatesToolSuccess,
   workLogEntryIsToolLike,
+  workLogEntryIsSemanticActivity,
 } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
@@ -57,6 +59,7 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { MessageDisclosure } from "./MessageDisclosure";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
@@ -903,6 +906,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           skills={ctx.skills}
           markdownCwd={ctx.markdownCwd}
         />
+        {row.message.disclosure ? (
+          <MessageDisclosure
+            label={row.message.disclosure.label}
+            text={row.message.disclosure.text}
+            cwd={ctx.markdownCwd}
+          />
+        ) : null}
       </ChatUserMessageBubble>
       <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
         <div className="flex shrink-0 items-center gap-2">
@@ -1106,7 +1116,11 @@ const WorkGroupSection = memo(function WorkGroupSection({
 }) {
   const { workspaceRoot } = use(TimelineRowCtx);
   const nonEmptyEntries = useMemo(
-    () => groupedEntries.filter((entry) => !workEntryIndicatesToolNeutralStatus(entry)),
+    () =>
+      groupedEntries.filter(
+        (entry) =>
+          workLogEntryIsSemanticActivity(entry) || !workEntryIndicatesToolNeutralStatus(entry),
+      ),
     [groupedEntries],
   );
   const onlyToolEntries = nonEmptyEntries.every((entry) => workLogEntryIsToolLike(entry));
@@ -1886,13 +1900,15 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const showSuccessIndicator =
     workEntryIndicatesToolSuccess(workEntry) ||
     (turnSettled && workEntryIndicatesToolNeutralStatus(workEntry));
-  const status: ToolCallTimelineStatus = showFailedIndicator
-    ? "failed"
-    : showSuccessIndicator
-      ? "completed"
-      : showNeutralIndicator
-        ? "empty"
-        : null;
+  const status: ToolCallTimelineStatus = workEntry.semanticActivityStatus
+    ? semanticActivityRowStatus(workEntry.semanticActivityStatus)
+    : showFailedIndicator
+      ? "failed"
+      : showSuccessIndicator
+        ? "completed"
+        : showNeutralIndicator
+          ? "empty"
+          : null;
 
   return (
     <ToolCallTimelineRow
@@ -1912,3 +1928,20 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
     />
   );
 });
+
+function semanticActivityRowStatus(
+  status: NonNullable<WorkLogEntry["semanticActivityStatus"]>,
+): ToolCallTimelineStatus {
+  switch (status) {
+    case "requested":
+    case "running":
+    case "waiting":
+      return "pending";
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "cancelled":
+      return null;
+  }
+}

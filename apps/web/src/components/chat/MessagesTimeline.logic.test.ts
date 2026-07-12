@@ -261,6 +261,46 @@ describe("resolveAssistantMessageCopyState", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it("preserves neutral in-flight and cancelled universal activity rows", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        semanticWorkEntry("semantic-running", "running"),
+        semanticWorkEntry("semantic-cancelled", "cancelled"),
+        {
+          id: "ordinary-running",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:02Z",
+          entry: {
+            id: "ordinary-running",
+            createdAt: "2026-01-01T00:00:02Z",
+            label: "Ordinary running tool",
+            tone: "tool",
+            toolLifecycleStatus: "inProgress",
+          },
+        },
+      ],
+      expandedWorkGroupIds: new Set(["work-group:semantic-running"]),
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(
+      rows.flatMap((row) =>
+        row.kind === "work"
+          ? row.groupedEntries.map((entry) => ({
+              id: entry.id,
+              status: entry.semanticActivityStatus,
+            }))
+          : [],
+      ),
+    ).toEqual([
+      { id: "semantic-running", status: "running" },
+      { id: "semantic-cancelled", status: "cancelled" },
+    ]);
+  });
+
   it("only enables assistant copy for the terminal assistant message in a turn", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
@@ -1012,6 +1052,25 @@ describe("deriveMessagesTimelineRows", () => {
     });
   });
 });
+
+function semanticWorkEntry(
+  id: string,
+  status: "running" | "cancelled",
+): import("../../session-logic").TimelineEntry {
+  return {
+    id,
+    kind: "work",
+    createdAt: "2026-01-01T00:00:00Z",
+    entry: {
+      id,
+      createdAt: "2026-01-01T00:00:00Z",
+      label: status === "cancelled" ? "Cancelled search" : "Searching",
+      tone: "tool",
+      toolLifecycleStatus: status === "running" ? "inProgress" : "stopped",
+      semanticActivityStatus: status,
+    },
+  };
+}
 
 describe("computeStableMessagesTimelineRows", () => {
   it("returns the previous result when row order and content are unchanged", () => {

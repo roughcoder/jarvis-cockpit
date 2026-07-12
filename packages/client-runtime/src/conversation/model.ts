@@ -16,6 +16,14 @@ export type ConversationOperationalState =
 
 export type ConversationMessageRole = "user" | "assistant" | "system" | "unknown";
 
+export interface ConversationMessagePresentation {
+  readonly summary: string;
+  readonly disclosure: {
+    readonly label: string;
+    readonly text: string;
+  } | null;
+}
+
 export interface ConversationMessage {
   readonly id: string;
   readonly conversationId: string;
@@ -23,6 +31,7 @@ export interface ConversationMessage {
   readonly content: string;
   readonly authorId: string | null;
   readonly observedAt: string;
+  readonly presentation?: ConversationMessagePresentation;
 }
 
 export type ConversationActivityStatus =

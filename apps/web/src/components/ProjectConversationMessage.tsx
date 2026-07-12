@@ -1,4 +1,4 @@
-import { CheckIcon, ChevronDownIcon, RotateCcwIcon } from "lucide-react";
+import { CheckIcon, RotateCcwIcon } from "lucide-react";
 
 import type { ProjectConversationMessageView } from "../jarvisProjectConversations.logic";
 import { deriveWorkspaceProvisionSteps } from "./projectConversationWorkspace.logic";
@@ -12,6 +12,7 @@ import {
 import { ThreadToolCallRow } from "./chat/ThreadToolCallRow";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
+import { MessageDisclosure } from "./chat/MessageDisclosure";
 
 export function ProjectConversationMessage({
   message,
@@ -36,15 +37,11 @@ export function ProjectConversationMessage({
         <ChatUserMessageBubble>
           <ChatMarkdown text={message.content} cwd={undefined} lineBreaks />
           {message.technicalContent ? (
-            <details className="group/instructions mt-2 border-t border-foreground/10 pt-2">
-              <summary className="flex cursor-pointer list-none items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground">
-                <ChevronDownIcon className="size-3 transition-transform group-open/instructions:rotate-180" />
-                Review instructions
-              </summary>
-              <div className="mt-2 max-h-72 overflow-y-auto border-s border-border/50 ps-3 text-left">
-                <ChatMarkdown text={message.technicalContent} cwd={undefined} />
-              </div>
-            </details>
+            <MessageDisclosure
+              label="Review instructions"
+              text={message.technicalContent}
+              cwd={undefined}
+            />
           ) : null}
         </ChatUserMessageBubble>
       </ChatUserMessage>
