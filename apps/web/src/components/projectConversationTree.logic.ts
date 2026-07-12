@@ -1,5 +1,7 @@
 import type { JarvisProjectThread, JarvisWorkerSession } from "@t3tools/contracts";
 
+import type { ChatTreeNode } from "./chatTree.logic";
+
 const JARVIS_THREAD_ID_PREFIX = "jarvis-session_";
 
 export type ProjectConversationTreeItem =
@@ -26,6 +28,16 @@ export type ProjectConversationTreeItem =
       readonly session: JarvisWorkerSession;
     };
 
+export type ProjectConversationArchiveTarget =
+  | {
+      readonly kind: "project-thread";
+      readonly threadId: string;
+    }
+  | {
+      readonly kind: "worker-session";
+      readonly sessionRef: string;
+    };
+
 function metadataString(metadata: Readonly<Record<string, unknown>>, key: string): string | null {
   const value = metadata[key];
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
@@ -44,6 +56,42 @@ function sessionField(
 
 export function workerSessionThreadId(sessionRef: string): string {
   return `${JARVIS_THREAD_ID_PREFIX}${sessionRef}`;
+}
+
+export function projectConversationArchiveTarget(
+  conversation: ProjectConversationTreeItem,
+): ProjectConversationArchiveTarget {
+  return conversation.kind === "project-thread"
+    ? { kind: "project-thread", threadId: conversation.thread_id }
+    : { kind: "worker-session", sessionRef: conversation.session.session_ref };
+}
+
+/** Descendants in display order, excluding the supplied node. */
+export function projectConversationTreeDescendants(
+  node: ChatTreeNode<ProjectConversationTreeItem>,
+): ProjectConversationTreeItem[] {
+  const descendants: ProjectConversationTreeItem[] = [];
+  for (const child of node.children) {
+    descendants.push(child.conversation, ...projectConversationTreeDescendants(child));
+  }
+  return descendants;
+}
+
+/**
+ * Archive targets ordered child-before-parent so callers can archive a nested
+ * family before archiving (and therefore promoting) any of its ancestors.
+ */
+export function projectConversationDescendantArchiveTargets(
+  node: ChatTreeNode<ProjectConversationTreeItem>,
+): ProjectConversationArchiveTarget[] {
+  const targets: ProjectConversationArchiveTarget[] = [];
+  for (const child of node.children) {
+    targets.push(
+      ...projectConversationDescendantArchiveTargets(child),
+      projectConversationArchiveTarget(child.conversation),
+    );
+  }
+  return targets;
 }
 
 /**

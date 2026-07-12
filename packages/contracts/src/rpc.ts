@@ -141,10 +141,12 @@ import {
   ServerSettingsPatch,
 } from "./settings.ts";
 import {
+  JarvisArchiveInput,
   JarvisCockpitSnapshotResult,
   JarvisCloseSessionInput,
   JarvisDeleteInput,
   JarvisLifecycleRpcResult,
+  JarvisControlResult,
   JarvisProjectArchiveInput,
   JarvisProjectCreateInput,
   JarvisProjectCreateThreadInput,
@@ -265,6 +267,7 @@ export const WS_METHODS = {
   serverValidateJarvisWork: "server.validateJarvisWork",
   serverPruneJarvisWorkerWorktrees: "server.pruneJarvisWorkerWorktrees",
   serverCloseJarvisSession: "server.closeJarvisSession",
+  serverArchiveJarvisSession: "server.archiveJarvisSession",
   serverDeleteJarvisSession: "server.deleteJarvisSession",
   serverDeleteJarvisRun: "server.deleteJarvisRun",
   serverCreateJarvisProject: "server.createJarvisProject",
@@ -492,6 +495,15 @@ export const WsServerCloseJarvisSessionRpc = Rpc.make(WS_METHODS.serverCloseJarv
     input: Schema.optional(JarvisCloseSessionInput),
   }),
   success: JarvisLifecycleRpcResult,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerArchiveJarvisSessionRpc = Rpc.make(WS_METHODS.serverArchiveJarvisSession, {
+  payload: Schema.Struct({
+    sessionRef: Schema.String,
+    input: Schema.optional(JarvisArchiveInput),
+  }),
+  success: JarvisControlResult,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
@@ -1108,6 +1120,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerValidateJarvisWorkRpc,
   WsServerPruneJarvisWorkerWorktreesRpc,
   WsServerCloseJarvisSessionRpc,
+  WsServerArchiveJarvisSessionRpc,
   WsServerDeleteJarvisSessionRpc,
   WsServerDeleteJarvisRunRpc,
   WsServerCreateJarvisProjectRpc,

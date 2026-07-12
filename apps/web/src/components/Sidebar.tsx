@@ -78,6 +78,7 @@ import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useThreadDiscoveredPorts } from "../portDiscoveryState";
 import { openDiscoveredPort } from "./preview/openDiscoveredPort";
 import { useAtomCommand } from "../state/use-atom-command";
+import { useDefaultOrchestratorTarget } from "../hooks/useDefaultOrchestrator";
 import { previewEnvironment } from "../state/preview";
 import {
   legacyProjectCwdPreferenceKey,
@@ -108,6 +109,7 @@ import {
   isJarvisCockpitEnvironment,
   isJarvisProjectId,
   isJarvisStartProjectId,
+  isJarvisThreadId,
   JARVIS_PROJECT_ID_PREFIX,
   JARVIS_THREAD_ID_PREFIX,
 } from "../jarvisCockpit";
@@ -201,7 +203,10 @@ import {
 import { buildProjectRouteParams } from "./ProjectView.logic";
 import { buildChatTree, type ChatTreeNode } from "./chatTree.logic";
 import {
+  projectConversationDescendantArchiveTargets,
+  projectConversationArchiveTarget,
   projectConversationTreeItems,
+  type ProjectConversationArchiveTarget,
   type ProjectConversationTreeItem,
 } from "./projectConversationTree.logic";
 import { sortThreads } from "../lib/threadSort";
@@ -1017,6 +1022,9 @@ function SidebarJarvisProjectConversations({
   const { isMobile, setOpenMobile } = useSidebar();
   const [showArchived, setShowArchived] = useState(false);
   const [confirmingArchiveThreadId, setConfirmingArchiveThreadId] = useState<string | null>(null);
+  const [pendingFamilyArchive, setPendingFamilyArchive] =
+    useState<ChatTreeNode<ProjectConversationTreeItem> | null>(null);
+  const [archivingFamily, setArchivingFamily] = useState(false);
   const [collapsedConversationIds, setCollapsedConversationIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -1024,6 +1032,9 @@ function SidebarJarvisProjectConversations({
     reportFailure: false,
   });
   const archiveThread = useAtomCommand(serverEnvironment.archiveJarvisProjectThread, {
+    reportFailure: false,
+  });
+  const archiveSession = useAtomCommand(serverEnvironment.archiveJarvisSession, {
     reportFailure: false,
   });
   const projectThreadsQuery = useEnvironmentQuery(
@@ -1040,6 +1051,10 @@ function SidebarJarvisProjectConversations({
     projectThreadsQuery.data?.ok === true ? (projectThreadsQuery.data.threads ?? []) : [];
   const workerSessions: ReadonlyArray<JarvisWorkerSession> =
     snapshotQuery.data?.ok === true ? (snapshotQuery.data.snapshot?.sessions ?? []) : [];
+  const orchestratorTarget = useDefaultOrchestratorTarget(
+    environmentId,
+    snapshotQuery.data?.snapshot?.workers ?? [],
+  );
   const hasActiveWorkerSessions = workerSessions.some((session) =>
     ["created", "provisioning", "ready", "running", "waiting", "needs_input"].includes(
       session.status,
@@ -1109,12 +1124,20 @@ function SidebarJarvisProjectConversations({
     [environmentId, isMobile, navigate, projectId, setOpenMobile],
   );
   const handleCreateProjectConversation = useCallback(async () => {
+    if (!orchestratorTarget) {
+      toastManager.add({
+        type: "error",
+        title: "Could not create orchestrator",
+        description: "No healthy fleet worker supports the configured orchestrator model.",
+      });
+      return;
+    }
     const title = `Conversation for ${projectName}`;
     const result = await createThread({
       environmentId,
       input: {
         projectId,
-        input: { title },
+        input: { title, ...orchestratorTarget },
       },
     });
     if (result._tag === "Failure") {
@@ -1144,52 +1167,75 @@ function SidebarJarvisProjectConversations({
     createThread,
     environmentId,
     navigateToProjectConversation,
+    orchestratorTarget,
     projectId,
     projectName,
     projectThreadsQuery,
   ]);
-  const handleArchiveProjectConversation = useCallback(
-    async (conversation: { readonly thread_id: string; readonly title: string }) => {
+  const archiveTarget = useCallback(
+    async (target: ProjectConversationArchiveTarget): Promise<boolean> => {
+      const result =
+        target.kind === "project-thread"
+          ? await archiveThread({
+              environmentId,
+              input: { projectId, threadId: target.threadId, input: {} },
+            })
+          : await archiveSession({
+              environmentId,
+              input: { sessionRef: target.sessionRef, input: {} },
+            });
+      return result._tag === "Success" && result.value.ok === true;
+    },
+    [archiveSession, archiveThread, environmentId, projectId],
+  );
+  const handleArchiveConversationItem = useCallback(
+    async (conversation: ProjectConversationTreeItem) => {
       setConfirmingArchiveThreadId(null);
-      const result = await archiveThread({
-        environmentId,
-        input: {
-          projectId,
-          threadId: conversation.thread_id,
-          input: {},
-        },
-      });
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          toastManager.add({
-            type: "error",
-            title: "Could not archive conversation",
-            description: formatProjectConversationFailure(
-              "archive",
-              squashAtomCommandFailure(result),
-            ),
-          });
-        }
-        return;
-      }
-      if (!result.value.ok || !result.value.thread) {
-        toastManager.add({
-          type: "error",
-          title: "Could not archive conversation",
-          description: formatProjectConversationFailure(
-            "archive",
-            result.value.error?.message ?? "Jarvis did not return the project conversation.",
-          ),
-        });
+      const archived = await archiveTarget(projectConversationArchiveTarget(conversation));
+      if (!archived) {
+        toastManager.add({ type: "error", title: "Could not archive conversation" });
         return;
       }
       projectThreadsQuery.refresh();
-      toastManager.add({
-        type: "success",
-        title: "Conversation archived",
-      });
+      snapshotQuery.refresh();
+      toastManager.add({ type: "success", title: "Conversation archived" });
     },
-    [archiveThread, environmentId, projectId, projectThreadsQuery],
+    [archiveTarget, projectThreadsQuery, snapshotQuery],
+  );
+  const handleArchiveFamily = useCallback(
+    async (includeChildren: boolean) => {
+      const node = pendingFamilyArchive;
+      if (!node) return;
+      setArchivingFamily(true);
+      const targets = includeChildren
+        ? [
+            ...projectConversationDescendantArchiveTargets(node),
+            projectConversationArchiveTarget(node.conversation),
+          ]
+        : [projectConversationArchiveTarget(node.conversation)];
+      let completed = 0;
+      for (const target of targets) {
+        if (!(await archiveTarget(target))) break;
+        completed += 1;
+      }
+      setArchivingFamily(false);
+      setPendingFamilyArchive(null);
+      projectThreadsQuery.refresh();
+      snapshotQuery.refresh();
+      if (completed !== targets.length) {
+        toastManager.add({
+          type: "error",
+          title: "Archive only partly completed",
+          description: `${completed} of ${targets.length} conversations were archived.`,
+        });
+      } else {
+        toastManager.add({
+          type: "success",
+          title: includeChildren ? "Conversation family archived" : "Parent conversation archived",
+        });
+      }
+    },
+    [archiveTarget, pendingFamilyArchive, projectThreadsQuery, snapshotQuery],
   );
 
   if (showPending) {
@@ -1214,7 +1260,7 @@ function SidebarJarvisProjectConversations({
       <>
         <SidebarProjectConversationCreateRow
           onCreate={() => void handleCreateProjectConversation()}
-          disabled={false}
+          disabled={orchestratorTarget === null}
         />
         <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
           <div className="flex h-6 w-full items-center px-2 text-[10px] text-destructive/80">
@@ -1230,7 +1276,7 @@ function SidebarJarvisProjectConversations({
       <>
         <SidebarProjectConversationCreateRow
           onCreate={() => void handleCreateProjectConversation()}
-          disabled={false}
+          disabled={orchestratorTarget === null}
         />
         <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
           <div className="flex h-6 w-full items-center px-2 text-[10px] text-muted-foreground/60">
@@ -1249,7 +1295,7 @@ function SidebarJarvisProjectConversations({
     <>
       <SidebarProjectConversationCreateRow
         onCreate={() => void handleCreateProjectConversation()}
-        disabled={false}
+        disabled={orchestratorTarget === null}
       />
       {conversationTree.map((node) =>
         renderProjectConversationTreeNode({
@@ -1261,13 +1307,50 @@ function SidebarJarvisProjectConversations({
           navigateToProjectConversation,
           setConfirmingArchiveThreadId,
           toggleConversationExpanded,
-          handleArchiveProjectConversation,
+          handleArchiveConversationItem,
+          setPendingFamilyArchive,
         }),
       )}
       <SidebarProjectConversationArchivedToggle
         showArchived={showArchived}
         onToggle={() => setShowArchived((value) => !value)}
       />
+      <AlertDialog
+        open={pendingFamilyArchive !== null}
+        onOpenChange={(open) => {
+          if (!open && !archivingFamily) setPendingFamilyArchive(null);
+        }}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Archive child conversations too?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This conversation has {pendingFamilyArchive?.children.length ?? 0} nested conversation
+              {(pendingFamilyArchive?.children.length ?? 0) === 1 ? "" : "s"}. You can keep them as
+              top-level conversations or archive the whole family.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />} disabled={archivingFamily}>
+              Cancel
+            </AlertDialogClose>
+            <Button
+              variant="outline"
+              disabled={archivingFamily}
+              onClick={() => void handleArchiveFamily(false)}
+            >
+              Archive parent only
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={archivingFamily}
+              onClick={() => void handleArchiveFamily(true)}
+            >
+              Archive parent and children
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
     </>
   );
 }
@@ -1281,7 +1364,8 @@ function renderProjectConversationTreeNode({
   navigateToProjectConversation,
   setConfirmingArchiveThreadId,
   toggleConversationExpanded,
-  handleArchiveProjectConversation,
+  handleArchiveConversationItem,
+  setPendingFamilyArchive,
 }: {
   readonly node: ChatTreeNode<ProjectConversationTreeItem>;
   readonly depth: number;
@@ -1291,10 +1375,10 @@ function renderProjectConversationTreeNode({
   readonly navigateToProjectConversation: (conversation: ProjectConversationTreeItem) => void;
   readonly setConfirmingArchiveThreadId: React.Dispatch<React.SetStateAction<string | null>>;
   readonly toggleConversationExpanded: (threadId: string) => void;
-  readonly handleArchiveProjectConversation: (conversation: {
-    readonly thread_id: string;
-    readonly title: string;
-  }) => void;
+  readonly handleArchiveConversationItem: (conversation: ProjectConversationTreeItem) => void;
+  readonly setPendingFamilyArchive: React.Dispatch<
+    React.SetStateAction<ChatTreeNode<ProjectConversationTreeItem> | null>
+  >;
 }) {
   const conversation = node.conversation;
   const hasChildren = node.children.length > 0;
@@ -1308,7 +1392,7 @@ function renderProjectConversationTreeNode({
         modelLabel={resolveJarvisProjectConversationModelLabel(conversation.model)}
         statusPill={resolveJarvisProjectConversationStatusPill(conversation.status)}
         archived={conversation.archived_at != null && conversation.archived_at !== ""}
-        canArchive={conversation.kind === "project-thread"}
+        canArchive
         depth={depth}
         hasChildren={hasChildren}
         isExpanded={isExpanded}
@@ -1316,16 +1400,20 @@ function renderProjectConversationTreeNode({
         onClick={() => navigateToProjectConversation(conversation)}
         onToggleExpanded={() => toggleConversationExpanded(conversation.thread_id)}
         confirmingArchive={confirmingArchiveThreadId === conversation.thread_id}
-        onStartArchiveConfirmation={() => setConfirmingArchiveThreadId(conversation.thread_id)}
+        onStartArchiveConfirmation={() => {
+          if (node.children.length > 0) {
+            setPendingFamilyArchive(node);
+          } else {
+            setConfirmingArchiveThreadId(conversation.thread_id);
+          }
+        }}
         onCancelArchiveConfirmation={() =>
           setConfirmingArchiveThreadId((current) =>
             current === conversation.thread_id ? null : current,
           )
         }
         onArchive={() => {
-          if (conversation.kind === "project-thread") {
-            handleArchiveProjectConversation(conversation);
-          }
+          handleArchiveConversationItem(conversation);
         }}
       />
       {isExpanded
@@ -1339,7 +1427,8 @@ function renderProjectConversationTreeNode({
               navigateToProjectConversation,
               setConfirmingArchiveThreadId,
               toggleConversationExpanded,
-              handleArchiveProjectConversation,
+              handleArchiveConversationItem,
+              setPendingFamilyArchive,
             }),
           )
         : null}
@@ -1629,6 +1718,9 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     environmentId: projectEnvironmentId,
     projectId: jarvisRegistryProjectId,
   });
+  const visibleRenderedThreads = jarvisRegistryProjectId
+    ? renderedThreads.filter((thread) => !isJarvisThreadId(thread.id))
+    : renderedThreads;
 
   return (
     <SidebarMenuSub
@@ -1654,7 +1746,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
         </SidebarMenuSubItem>
       ) : null}
       {shouldShowThreadPanel &&
-        renderedThreads.map((thread) => {
+        visibleRenderedThreads.map((thread) => {
           const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
           return (
             <SidebarThreadRow
@@ -1688,39 +1780,45 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
           );
         })}
 
-      {projectExpanded && hasOverflowingThreads && !isThreadListExpanded && (
-        <SidebarMenuSubItem className="w-full">
-          <SidebarMenuSubButton
-            render={showMoreButtonRender}
-            data-thread-selection-safe
-            size="sm"
-            className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
-            onClick={() => {
-              expandThreadListForProject(projectKey);
-            }}
-          >
-            <span className="flex min-w-0 flex-1 items-center gap-2">
-              {hiddenThreadStatus && <ThreadStatusLabel status={hiddenThreadStatus} compact />}
-              <span>Show more</span>
-            </span>
-          </SidebarMenuSubButton>
-        </SidebarMenuSubItem>
-      )}
-      {projectExpanded && hasOverflowingThreads && isThreadListExpanded && (
-        <SidebarMenuSubItem className="w-full">
-          <SidebarMenuSubButton
-            render={showLessButtonRender}
-            data-thread-selection-safe
-            size="sm"
-            className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
-            onClick={() => {
-              collapseThreadListForProject(projectKey);
-            }}
-          >
-            <span>Show less</span>
-          </SidebarMenuSubButton>
-        </SidebarMenuSubItem>
-      )}
+      {projectExpanded &&
+        !jarvisRegistryProjectId &&
+        hasOverflowingThreads &&
+        !isThreadListExpanded && (
+          <SidebarMenuSubItem className="w-full">
+            <SidebarMenuSubButton
+              render={showMoreButtonRender}
+              data-thread-selection-safe
+              size="sm"
+              className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+              onClick={() => {
+                expandThreadListForProject(projectKey);
+              }}
+            >
+              <span className="flex min-w-0 flex-1 items-center gap-2">
+                {hiddenThreadStatus && <ThreadStatusLabel status={hiddenThreadStatus} compact />}
+                <span>Show more</span>
+              </span>
+            </SidebarMenuSubButton>
+          </SidebarMenuSubItem>
+        )}
+      {projectExpanded &&
+        !jarvisRegistryProjectId &&
+        hasOverflowingThreads &&
+        isThreadListExpanded && (
+          <SidebarMenuSubItem className="w-full">
+            <SidebarMenuSubButton
+              render={showLessButtonRender}
+              data-thread-selection-safe
+              size="sm"
+              className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+              onClick={() => {
+                collapseThreadListForProject(projectKey);
+              }}
+            >
+              <span>Show less</span>
+            </SidebarMenuSubButton>
+          </SidebarMenuSubItem>
+        )}
     </SidebarMenuSub>
   );
 });

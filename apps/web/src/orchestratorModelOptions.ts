@@ -1,6 +1,15 @@
-import type { ProviderDriverKind, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
+import type {
+  JarvisWorkerProfile,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ServerProvider,
+} from "@t3tools/contracts";
 
 import { deriveProviderInstanceEntries } from "./providerInstances";
+import {
+  workerIsHealthyEnough,
+  workerSupportsEngine,
+} from "./components/composer/composerJarvisRouting.logic";
 
 export interface CodeAgentModelOption {
   readonly key: string;
@@ -62,4 +71,32 @@ export function resolveOrchestratorKey(input: {
     input.options.find((option) => option.engine === "codex") ??
     input.options[0]
   )?.key;
+}
+
+export function selectOrchestratorWorker(input: {
+  readonly workers: ReadonlyArray<JarvisWorkerProfile>;
+  readonly engine: string;
+  readonly avoidWorkerId?: string;
+  readonly requiredSlots?: number;
+}): string | undefined {
+  const requiredSlots = input.requiredSlots ?? 1;
+  const eligible = input.workers.filter((worker) => {
+    const used = worker.capacity.active_sessions + worker.capacity.queued_sessions;
+    return (
+      workerIsHealthyEnough(worker) &&
+      workerSupportsEngine(worker, input.engine) &&
+      used + requiredSlots <= worker.capacity.max_sessions
+    );
+  });
+  eligible.sort((left, right) => {
+    const leftSeparate = left.worker_id === input.avoidWorkerId ? 0 : 1;
+    const rightSeparate = right.worker_id === input.avoidWorkerId ? 0 : 1;
+    if (leftSeparate !== rightSeparate) return rightSeparate - leftSeparate;
+    const leftFree =
+      left.capacity.max_sessions - left.capacity.active_sessions - left.capacity.queued_sessions;
+    const rightFree =
+      right.capacity.max_sessions - right.capacity.active_sessions - right.capacity.queued_sessions;
+    return rightFree - leftFree;
+  });
+  return eligible[0]?.worker_id;
 }

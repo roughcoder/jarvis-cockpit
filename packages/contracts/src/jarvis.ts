@@ -642,6 +642,15 @@ export const JarvisProjectThreadMessage = Schema.Struct({
   peer_id: OptionalPossiblyEmptyPublicString,
   content: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   observed_at: IsoDateTime,
+  type: OptionalPossiblyEmptyPublicString,
+  watch_id: OptionalPossiblyEmptyPublicString,
+  child_chat_ids: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  child_chat_id: OptionalPossiblyEmptyPublicString,
+  title: OptionalPossiblyEmptyPublicString,
+  phase: OptionalPossiblyEmptyPublicString,
+  status: OptionalPossiblyEmptyPublicString,
+  error: OptionalPossiblyEmptyPublicString,
+  completed_at: OptionalPossiblyEmptyPublicString,
 });
 export type JarvisProjectThreadMessage = typeof JarvisProjectThreadMessage.Type;
 

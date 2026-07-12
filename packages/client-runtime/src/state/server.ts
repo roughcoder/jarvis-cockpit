@@ -320,6 +320,12 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    archiveJarvisSession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:archive-jarvis-session",
+      tag: WS_METHODS.serverArchiveJarvisSession,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     deleteJarvisSession: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:delete-jarvis-session",
       tag: WS_METHODS.serverDeleteJarvisSession,

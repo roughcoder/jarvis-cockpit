@@ -29,6 +29,7 @@ import { usePrimaryEnvironment } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useDefaultOrchestratorTarget } from "../../hooks/useDefaultOrchestrator";
 import { cn } from "../../lib/utils";
 import { textToBase64 } from "../../lib/fileAttachments";
 import { Button } from "../ui/button";
@@ -184,6 +185,13 @@ export function JarvisProjectsPanel() {
           input: { includeArchived: false },
         })
       : null,
+  );
+  const snapshotQuery = useEnvironmentQuery(
+    environmentId ? serverEnvironment.jarvisSnapshot({ environmentId, input: {} }) : null,
+  );
+  const orchestratorTarget = useDefaultOrchestratorTarget(
+    environmentId,
+    snapshotQuery.data?.snapshot?.workers ?? [],
   );
   const projects = useMemo(
     () => sortedProjects(projectsQuery.data?.projects ?? []),
@@ -815,12 +823,20 @@ export function JarvisProjectsPanel() {
 
   const handleCreateThread = async () => {
     if (!environmentId || !selectedId) return;
+    if (!orchestratorTarget) {
+      toastManager.add({
+        type: "error",
+        title: "Could not create orchestrator",
+        description: "No healthy fleet worker supports the configured orchestrator model.",
+      });
+      return;
+    }
     const title = newThreadTitle.trim() || `Conversation for ${selectedProject?.name ?? "project"}`;
     const result = await createThread({
       environmentId,
       input: {
         projectId: selectedId,
-        input: { title },
+        input: { title, ...orchestratorTarget },
       },
     });
     if (result._tag === "Failure") {
@@ -1469,7 +1485,11 @@ export function JarvisProjectsPanel() {
                 aria-label="Conversation title"
                 disabled={!selectedId}
               />
-              <Button size="sm" onClick={() => void handleCreateThread()} disabled={!selectedId}>
+              <Button
+                size="sm"
+                onClick={() => void handleCreateThread()}
+                disabled={!selectedId || orchestratorTarget === null}
+              >
                 <PlusIcon className="size-4" />
                 Create
               </Button>

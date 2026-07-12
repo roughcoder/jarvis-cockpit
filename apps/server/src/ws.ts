@@ -673,6 +673,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverValidateJarvisWork, AuthOrchestrationReadScope],
   [WS_METHODS.serverPruneJarvisWorkerWorktrees, AuthOrchestrationOperateScope],
   [WS_METHODS.serverCloseJarvisSession, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverArchiveJarvisSession, AuthOrchestrationOperateScope],
   [WS_METHODS.serverDeleteJarvisSession, AuthOrchestrationOperateScope],
   [WS_METHODS.serverDeleteJarvisRun, AuthOrchestrationOperateScope],
   [WS_METHODS.serverCreateJarvisProject, AuthOrchestrationOperateScope],
@@ -2139,6 +2140,28 @@ const makeWsRpcLayer = (
                       error instanceof Error && error.message.trim().length > 0
                         ? error.message
                         : "Jarvis session close failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverArchiveJarvisSession]: ({ sessionRef, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverArchiveJarvisSession,
+            jarvisClient.archiveSession(sessionRef, input).pipe(
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    code: "internal_error" as const,
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis session archive failed.",
+                    recoverable: true,
                   },
                 }),
               ),

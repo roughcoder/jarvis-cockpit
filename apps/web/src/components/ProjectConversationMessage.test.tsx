@@ -21,6 +21,7 @@ function message(
     localTurnId: null,
     retryPrompt: null,
     retryWorkspace: null,
+    orchestrationLifecycle: null,
     ...overrides,
   };
 }
@@ -68,5 +69,37 @@ describe("ProjectConversationMessage", () => {
 
     expect(markup).toContain('data-chat-working="true"');
     expect(markup).toContain("Waiting for Jarvis");
+  });
+
+  it("renders child orchestration as a first-class lifecycle card", () => {
+    const markup = renderToStaticMarkup(
+      <ProjectConversationMessage
+        message={message({
+          content: "",
+          orchestrationLifecycle: {
+            watchId: "watch-1",
+            phase: "waiting",
+            status: "waiting",
+            children: [
+              {
+                id: "run-1",
+                title: "Claude review",
+                phase: "running",
+                status: "running",
+                error: null,
+              },
+            ],
+          },
+        })}
+        workspaceProvisionPhase={null}
+        onRetry={undefined}
+        retryDisabled={false}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Waiting for child reviews"');
+    expect(markup).toContain("Claude review");
+    expect(markup).toContain("0/1 complete");
+    expect(markup).not.toContain("run-1");
   });
 });

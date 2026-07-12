@@ -2,7 +2,10 @@ import type { JarvisProjectThread, JarvisWorkerSession } from "@t3tools/contract
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  projectConversationArchiveTarget,
+  projectConversationDescendantArchiveTargets,
   projectConversationTreeItems,
+  projectConversationTreeDescendants,
   workerSessionThreadId,
 } from "./projectConversationTree.logic";
 import { buildChatTree } from "./chatTree.logic";
@@ -159,5 +162,60 @@ describe("projectConversationTreeItems", () => {
     expect(tree).toHaveLength(2);
     expect(tree[1]?.conversation.kind).toBe("worker-session");
     expect(tree[1]?.children).toHaveLength(0);
+  });
+});
+
+describe("project conversation archive helpers", () => {
+  it("maps durable threads and worker sessions to their native archive identifiers", () => {
+    const thread = projectConversationTreeItems({
+      projectId: "cockpit",
+      projectThreads: [projectThread()],
+      workerSessions: [workerSession()],
+      includeArchived: false,
+    });
+
+    expect(projectConversationArchiveTarget(thread[0]!)).toEqual({
+      kind: "project-thread",
+      threadId: "review-42",
+    });
+    expect(projectConversationArchiveTarget(thread[1]!)).toEqual({
+      kind: "worker-session",
+      sessionRef: "sessref_worker_child-1",
+    });
+  });
+
+  it("collects every nested descendant and returns archive targets deepest-first", () => {
+    const parent = projectThread();
+    const nestedThread = projectThread({
+      thread_id: "follow-up",
+      session_id: "project:cockpit:follow-up",
+      parent_chat_id: parent.thread_id,
+      title: "Follow-up",
+    });
+    const items = projectConversationTreeItems({
+      projectId: "cockpit",
+      projectThreads: [parent, nestedThread],
+      workerSessions: [
+        workerSession(),
+        workerSession({
+          session_ref: "sessref_worker_grandchild",
+          session_id: "grandchild",
+          parent_chat_id: nestedThread.thread_id,
+        }),
+      ],
+      includeArchived: false,
+    });
+    const root = buildChatTree(items)[0]!;
+
+    expect(projectConversationTreeDescendants(root).map((item) => item.thread_id)).toEqual([
+      "follow-up",
+      workerSessionThreadId("sessref_worker_grandchild"),
+      workerSessionThreadId("sessref_worker_child-1"),
+    ]);
+    expect(projectConversationDescendantArchiveTargets(root)).toEqual([
+      { kind: "worker-session", sessionRef: "sessref_worker_grandchild" },
+      { kind: "project-thread", threadId: "follow-up" },
+      { kind: "worker-session", sessionRef: "sessref_worker_child-1" },
+    ]);
   });
 });

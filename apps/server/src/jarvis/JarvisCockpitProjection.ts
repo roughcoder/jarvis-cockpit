@@ -64,7 +64,9 @@ export function projectJarvisSessionForCockpit(input: {
   const messages = eventsToMessages(sortedEvents);
   return {
     messages,
-    activities: sortedEvents.map((event, index) => eventToActivity(event, index)),
+    activities: sortedEvents.flatMap((event, index) =>
+      shouldPresentActivity(event) ? [eventToActivity(event, index)] : [],
+    ),
     checkpoints: checkpointsForSession({
       session: input.session,
       checkpoints: input.checkpoints,
@@ -208,6 +210,30 @@ function eventToActivity(event: JarvisSessionEvent, index: number): CockpitTimel
   };
 }
 
+function shouldPresentActivity(event: JarvisSessionEvent): boolean {
+  if (
+    event.type === "assistant.delta" ||
+    event.type === "assistant.message" ||
+    event.type === "turn.started" ||
+    event.type === "turn.completed" ||
+    event.type === "turn.waiting_provider" ||
+    event.type === "session.created" ||
+    event.type === "session.ready" ||
+    event.type === "provider.started" ||
+    event.type === "provider.event" ||
+    event.type === "provider.log" ||
+    event.type.startsWith("transcript.") ||
+    event.type.startsWith("checkpoint.")
+  ) {
+    return false;
+  }
+  if (event.type === "provisioning.progress") {
+    const status = readJsonString(event.data, "status", "phase")?.toLowerCase();
+    return status === "warning" || status === "failed" || status === "error";
+  }
+  return true;
+}
+
 function latestTurnForEvents(
   events: ReadonlyArray<JarvisSessionEvent>,
   messages: ReadonlyArray<CockpitTimelineMessage>,
@@ -336,6 +362,10 @@ function toneForEvent(event: JarvisSessionEvent): CockpitTimelineActivityTone {
 
 function activityKindForEvent(event: JarvisSessionEvent): string {
   switch (event.type) {
+    case "tool.call":
+      return "tool.updated";
+    case "tool.result":
+      return "tool.completed";
     case "input.requested":
       return "user-input.requested";
     case "input.received":
@@ -375,6 +405,36 @@ function activityPayloadForEvent(event: JarvisSessionEvent): Record<string, unkn
       ...(requestId ? { requestId } : {}),
     };
   }
+  if (event.type === "tool.call" || event.type === "tool.result") {
+    const toolCallId = readJsonString(
+      event.data,
+      "tool_call_id",
+      "toolCallId",
+      "call_id",
+      "callId",
+      "id",
+    );
+    const title = readJsonString(event.data, "title", "tool_name", "toolName", "name") ?? "Tool";
+    const itemType =
+      readJsonString(event.data, "item_type", "itemType", "type") ?? "dynamic_tool_call";
+    const input = event.data.input ?? event.data.arguments ?? null;
+    const output = event.data.output ?? event.data.result ?? event.data.content ?? null;
+    return {
+      ...event.data,
+      ...(toolCallId ? { toolCallId } : {}),
+      itemType,
+      title,
+      status:
+        event.type === "tool.result" ? (event.data.error ? "failed" : "completed") : "inProgress",
+      data: {
+        item: {
+          name: title,
+          ...(input !== null ? { input } : {}),
+          ...(output !== null ? { result: output } : {}),
+        },
+      },
+    };
+  }
   return event.data;
 }
 
@@ -392,9 +452,11 @@ function summaryForEvent(event: JarvisSessionEvent): string {
     case "assistant.message":
       return "Assistant message";
     case "tool.call":
-      return "Tool call";
+      return readJsonString(event.data, "title", "tool_name", "toolName", "name") ?? "Tool call";
     case "tool.result":
-      return "Tool result";
+      return (
+        readJsonString(event.data, "title", "tool_name", "toolName", "name") ?? "Tool completed"
+      );
     case "approval.requested":
       return "Approval requested";
     case "approval.resolved":

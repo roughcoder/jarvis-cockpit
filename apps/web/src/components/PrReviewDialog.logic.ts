@@ -7,6 +7,7 @@ import {
 } from "./composer/composerJarvisRouting.logic";
 import {
   deriveCodeAgentModelOptions,
+  selectOrchestratorWorker,
   type CodeAgentModelOption,
 } from "../orchestratorModelOptions";
 export { deriveOrchestratorOptions, resolveOrchestratorKey } from "../orchestratorModelOptions";
@@ -77,24 +78,16 @@ export function selectReviewOrchestratorWorker(input: {
   readonly childWorkerId?: string;
   readonly engine: string;
 }): string | undefined {
-  const eligible = input.workers.filter((worker) => {
-    const used = worker.capacity.active_sessions + worker.capacity.queued_sessions;
-    const requiredSlots = worker.worker_id === input.childWorkerId ? 3 : 1;
-    return (
-      workerIsHealthyEnough(worker) &&
-      workerSupportsEngine(worker, input.engine) &&
-      used + requiredSlots <= worker.capacity.max_sessions
-    );
+  const selected = selectOrchestratorWorker({
+    workers: input.workers,
+    engine: input.engine,
+    ...(input.childWorkerId ? { avoidWorkerId: input.childWorkerId } : {}),
   });
-  eligible.sort((left, right) => {
-    const leftSeparate = left.worker_id === input.childWorkerId ? 0 : 1;
-    const rightSeparate = right.worker_id === input.childWorkerId ? 0 : 1;
-    if (leftSeparate !== rightSeparate) return rightSeparate - leftSeparate;
-    const leftFree =
-      left.capacity.max_sessions - left.capacity.active_sessions - left.capacity.queued_sessions;
-    const rightFree =
-      right.capacity.max_sessions - right.capacity.active_sessions - right.capacity.queued_sessions;
-    return rightFree - leftFree;
+  if (selected !== input.childWorkerId) return selected;
+  return selectOrchestratorWorker({
+    workers: input.workers,
+    engine: input.engine,
+    ...(input.childWorkerId ? { avoidWorkerId: input.childWorkerId } : {}),
+    requiredSlots: 3,
   });
-  return eligible[0]?.worker_id;
 }

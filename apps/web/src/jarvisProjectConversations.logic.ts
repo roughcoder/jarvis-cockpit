@@ -62,6 +62,22 @@ export interface ProjectConversationMessageView {
   readonly localTurnId: string | null;
   readonly retryPrompt: string | null;
   readonly retryWorkspace: JarvisTurnWorkspaceInput | null;
+  readonly orchestrationLifecycle: OrchestrationLifecycleView | null;
+}
+
+export interface OrchestrationLifecycleChildView {
+  readonly id: string;
+  readonly title: string;
+  readonly phase: string;
+  readonly status: "waiting" | "running" | "completed" | "failed";
+  readonly error: string | null;
+}
+
+export interface OrchestrationLifecycleView {
+  readonly watchId: string;
+  readonly phase: string;
+  readonly status: "waiting" | "running" | "completed" | "failed";
+  readonly children: ReadonlyArray<OrchestrationLifecycleChildView>;
 }
 
 export interface ProjectConversationRouteInput {
@@ -198,11 +214,156 @@ export function isProjectConversationDetailRouteGap(error: unknown): boolean {
 export function projectConversationHistoryMessages(
   thread: Pick<JarvisProjectThreadDetail, "messages"> | null,
 ): ProjectConversationMessageView[] {
-  return (thread?.messages ?? [])
-    .filter((message) => !isRawProjectConversationToolFrame(message))
+  const source = thread?.messages ?? [];
+  const lifecycleMessages = orchestrationLifecycleMessages(source);
+  return source
+    .filter(
+      (message) =>
+        !isRawProjectConversationToolFrame(message) &&
+        message.type !== "child_watch" &&
+        message.type !== "child_terminal" &&
+        legacyLifecycleMessageKind(message) === null,
+    )
     .map((message, index) => historyMessageView(message, index))
     .filter((message) => message.content.trim().length > 0)
+    .concat(lifecycleMessages)
     .sort((left, right) => left.observedAt.localeCompare(right.observedAt));
+}
+
+function orchestrationLifecycleMessages(
+  messages: ReadonlyArray<JarvisProjectThreadMessage>,
+): ProjectConversationMessageView[] {
+  const terminals = new Map<string, JarvisProjectThreadMessage>();
+  for (const message of messages) {
+    if (message.type === "child_terminal" && message.child_chat_id) {
+      terminals.set(message.child_chat_id, message);
+    }
+  }
+  const latestWatches = new Map<string, JarvisProjectThreadMessage>();
+  for (const message of messages) {
+    if (message.type === "child_watch" && message.watch_id) {
+      latestWatches.set(message.watch_id, message);
+    }
+  }
+  const structured = [...latestWatches.values()].map((watch) => {
+    const watchPhase = watch.phase ?? "waiting";
+    const children = (watch.child_chat_ids ?? []).map((id) => {
+      const terminal = terminals.get(id);
+      const phase = terminal?.phase ?? (watchPhase === "waiting" ? "waiting" : "running");
+      const failed = phase === "failed" || terminal?.status === "failed";
+      return {
+        id,
+        title: terminal?.title ?? "Child code agent",
+        phase,
+        status: failed
+          ? ("failed" as const)
+          : terminal
+            ? ("completed" as const)
+            : ("running" as const),
+        error: terminal?.error ?? null,
+      };
+    });
+    const status =
+      watchPhase === "failed"
+        ? ("failed" as const)
+        : watchPhase === "completed"
+          ? ("completed" as const)
+          : watchPhase === "claimed"
+            ? ("running" as const)
+            : ("waiting" as const);
+    return {
+      id: `orchestration-${watch.watch_id}`,
+      role: "assistant" as const,
+      content: "",
+      observedAt: watch.observed_at,
+      peerId: watch.peer_id?.trim() || null,
+      source: "history" as const,
+      status: "completed" as const,
+      error: null,
+      toolItems: [],
+      workspaceProvisionRequested: false,
+      localTurnId: null,
+      retryPrompt: null,
+      retryWorkspace: null,
+      orchestrationLifecycle: {
+        watchId: watch.watch_id ?? "",
+        phase: watchPhase,
+        status,
+        children,
+      },
+    };
+  });
+  return [...structured, ...legacyOrchestrationLifecycleMessages(messages)];
+}
+
+function legacyLifecycleMessageKind(
+  message: JarvisProjectThreadMessage,
+): "watch" | "terminal" | "continuation" | null {
+  if (message.role !== "system") return null;
+  if (/^Watching \d+ child work session\(s\) for completion\.$/u.test(message.content)) {
+    return "watch";
+  }
+  if (/^Child .+ \((run_[^)]+)\) reached [^:]+(?:: .*)?\.$/u.test(message.content)) {
+    return "terminal";
+  }
+  if (message.content.startsWith("Automatic orchestration continuation:")) {
+    return "continuation";
+  }
+  return null;
+}
+
+function legacyOrchestrationLifecycleMessages(
+  messages: ReadonlyArray<JarvisProjectThreadMessage>,
+): ProjectConversationMessageView[] {
+  const lifecycles: ProjectConversationMessageView[] = [];
+  messages.forEach((message, index) => {
+    if (legacyLifecycleMessageKind(message) !== "watch") return;
+    const expected = Number.parseInt(/\d+/u.exec(message.content)?.[0] ?? "0", 10);
+    const terminals: OrchestrationLifecycleChildView[] = [];
+    for (const candidate of messages.slice(index + 1)) {
+      if (legacyLifecycleMessageKind(candidate) === "watch") break;
+      const match = /^Child (.+) \((run_[^)]+)\) reached ([^:]+)(?:: (.*))?\.$/u.exec(
+        candidate.content,
+      );
+      if (!match) continue;
+      const phase = match[3] ?? "completed";
+      terminals.push({
+        id: match[2] ?? "",
+        title: match[1] ?? "Child code agent",
+        phase,
+        status: phase === "failed" ? "failed" : "completed",
+        error: phase === "failed" ? (match[4] ?? null) : null,
+      });
+      if (terminals.length >= expected) break;
+    }
+    const complete = expected > 0 && terminals.length >= expected;
+    lifecycles.push({
+      id: `legacy-orchestration-${message.observed_at}`,
+      role: "assistant",
+      content: "",
+      observedAt: message.observed_at,
+      peerId: message.peer_id?.trim() || null,
+      source: "history",
+      status: "completed",
+      error: null,
+      toolItems: [],
+      workspaceProvisionRequested: false,
+      localTurnId: null,
+      retryPrompt: null,
+      retryWorkspace: null,
+      orchestrationLifecycle: {
+        watchId: "legacy transcript",
+        phase: complete ? "completed" : "waiting",
+        status: terminals.some((child) => child.status === "failed")
+          ? "failed"
+          : complete
+            ? "completed"
+            : "waiting",
+        children: terminals,
+      },
+    });
+  });
+  return lifecycles;
 }
 
 export function isRawProjectConversationToolFrame(message: JarvisProjectThreadMessage): boolean {
@@ -300,6 +461,7 @@ function historyMessageView(
     localTurnId: null,
     retryPrompt: null,
     retryWorkspace: null,
+    orchestrationLifecycle: null,
   };
 }
 
@@ -323,6 +485,7 @@ function localTurnMessages(
       localTurnId: turn.id,
       retryPrompt: null,
       retryWorkspace: null,
+      orchestrationLifecycle: null,
     });
   }
 
@@ -357,6 +520,7 @@ function localAssistantMessage(
     localTurnId: turn.id,
     retryPrompt: turn.prompt,
     retryWorkspace: turn.workspaceInput ?? null,
+    orchestrationLifecycle: null,
   };
 }
 

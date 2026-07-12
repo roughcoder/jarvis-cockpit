@@ -269,6 +269,80 @@ describe("project conversation history", () => {
     ]);
   });
 
+  it("collapses child watch updates and terminal messages into one lifecycle view", () => {
+    const messages = projectConversationHistoryMessages({
+      messages: [
+        {
+          role: "system",
+          peer_id: "jarvis",
+          type: "child_watch",
+          watch_id: "watch-1",
+          child_chat_ids: ["run-claude", "run-codex"],
+          phase: "waiting",
+          content: "Watching children.",
+          observed_at: "2026-07-07T10:00:01.000Z",
+        },
+        {
+          role: "system",
+          peer_id: "jarvis",
+          type: "child_terminal",
+          child_chat_id: "run-claude",
+          title: "Claude review",
+          phase: "completed",
+          status: "terminal",
+          content: "Claude completed.",
+          observed_at: "2026-07-07T10:00:02.000Z",
+        },
+        {
+          role: "system",
+          peer_id: "jarvis",
+          type: "child_watch",
+          watch_id: "watch-1",
+          child_chat_ids: ["run-claude", "run-codex"],
+          phase: "completed",
+          content: "Children completed.",
+          observed_at: "2026-07-07T10:00:03.000Z",
+        },
+      ],
+    });
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.orchestrationLifecycle).toMatchObject({
+      watchId: "watch-1",
+      status: "completed",
+      children: [
+        { id: "run-claude", title: "Claude review", status: "completed" },
+        { id: "run-codex", title: "Child code agent", status: "running" },
+      ],
+    });
+  });
+
+  it("upgrades legacy child-watch prose into the lifecycle view", () => {
+    const messages = projectConversationHistoryMessages({
+      messages: [
+        {
+          role: "system",
+          peer_id: "jarvis",
+          content: "Watching 1 child work session(s) for completion.",
+          observed_at: "2026-07-07T10:00:01.000Z",
+        },
+        {
+          role: "system",
+          peer_id: "jarvis",
+          content:
+            "Child Claude review (run_123) reached completed: All worker sessions completed.",
+          observed_at: "2026-07-07T10:00:02.000Z",
+        },
+      ],
+    });
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.orchestrationLifecycle).toMatchObject({
+      status: "completed",
+      children: [{ id: "run_123", title: "Claude review", status: "completed" }],
+    });
+  });
+
   it("identifies only non-user raw tool protocol history frames", () => {
     expect(
       isRawProjectConversationToolFrame({
