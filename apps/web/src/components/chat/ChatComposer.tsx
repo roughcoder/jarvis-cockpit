@@ -489,6 +489,7 @@ export interface ChatComposerHandle {
     selectedModel: string;
     selectedProviderModels: ReadonlyArray<ServerProvider["models"][number]>;
     selectedJarvisWorkerOverrideId: string | null;
+    selectedJarvisProjectId: string | null;
     selectedJarvisRepo: string | null;
     selectedJarvisEngine: string | null;
   };
@@ -2462,6 +2463,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         selectedJarvisWorkerOverrideId: canRouteJarvisStart
           ? selectedWorkerOverrideIdForDispatch
           : null,
+        selectedJarvisProjectId: canRouteJarvisStart ? (selectedJarvisProject?.id ?? null) : null,
         selectedJarvisRepo: canRouteJarvisStart ? selectedJarvisRepo : null,
         selectedJarvisEngine: canRouteJarvisStart ? selectedJarvisEngine : null,
       }),
@@ -2496,6 +2498,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedProvider,
       selectedProviderModels,
       selectedJarvisEngine,
+      selectedJarvisProject,
       selectedJarvisRepo,
       selectedWorkerOverrideIdForDispatch,
       canRouteJarvisStart,

@@ -222,6 +222,7 @@ describe("buildWorkerTestJobStartTurnInput", () => {
     });
     expect(input.bootstrap).toMatchObject({
       jarvisWorkerId: "mac-mini-worker",
+      jarvisWorkPurpose: "worker-readiness-test",
       jarvisEngine: "codex",
       jarvisRepo: "roughcoder/jarvis-cockpit",
     });

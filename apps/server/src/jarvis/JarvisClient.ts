@@ -2088,6 +2088,9 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
     const engine = firstTrimmed(workInput.engine) ?? "codex";
     const provider = engine.toLowerCase().startsWith("claude") ? "claude" : "codex";
     const workerId = firstTrimmed(workInput.worker_id) ?? "macbook-worker";
+    const linkedProjectId = firstTrimmed(workInput.project_id) ?? null;
+    const workPurpose =
+      typeof workInput.metadata?.["purpose"] === "string" ? workInput.metadata["purpose"] : null;
     const runSlug = fixtureIdSlug(title);
     const syntheticRunId = JarvisRunId.make(`run_fixture_${runSlug}_${generatedWorkCount}`);
     const syntheticSessionId = JarvisWorkerSessionId.make(
@@ -2099,6 +2102,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
     const syntheticRun: JarvisRun = {
       ...run,
       run_id: syntheticRunId,
+      project_id: linkedProjectId,
       title,
       objective,
       status: "running",
@@ -2120,6 +2124,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       metadata: {
         surface: "jarvis-cockpit",
         fixture_generated: true,
+        ...(workPurpose !== null ? { purpose: workPurpose } : {}),
       },
     };
     const syntheticSession: JarvisWorkerSession = {
@@ -2128,6 +2133,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       worker_id: workerId as JarvisWorkerSession["worker_id"],
       session_id: syntheticSessionId,
       run_id: syntheticRunId,
+      project_id: linkedProjectId,
       title,
       provider,
       engine,
@@ -2144,6 +2150,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       metadata: {
         surface: "jarvis-cockpit",
         fixture_generated: true,
+        ...(workPurpose !== null ? { purpose: workPurpose } : {}),
       },
     };
     const syntheticEvents: ReadonlyArray<JarvisSessionEvent> = [

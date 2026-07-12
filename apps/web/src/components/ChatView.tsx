@@ -3999,6 +3999,7 @@ function ChatViewContent(props: ChatViewProps) {
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
       selectedJarvisWorkerOverrideId: ctxSelectedJarvisWorkerOverrideId,
+      selectedJarvisProjectId: ctxSelectedJarvisProjectId,
       selectedJarvisRepo: ctxSelectedJarvisRepo,
       selectedJarvisEngine: ctxSelectedJarvisEngine,
     } = sendCtx;
@@ -4065,7 +4066,11 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeProject) return;
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
-    if (activeIsJarvisCockpitEnvironment && isLocalDraftThread && !ctxSelectedJarvisRepo) {
+    if (
+      activeIsJarvisCockpitEnvironment &&
+      isLocalDraftThread &&
+      (!ctxSelectedJarvisRepo || !ctxSelectedJarvisProjectId)
+    ) {
       setThreadError(
         threadIdForSend,
         "Create a Jarvis project before starting work. Jarvis Cockpit dispatches through projects, not loose repositories.",
@@ -4241,6 +4246,7 @@ function ChatViewContent(props: ChatViewProps) {
     if (failure === null && turnAttachmentsResult._tag === "Success") {
       const hasJarvisRoutingBootstrap =
         Boolean(ctxSelectedJarvisWorkerOverrideId) ||
+        Boolean(ctxSelectedJarvisProjectId) ||
         Boolean(ctxSelectedJarvisRepo) ||
         Boolean(ctxSelectedJarvisEngine);
       const bootstrap =
@@ -4273,6 +4279,9 @@ function ChatViewContent(props: ChatViewProps) {
                 : {}),
               ...(ctxSelectedJarvisWorkerOverrideId
                 ? { jarvisWorkerId: ctxSelectedJarvisWorkerOverrideId }
+                : {}),
+              ...(ctxSelectedJarvisProjectId
+                ? { jarvisProjectId: ctxSelectedJarvisProjectId }
                 : {}),
               ...(ctxSelectedJarvisRepo ? { jarvisRepo: ctxSelectedJarvisRepo } : {}),
               ...(ctxSelectedJarvisEngine ? { jarvisEngine: ctxSelectedJarvisEngine } : {}),
