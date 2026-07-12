@@ -129,21 +129,39 @@ it.effect("does not open SSE when disabled, preserving polling fallback", () =>
 );
 
 it.effect("coalesces shell change bursts before a refresh", () =>
-  Effect.gen(function* () {
-    const change = {
-      type: "unknown.future.event",
-      cursor: "cursor-1",
-      payload: {},
-      authoritative: false,
-    };
-    const emitted = yield* Stream.runCollect(
-      coalesceJarvisChanges(
-        Stream.make(change, { ...change, cursor: "cursor-2" }, change),
-        JARVIS_SSE_SHELL_DEBOUNCE,
-      ),
-    );
-    assert.strictEqual(emitted.length, 1);
-  }),
+  Effect.scoped(
+    Effect.gen(function* () {
+      const changes = yield* PubSub.unbounded<{
+        readonly type: string;
+        readonly cursor: string;
+        readonly payload: object;
+        readonly authoritative: boolean;
+      }>();
+      const subscription = yield* PubSub.subscribe(changes);
+      const refreshes = yield* Ref.make(0);
+      const consumer = yield* Stream.runDrain(
+        coalesceJarvisChanges(
+          Stream.fromSubscription(subscription),
+          JARVIS_SSE_SHELL_DEBOUNCE,
+        ).pipe(Stream.mapEffect(() => Ref.update(refreshes, (count) => count + 1))),
+      ).pipe(Effect.forkScoped);
+      const change = {
+        type: "snapshot",
+        cursor: "cursor-1",
+        payload: {},
+        authoritative: true,
+      };
+
+      yield* Effect.yieldNow;
+      yield* PubSub.publishAll(changes, [change, { ...change, cursor: "cursor-2" }, change]);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(JARVIS_SSE_SHELL_DEBOUNCE);
+      yield* Effect.yieldNow;
+
+      assert.strictEqual(yield* Ref.get(refreshes), 1);
+      yield* Fiber.interrupt(consumer);
+    }).pipe(Effect.provide(TestClock.layer())),
+  ),
 );
 
 it.effect("keeps at most one change-triggered refresh pending behind a slow refresh", () =>
@@ -155,13 +173,14 @@ it.effect("keeps at most one change-triggered refresh pending behind a slow refr
         readonly payload: object;
         readonly authoritative: boolean;
       }>();
+      const subscription = yield* PubSub.subscribe(changes);
       const firstRefresh = yield* Deferred.make<void>();
       const calls = yield* Ref.make(0);
       const refresh = Ref.updateAndGet(calls, (count) => count + 1).pipe(
         Effect.flatMap((count) => (count === 1 ? Deferred.await(firstRefresh) : Effect.void)),
       );
       const consumer = yield* Stream.runDrain(
-        coalesceJarvisChanges(Stream.fromPubSub(changes), Duration.millis(1)).pipe(
+        coalesceJarvisChanges(Stream.fromSubscription(subscription), Duration.millis(1)).pipe(
           Stream.mapEffect(() => refresh, { concurrency: 1 }),
         ),
       ).pipe(Effect.forkScoped);
@@ -172,19 +191,23 @@ it.effect("keeps at most one change-triggered refresh pending behind a slow refr
         authoritative: true,
       };
 
+      yield* Effect.yieldNow;
       yield* PubSub.publish(changes, change);
-      yield* Effect.sleep("10 millis");
+      yield* TestClock.adjust(Duration.millis(1));
+      yield* Effect.yieldNow;
       yield* PubSub.publishAll(changes, [
         { ...change, cursor: "cursor-2" },
         { ...change, cursor: "cursor-3" },
         { ...change, cursor: "cursor-4" },
       ]);
-      yield* Effect.sleep("10 millis");
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(Duration.millis(1));
+      yield* Effect.yieldNow;
       yield* Deferred.succeed(firstRefresh, undefined);
-      yield* Effect.sleep("10 millis");
+      yield* Effect.yieldNow;
 
       assert.strictEqual(yield* Ref.get(calls), 2);
       yield* Fiber.interrupt(consumer);
-    }),
+    }).pipe(Effect.provide(TestClock.layer())),
   ),
 );

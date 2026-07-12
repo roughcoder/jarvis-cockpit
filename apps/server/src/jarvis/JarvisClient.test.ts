@@ -814,7 +814,7 @@ it.effect("cockpit client incrementally reads authenticated SSE frames", () =>
           start(controller) {
             controller.enqueue(
               new TextEncoder().encode(
-                'id: cursor-1\\nevent: snapshot\\ndata: {\\"cursor\\":\\"cursor-1\\",\\"type\\":\\"snapshot\\",\\"payload\\":{}}\\n\\n',
+                'id: cursor-1\nevent: snapshot\ndata: {"cursor":"cursor-1","type":"snapshot","payload":{}}\n\n',
               ),
             );
             controller.close();
