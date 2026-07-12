@@ -118,13 +118,12 @@ describe("projectConversationTreeItems", () => {
     });
   });
 
-  it("excludes unlinked, other-project, archived, and already represented sessions", () => {
+  it("excludes other-project, archived, and already represented sessions", () => {
     const thread = projectThread();
     const items = projectConversationTreeItems({
       projectId: "cockpit",
       projectThreads: [thread],
       workerSessions: [
-        workerSession({ parent_chat_id: "" }),
         workerSession({ project_id: "runtime" }),
         workerSession({ archived_at: "2026-07-11T11:00:00.000Z" }),
         workerSession({ session_id: thread.session_id }),
@@ -134,5 +133,31 @@ describe("projectConversationTreeItems", () => {
 
     expect(items).toHaveLength(1);
     expect(items[0]?.kind).toBe("project-thread");
+  });
+
+  it("keeps project-linked root sessions as top-level rows under the project", () => {
+    const items = projectConversationTreeItems({
+      projectId: "cockpit",
+      projectThreads: [projectThread()],
+      workerSessions: [
+        workerSession({
+          session_ref: "sessref_worker_root-1",
+          session_id: "root-1",
+          parent_chat_id: "",
+          title: "Start-work run",
+        }),
+      ],
+      includeArchived: false,
+    });
+    const tree = buildChatTree(items);
+
+    expect(items[1]).toMatchObject({
+      kind: "worker-session",
+      thread_id: workerSessionThreadId("sessref_worker_root-1"),
+      parent_chat_id: null,
+    });
+    expect(tree).toHaveLength(2);
+    expect(tree[1]?.conversation.kind).toBe("worker-session");
+    expect(tree[1]?.children).toHaveLength(0);
   });
 });

@@ -17,7 +17,7 @@ export type ProjectConversationTreeItem =
   | {
       readonly kind: "worker-session";
       readonly thread_id: string;
-      readonly parent_chat_id: string;
+      readonly parent_chat_id: string | null;
       readonly title: string;
       readonly engine: string;
       readonly model?: string | null | undefined;
@@ -47,9 +47,11 @@ export function workerSessionThreadId(sessionRef: string): string {
 }
 
 /**
- * Joins durable project conversations with live child worker sessions. Only
- * parent-linked sessions are added: root/legacy work remains in the normal
- * Jarvis work tree instead of being duplicated beneath a registry project.
+ * Joins durable project conversations with live child worker sessions. Every
+ * project-linked session is added: parent-linked sessions nest under their
+ * conversation, and root sessions (start-work dispatched directly against the
+ * project, no parent chat) render as top-level rows so linked work always has
+ * a home beneath its registry project.
  */
 export function projectConversationTreeItems(input: {
   readonly projectId: string;
@@ -79,7 +81,6 @@ export function projectConversationTreeItems(input: {
     const threadId = workerSessionThreadId(session.session_ref);
     if (
       projectId !== input.projectId ||
-      parentChatId === null ||
       representedSessionIds.has(session.session_id) ||
       representedThreadIds.has(threadId) ||
       (!input.includeArchived && session.archived_at != null)

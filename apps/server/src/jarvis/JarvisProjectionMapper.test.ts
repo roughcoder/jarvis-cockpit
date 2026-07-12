@@ -128,13 +128,24 @@ it("hides worker readiness-test work from the orchestration projection", () => {
     ...makeSession("sess_tagged"),
     metadata: { purpose: "worker-readiness-test" },
   };
+  // Untagged run whose only session carries the tag (Jarvis may echo start-work
+  // metadata on sessions only) — the run must disappear with its session.
+  const sessionTaggedRun: JarvisRun = {
+    ...run,
+    run_id: "run_session_tagged" as JarvisRun["run_id"],
+  };
+  const sessionTaggedOnly = {
+    ...makeSession("sess_session_tagged"),
+    run_id: sessionTaggedRun.run_id,
+    metadata: { purpose: "worker-readiness-test" },
+  };
   const snapshot = mapJarvisRunsSnapshotToShellSnapshot({
     api_version: "v1",
     schema_version: 1,
     cursor: "evt_1",
     sync: { mode: "fast", status: "fresh", synced_at: now, errors: [] },
-    runs: [run, readinessRun],
-    sessions: [makeSession("sess_1"), readinessSession, taggedSession],
+    runs: [run, readinessRun, sessionTaggedRun],
+    sessions: [makeSession("sess_1"), readinessSession, taggedSession, sessionTaggedOnly],
     workers: [],
     artifacts: [],
     generated_at: now,
