@@ -3,6 +3,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -247,12 +248,12 @@ function jarvisProjectThreadChangeMatches(
 function jarvisAppliedShellRefresh(
   jarvisEvents: JarvisEventsHub,
 ): Effect.Effect<Option.Option<OrchestrationShellStreamItem>> {
-  return jarvisEvents.appliedSnapshot.pipe(
+  return jarvisEvents.appliedShellSnapshot.pipe(
     Effect.map(
       Option.map(
         (snapshot): OrchestrationShellStreamItem => ({
           kind: "snapshot" as const,
-          snapshot: mapJarvisRunsSnapshotToShellSnapshot(snapshot),
+          snapshot,
         }),
       ),
     ),
@@ -263,10 +264,10 @@ function loadJarvisShellSnapshotFromHub(
   jarvisClient: JarvisClient,
   jarvisEvents: JarvisEventsHub,
 ): Effect.Effect<OrchestrationShellSnapshot, JarvisClientError> {
-  return Effect.all([jarvisEvents.isLive, jarvisEvents.appliedSnapshot]).pipe(
+  return Effect.all([jarvisEvents.isLive, jarvisEvents.appliedShellSnapshot]).pipe(
     Effect.flatMap(([isLive, snapshot]) =>
       isLive && Option.isSome(snapshot)
-        ? Effect.succeed(mapJarvisRunsSnapshotToShellSnapshot(snapshot.value))
+        ? Effect.succeed(snapshot.value)
         : loadJarvisShellSnapshot(jarvisClient),
     ),
   );
@@ -404,7 +405,7 @@ function projectThreadMetadataEquals(
 ): boolean {
   const { messages: _leftMessages, ...leftMetadata } = left;
   const { messages: _rightMessages, ...rightMetadata } = right;
-  return JSON.stringify(leftMetadata) === JSON.stringify(rightMetadata);
+  return Equal.equals(leftMetadata, rightMetadata);
 }
 
 function projectThreadStreamItems(
@@ -460,28 +461,23 @@ export function jarvisProjectThreadPollingStream(
             );
           const flatten = (items: ReadonlyArray<JarvisProjectThreadStreamItem>) =>
             items.length > 0 ? Stream.fromIterable(items) : Stream.empty;
-          return Stream.merge(
+          const triggers = Stream.merge(
             coalesceJarvisChanges(
               jarvisEvents.changes.pipe(
                 Stream.filter((event) =>
                   jarvisProjectThreadChangeMatches(projectId, threadId, event),
                 ),
               ),
-            ).pipe(Stream.mapEffect(refresh, { concurrency: 1 }), Stream.flatMap(flatten)),
-            Stream.merge(
-              jarvisFallbackOrReconciliationStream(
-                jarvisEvents,
-                true,
-                JARVIS_SSE_RECONCILIATION_INTERVAL,
-                () => refresh().pipe(Effect.map(Option.some)),
-              ).pipe(Stream.flatMap(flatten)),
-              // Cockpit SSE has no connector project-thread frames yet, so a
-              // live SSE cache cannot replace this conversation poll.
-              Stream.fromSchedule(Schedule.spaced(JARVIS_COCKPIT_POLL_INTERVAL)).pipe(
-                Stream.mapEffect(refresh, { concurrency: 1 }),
-                Stream.flatMap(flatten),
-              ),
             ),
+            // Cockpit SSE has no connector project-thread frames yet, so a
+            // live SSE cache cannot replace this conversation poll.
+            Stream.fromSchedule(Schedule.spaced(JARVIS_COCKPIT_POLL_INTERVAL)).pipe(
+              Stream.map(() => undefined),
+            ),
+          );
+          return triggers.pipe(
+            Stream.mapEffect(refresh, { concurrency: 1 }),
+            Stream.flatMap(flatten),
           );
         })(),
       ),
@@ -3126,6 +3122,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
     // when its last consumer disconnects; fixture mode stays on polling.
     const jarvisEvents = yield* makeJarvisEventsHub(jarvisEventsClient, {
       enabled: !config.jarvisFixtureMode && process.env.JARVIS_EVENTS_SSE_ENABLED !== "false",
+      restartWhen: serverSettings.streamChanges,
     });
     return HttpRouter.add(
       "GET",
