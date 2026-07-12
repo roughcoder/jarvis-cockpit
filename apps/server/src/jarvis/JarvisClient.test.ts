@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as NodeBuffer from "node:buffer";
 import { DEFAULT_SERVER_SETTINGS, JarvisProjectId, JarvisWorkerId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 
 import {
   checkJarvisBrain,
@@ -793,6 +794,49 @@ it.effect("cockpit client attaches bearer token and reads the v1 snapshot endpoi
     assert.strictEqual(requests[0]?.authorization, "Bearer worker-token");
     assert.strictEqual(parsedSnapshot.runs[0]?.run_id, "run_1");
     assert.strictEqual(parsedSnapshot.runs[0]?.objective, "Do the work");
+  }),
+);
+
+it.effect("cockpit client incrementally reads authenticated SSE frames", () =>
+  Effect.gen(function* () {
+    const requests: Array<{ url: string; accept: string | null; authorization: string | null }> =
+      [];
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      token: "worker-token",
+      fetch: async (url, init) => {
+        requests.push({
+          url: String(url),
+          accept: new Headers(init?.headers).get("accept"),
+          authorization: new Headers(init?.headers).get("authorization"),
+        });
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode(
+                'id: cursor-1\nevent: snapshot\ndata: {"cursor":"cursor-1","type":"snapshot","payload":{}}\n\n',
+              ),
+            );
+            controller.close();
+          },
+        });
+        return new Response(body, { headers: { "content-type": "text/event-stream" } });
+      },
+    });
+
+    const events = yield* Stream.runCollect(client.streamCockpitEvents());
+
+    assert.deepStrictEqual(
+      [...events],
+      [{ type: "snapshot", cursor: "cursor-1", payload: {}, authoritative: true }],
+    );
+    assert.deepStrictEqual(requests, [
+      {
+        url: "http://jarvis.local:8787/v1/cockpit/events?sync=fast",
+        accept: "text/event-stream",
+        authorization: "Bearer worker-token",
+      },
+    ]);
   }),
 );
 
