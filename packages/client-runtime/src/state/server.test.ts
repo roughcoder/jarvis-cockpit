@@ -8,6 +8,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Option from "effect/Option";
 
+import { THREAD_DETAIL_RETENTION } from "./retention.ts";
 import {
   applyJarvisProjectThreadStreamItem,
   applyServerConfigProjection,
@@ -111,10 +112,10 @@ describe("server state projection", () => {
     expect(resynchronized?.messages).toEqual(THREAD.messages);
   });
 
-  it("front-trims appended project-thread history to the newest 500 messages", () => {
+  it("front-trims appended project-thread history to the shared message limit", () => {
     const current = {
       ...THREAD,
-      messages: Array.from({ length: 500 }, (_, index) => ({
+      messages: Array.from({ length: THREAD_DETAIL_RETENTION.messages }, (_, index) => ({
         role: "assistant",
         peer_id: "jarvis",
         content: `message-${index}`,
@@ -127,14 +128,14 @@ describe("server state projection", () => {
         {
           role: "assistant",
           peer_id: "jarvis",
-          content: "message-500",
+          content: `message-${THREAD_DETAIL_RETENTION.messages}`,
           observed_at: "2026-07-12T18:20:00.000Z",
         },
       ],
     });
 
-    expect(next?.messages).toHaveLength(500);
+    expect(next?.messages).toHaveLength(THREAD_DETAIL_RETENTION.messages);
     expect(next?.messages[0]?.content).toBe("message-1");
-    expect(next?.messages.at(-1)?.content).toBe("message-500");
+    expect(next?.messages.at(-1)?.content).toBe(`message-${THREAD_DETAIL_RETENTION.messages}`);
   });
 });

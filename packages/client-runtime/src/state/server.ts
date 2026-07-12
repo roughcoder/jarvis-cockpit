@@ -18,15 +18,12 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import { FINITE_QUERY_FAMILY_MAX_ENTRIES } from "./retention.ts";
+import { FINITE_QUERY_FAMILY_MAX_ENTRIES, THREAD_DETAIL_RETENTION } from "./retention.ts";
 
 export interface ServerConfigProjection {
   readonly config: ServerConfig;
   readonly latestEvent: ServerConfigStreamEvent;
 }
-
-// TODO(perf/w3-memory-guardrails): unify with the native thread retention limit once PR #17 lands.
-const JARVIS_PROJECT_THREAD_MESSAGE_LIMIT = 500;
 
 function projectThreadMessageKey(message: JarvisProjectThreadDetail["messages"][number]): string {
   return `${message.role}\u0000${message.peer_id ?? ""}\u0000${message.observed_at}\u0000${message.content}`;
@@ -35,10 +32,10 @@ function projectThreadMessageKey(message: JarvisProjectThreadDetail["messages"][
 function retainRecentProjectThreadMessages(
   thread: JarvisProjectThreadDetail,
 ): JarvisProjectThreadDetail {
-  if (thread.messages.length <= JARVIS_PROJECT_THREAD_MESSAGE_LIMIT) return thread;
+  if (thread.messages.length <= THREAD_DETAIL_RETENTION.messages) return thread;
   return {
     ...thread,
-    messages: thread.messages.slice(-JARVIS_PROJECT_THREAD_MESSAGE_LIMIT),
+    messages: thread.messages.slice(-THREAD_DETAIL_RETENTION.messages),
   };
 }
 
