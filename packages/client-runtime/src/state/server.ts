@@ -340,6 +340,12 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    generateThreadTitle: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:generate-thread-title",
+      tag: WS_METHODS.serverGenerateThreadTitle,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     unarchiveJarvisProjectThread: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:unarchive-jarvis-project-thread",
       tag: WS_METHODS.serverUnarchiveJarvisProjectThread,

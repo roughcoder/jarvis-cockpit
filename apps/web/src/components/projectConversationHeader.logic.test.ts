@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildProjectConversationTitleGenerationContext,
   buildProjectConversationRenameInput,
   isActiveProjectConversationStatus,
   PROJECT_CONVERSATION_TITLE_MAX_LENGTH,
@@ -8,6 +9,26 @@ import {
   resolveProjectConversationHeaderStatus,
   resolveProjectConversationTitle,
 } from "./projectConversationHeader.logic";
+
+describe("buildProjectConversationTitleGenerationContext", () => {
+  it("uses recent conversation context and excludes older messages", () => {
+    const messages = Array.from({ length: 14 }, (_, index) => ({
+      role: index % 2 === 0 ? ("user" as const) : ("assistant" as const),
+      content: `message ${index + 1}`,
+    }));
+
+    const context = buildProjectConversationTitleGenerationContext({
+      currentTitle: "  Existing   title ",
+      messages,
+    });
+
+    expect(context).toContain("Current title: Existing title");
+    expect(context).not.toContain("message 1\n");
+    expect(context).not.toContain("message 2\n");
+    expect(context).toContain("user: message 13");
+    expect(context).toContain("assistant: message 14");
+  });
+});
 
 describe("project conversation header rename state", () => {
   it("uses the Jarvis title directly", () => {

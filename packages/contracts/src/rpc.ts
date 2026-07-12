@@ -19,6 +19,7 @@ import {
   VcsSwitchRefInput,
   VcsSwitchRefResult,
   GitCommandError,
+  TextGenerationError,
   VcsCreateRefInput,
   VcsCreateRefResult,
   VcsCreateWorktreeInput,
@@ -278,6 +279,7 @@ export const WS_METHODS = {
   serverCreateJarvisProjectThread: "server.createJarvisProjectThread",
   serverArchiveJarvisProjectThread: "server.archiveJarvisProjectThread",
   serverRenameJarvisProjectThread: "server.renameJarvisProjectThread",
+  serverGenerateThreadTitle: "server.generateThreadTitle",
   serverUnarchiveJarvisProjectThread: "server.unarchiveJarvisProjectThread",
   serverSendJarvisProjectThreadTurn: "server.sendJarvisProjectThreadTurn",
   serverDiscoverSourceControl: "server.discoverSourceControl",
@@ -638,6 +640,16 @@ export const WsServerRenameJarvisProjectThreadRpc = Rpc.make(
     error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
   },
 );
+
+export const WsServerGenerateThreadTitleRpc = Rpc.make(WS_METHODS.serverGenerateThreadTitle, {
+  payload: Schema.Struct({
+    message: Schema.String,
+  }),
+  success: Schema.Struct({
+    title: Schema.String,
+  }),
+  error: Schema.Union([TextGenerationError, ServerSettingsError, EnvironmentAuthorizationError]),
+});
 
 export const WsServerUnarchiveJarvisProjectThreadRpc = Rpc.make(
   WS_METHODS.serverUnarchiveJarvisProjectThread,
@@ -1098,6 +1110,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerCreateJarvisProjectThreadRpc,
   WsServerArchiveJarvisProjectThreadRpc,
   WsServerRenameJarvisProjectThreadRpc,
+  WsServerGenerateThreadTitleRpc,
   WsServerUnarchiveJarvisProjectThreadRpc,
   WsServerSendJarvisProjectThreadTurnRpc,
   WsServerDiscoverSourceControlRpc,

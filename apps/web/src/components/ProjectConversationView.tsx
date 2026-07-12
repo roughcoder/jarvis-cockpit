@@ -32,6 +32,7 @@ import {
   RefreshCwIcon,
   RotateCcwIcon,
   ServerIcon,
+  SparklesIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
@@ -97,6 +98,7 @@ import { projectConversationCapabilities } from "./composer/composerCapabilities
 import { BrainWorkspaceStrip } from "./composer/BrainWorkspaceStrip";
 import {
   buildProjectConversationRenameInput,
+  buildProjectConversationTitleGenerationContext,
   isActiveProjectConversationStatus,
   PROJECT_CONTEXT_PANEL_COLLAPSED_STORAGE_KEY,
   resolveProjectConversationHeaderStatus,
@@ -175,6 +177,9 @@ export function ProjectConversationView({
   const renameThread = useAtomCommand(serverEnvironment.renameJarvisProjectThread, {
     reportFailure: false,
   });
+  const generateThreadTitle = useAtomCommand(serverEnvironment.generateThreadTitle, {
+    reportFailure: false,
+  });
   const project =
     projectsQuery.data?.ok === true
       ? ((projectsQuery.data.projects ?? []).find((candidate) => candidate.id === projectId) ??
@@ -230,6 +235,7 @@ export function ProjectConversationView({
   const [renamingConversation, setRenamingConversation] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const [renameBusy, setRenameBusy] = useState(false);
+  const [renameGenerating, setRenameGenerating] = useState(false);
   const [contextPanelCollapsed, setContextPanelCollapsed] = useLocalStorage(
     PROJECT_CONTEXT_PANEL_COLLAPSED_STORAGE_KEY,
     false,
@@ -432,6 +438,33 @@ export function ProjectConversationView({
     setRenamingConversation(false);
     threadsQuery.refresh();
     threadDetailQuery.refresh();
+  };
+
+  const generateConversationTitle = async () => {
+    if (conversation === null) return;
+    setRenameGenerating(true);
+    const result = await generateThreadTitle({
+      environmentId,
+      input: {
+        message: buildProjectConversationTitleGenerationContext({
+          currentTitle: conversation.title,
+          messages,
+        }),
+      },
+    });
+    setRenameGenerating(false);
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add({
+          type: "error",
+          title: "Could not generate a title",
+          description: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return;
+    }
+    setRenameDraft(result.value.title);
   };
 
   const markTurn = (
@@ -735,6 +768,7 @@ export function ProjectConversationView({
                     className="h-7 min-w-0 rounded-md border border-input bg-background px-2 text-sm font-medium text-foreground outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
                     value={renameDraft}
                     aria-label="Conversation title"
+                    disabled={renameGenerating}
                     onChange={(event) => setRenameDraft(event.currentTarget.value)}
                     onKeyDown={(event) => {
                       if (event.key === "Escape") {
@@ -748,11 +782,32 @@ export function ProjectConversationView({
                     <TooltipTrigger
                       render={
                         <Button
+                          type="button"
+                          size="icon-xs"
+                          variant="outline"
+                          aria-label="Generate conversation title with AI"
+                          disabled={renameBusy || renameGenerating}
+                          onClick={() => void generateConversationTitle()}
+                        >
+                          {renameGenerating ? (
+                            <Spinner className="size-3.5" />
+                          ) : (
+                            <SparklesIcon className="size-3.5" />
+                          )}
+                        </Button>
+                      }
+                    />
+                    <TooltipPopup side="bottom">Generate with AI</TooltipPopup>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
                           type="submit"
                           size="icon-xs"
                           variant="outline"
                           aria-label="Save conversation title"
-                          disabled={renameBusy}
+                          disabled={renameBusy || renameGenerating}
                         >
                           {renameBusy ? (
                             <Spinner className="size-3.5" />

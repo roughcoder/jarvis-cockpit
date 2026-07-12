@@ -7,6 +7,11 @@ export interface ProjectConversationRenameResolution {
   readonly title: string;
 }
 
+export interface ThreadTitleContextMessage {
+  readonly role: "user" | "assistant";
+  readonly content: string;
+}
+
 export interface BuildProjectConversationRenameInput {
   readonly currentTitle: string;
   readonly draftTitle: string;
@@ -43,6 +48,22 @@ export function isActiveProjectConversationStatus(status: string | null | undefi
 
 export function normalizeProjectConversationTitleInput(title: string): string {
   return title.trim().replace(/\s+/g, " ").slice(0, PROJECT_CONVERSATION_TITLE_MAX_LENGTH);
+}
+
+export function buildProjectConversationTitleGenerationContext(input: {
+  readonly currentTitle: string;
+  readonly messages: ReadonlyArray<ThreadTitleContextMessage>;
+}): string {
+  const transcript = input.messages
+    .filter((message) => message.content.trim().length > 0)
+    .slice(-12)
+    .map((message) => `${message.role}: ${message.content.trim()}`)
+    .join("\n\n")
+    .slice(-8_000);
+  return [
+    `Current title: ${normalizeProjectConversationTitleInput(input.currentTitle)}`,
+    transcript.length > 0 ? `Conversation:\n${transcript}` : "Conversation: no messages yet",
+  ].join("\n\n");
 }
 
 export function buildProjectConversationRenameInput(

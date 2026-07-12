@@ -81,6 +81,7 @@ import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -396,6 +397,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverCreateJarvisProjectThread, AuthOrchestrationOperateScope],
   [WS_METHODS.serverArchiveJarvisProjectThread, AuthOrchestrationOperateScope],
   [WS_METHODS.serverRenameJarvisProjectThread, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverGenerateThreadTitle, AuthOrchestrationOperateScope],
   [WS_METHODS.serverUnarchiveJarvisProjectThread, AuthOrchestrationOperateScope],
   [WS_METHODS.serverSendJarvisProjectThreadTurn, AuthOrchestrationOperateScope],
   [WS_METHODS.serverDiscoverSourceControl, AuthOrchestrationReadScope],
@@ -519,6 +521,7 @@ const makeWsRpcLayer = (
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
+      const textGeneration = yield* TextGeneration.TextGeneration;
       const secretStore = yield* ServerSecretStore.ServerSecretStore;
       const jarvisOAuthAccessToken = (operation: string) =>
         makeJarvisOAuthAccessToken({ config, secrets: secretStore }).pipe(
@@ -2134,6 +2137,22 @@ const makeWsRpcLayer = (
                 }),
               ),
             ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverGenerateThreadTitle]: ({ message }) =>
+          observeRpcEffect(
+            WS_METHODS.serverGenerateThreadTitle,
+            Effect.gen(function* () {
+              const { textGenerationModelSelection: modelSelection } =
+                yield* serverSettings.getSettings;
+              return yield* textGeneration.generateThreadTitle({
+                cwd: config.cwd,
+                message,
+                modelSelection,
+              });
+            }),
             {
               "rpc.aggregate": "server",
             },
