@@ -19,14 +19,18 @@ import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
 import { subscribe } from "../rpc/client.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
-import { applyThreadDetailEvent } from "./threadReducer.ts";
+import {
+  applyThreadDetailEvent,
+  windowThreadDetail,
+  type WindowedOrchestrationThread,
+} from "./threadReducer.ts";
 import { THREAD_STATE_IDLE_TTL_MS } from "./threadRetention.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
 export type EnvironmentThreadStatus = "empty" | "cached" | "synchronizing" | "live" | "deleted";
 
 export interface EnvironmentThreadState {
-  readonly data: Option.Option<OrchestrationThread>;
+  readonly data: Option.Option<WindowedOrchestrationThread>;
   readonly status: EnvironmentThreadStatus;
   readonly error: Option.Option<string>;
 }
@@ -66,16 +70,17 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       ),
     ),
   );
+  const windowedCached = Option.map(cached, windowThreadDetail);
   const state = yield* SubscriptionRef.make<EnvironmentThreadState>({
-    data: cached,
-    status: statusWithoutLiveData(cached),
+    data: windowedCached,
+    status: statusWithoutLiveData(windowedCached),
     error: Option.none(),
   });
   const lastSequence = yield* SubscriptionRef.make(0);
-  const persistence = yield* Queue.sliding<OrchestrationThread>(1);
+  const persistence = yield* Queue.sliding<WindowedOrchestrationThread>(1);
 
   const persist = Effect.fn("EnvironmentThreadState.persist")(function* (
-    thread: OrchestrationThread,
+    thread: WindowedOrchestrationThread,
   ) {
     yield* cache.saveThread(environmentId, thread).pipe(
       Effect.catch((error) =>
@@ -122,14 +127,15 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     }));
 
   const setThread = Effect.fn("EnvironmentThreadState.setThread")(function* (
-    thread: OrchestrationThread,
+    thread: WindowedOrchestrationThread,
   ) {
+    const windowedThread = windowThreadDetail(thread);
     yield* SubscriptionRef.set(state, {
-      data: Option.some(thread),
+      data: Option.some(windowedThread),
       status: "live",
       error: Option.none(),
     });
-    yield* Queue.offer(persistence, thread);
+    yield* Queue.offer(persistence, windowedThread);
   });
 
   const setDeleted = Effect.fn("EnvironmentThreadState.setDeleted")(function* () {

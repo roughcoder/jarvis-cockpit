@@ -16,6 +16,7 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import { FINITE_QUERY_FAMILY_MAX_ENTRIES } from "./retention.ts";
 
 export interface ServerConfigProjection {
   readonly config: ServerConfig;
@@ -213,26 +214,32 @@ export function createServerEnvironmentAtoms<R, E>(
     jarvisProject: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:jarvis-project",
       tag: WS_METHODS.serverGetJarvisProject,
+      maxEntries: FINITE_QUERY_FAMILY_MAX_ENTRIES,
     }),
     jarvisProjectPullRequests: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:jarvis-project-pull-requests",
       tag: WS_METHODS.serverGetJarvisProjectPullRequests,
+      maxEntries: FINITE_QUERY_FAMILY_MAX_ENTRIES,
     }),
     jarvisProjectMemory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:jarvis-project-memory",
       tag: WS_METHODS.serverGetJarvisProjectMemory,
+      maxEntries: FINITE_QUERY_FAMILY_MAX_ENTRIES,
     }),
     jarvisProjectFiles: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:jarvis-project-files",
       tag: WS_METHODS.serverGetJarvisProjectFiles,
+      maxEntries: FINITE_QUERY_FAMILY_MAX_ENTRIES,
     }),
     jarvisProjectThreads: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:jarvis-project-threads",
       tag: WS_METHODS.serverGetJarvisProjectThreads,
+      maxEntries: FINITE_QUERY_FAMILY_MAX_ENTRIES,
     }),
     jarvisProjectThread: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:jarvis-project-thread",
       tag: WS_METHODS.serverGetJarvisProjectThread,
+      maxEntries: FINITE_QUERY_FAMILY_MAX_ENTRIES,
     }),
     validateJarvisWork: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:validate-jarvis-work",
