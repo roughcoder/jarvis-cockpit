@@ -72,6 +72,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import { ServerConfig } from "../config.ts";
 import {
@@ -114,6 +115,11 @@ export class JarvisMissingContractError extends Error {
 }
 
 export interface JarvisClient {
+  /**
+   * Opens one raw Cockpit SSE connection. Callers that need fan-out must share
+   * this stream rather than opening it once per browser subscription.
+   */
+  readonly streamCockpitEvents: () => Stream.Stream<JarvisCockpitEvent, JarvisClientError>;
   readonly getCatalog: () => Effect.Effect<JarvisCockpitCatalog, JarvisClientError>;
   readonly getCapabilities: () => Effect.Effect<JarvisCapabilitiesResult, JarvisClientError>;
   readonly getMcpStatus: () => Effect.Effect<JarvisMcpStatus, JarvisClientError>;
@@ -268,6 +274,13 @@ export interface JarvisClient {
     runId: string,
     input?: Record<string, unknown>,
   ) => Effect.Effect<JarvisControlResult, JarvisClientError | JarvisMissingContractError>;
+}
+
+export interface JarvisCockpitEvent {
+  readonly type: string;
+  readonly cursor: string | undefined;
+  readonly payload: unknown;
+  readonly authoritative: boolean;
 }
 
 export class JarvisClientService extends Context.Service<JarvisClientService, JarvisClient>()(
@@ -627,6 +640,162 @@ function canUseJarvisOAuthForUrl(
   return isSameOrigin(apiBaseUrl, trustedBaseUrl);
 }
 
+const JARVIS_SSE_IDLE_TIMEOUT_MS = 45_000;
+
+/**
+ * Incrementally parses SSE frames. Jarvis sends JSON envelopes, but this is
+ * deliberately permissive: an unknown event or invalid payload is still a
+ * change signal so consumers can refresh their authoritative snapshot.
+ */
+export async function* parseJarvisCockpitSse(
+  chunks: AsyncIterable<Uint8Array>,
+): AsyncGenerator<JarvisCockpitEvent> {
+  const decoder = new TextDecoder();
+  let remainder = "";
+  let eventType = "message";
+  let cursor: string | undefined;
+  let data: string[] = [];
+
+  const flush = (): JarvisCockpitEvent | undefined => {
+    if (data.length === 0) {
+      eventType = "message";
+      cursor = undefined;
+      return undefined;
+    }
+    const text = data.join("\n");
+    data = [];
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(text) as unknown;
+    } catch {
+      decoded = undefined;
+    }
+    const envelope = isRecord(decoded) ? decoded : undefined;
+    const type = typeof envelope?.type === "string" ? envelope.type : eventType;
+    const event = {
+      type,
+      cursor: typeof envelope?.cursor === "string" ? envelope.cursor : cursor,
+      payload: envelope?.payload ?? decoded,
+      authoritative: type === "snapshot" || eventType === "snapshot",
+    };
+    eventType = "message";
+    cursor = undefined;
+    return event;
+  };
+
+  const processLine = (line: string): JarvisCockpitEvent | undefined => {
+    if (line.length === 0) {
+      return flush();
+    }
+    if (line.startsWith(":")) {
+      return undefined;
+    }
+    const separator = line.indexOf(":");
+    const field = separator === -1 ? line : line.slice(0, separator);
+    const value = separator === -1 ? "" : line.slice(separator + 1).replace(/^ /, "");
+    if (field === "event") {
+      eventType = value;
+    } else if (field === "id") {
+      cursor = value;
+    } else if (field === "data") {
+      data.push(value);
+    }
+    return undefined;
+  };
+
+  for await (const chunk of chunks) {
+    remainder += decoder.decode(chunk, { stream: true });
+    while (true) {
+      const match = /\r?\n/.exec(remainder);
+      if (match === null || match.index === undefined) {
+        break;
+      }
+      const line = remainder.slice(0, match.index);
+      remainder = remainder.slice(match.index + match[0].length);
+      const event = processLine(line);
+      if (event !== undefined) {
+        yield event;
+      }
+    }
+  }
+  remainder += decoder.decode();
+  if (remainder.length > 0) {
+    const event = processLine(remainder);
+    if (event !== undefined) {
+      yield event;
+    }
+  }
+  const event = flush();
+  if (event !== undefined) {
+    yield event;
+  }
+}
+
+async function* responseBodyChunks(
+  response: Response,
+  operation: string,
+): AsyncGenerator<Uint8Array> {
+  if (response.body === null) {
+    throw new JarvisClientError({
+      operation,
+      message: "Jarvis SSE response did not include a response body.",
+    });
+  }
+  const reader = response.body.getReader();
+  try {
+    while (true) {
+      const timeoutController = new AbortController();
+      const timeoutSignal = AbortSignal.any([
+        timeoutController.signal,
+        AbortSignal.timeout(JARVIS_SSE_IDLE_TIMEOUT_MS),
+      ]);
+      try {
+        const next = await Promise.race([
+          reader.read(),
+          new Promise<never>((_resolve, reject) =>
+            timeoutSignal.addEventListener(
+              "abort",
+              () =>
+                reject(
+                  new JarvisClientError({
+                    operation,
+                    message: "Jarvis SSE connection became idle.",
+                  }),
+                ),
+              { once: true },
+            ),
+          ),
+        ]);
+        if (next.done) {
+          return;
+        }
+        yield next.value;
+      } finally {
+        timeoutController.abort();
+      }
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+}
+
+function streamJarvisCockpitSse(
+  response: Response,
+): Stream.Stream<JarvisCockpitEvent, JarvisClientError> {
+  return Stream.fromAsyncIterable(
+    parseJarvisCockpitSse(responseBodyChunks(response, "cockpit.events")),
+    (cause) =>
+      cause instanceof JarvisClientError
+        ? cause
+        : new JarvisClientError({
+            operation: "cockpit.events",
+            message: "Jarvis SSE connection failed while reading an event frame.",
+            cause,
+          }),
+  );
+}
+
 export function makeJarvisCockpitClient(input: {
   readonly baseUrl: URL;
   readonly token?: string;
@@ -789,7 +958,51 @@ export function makeJarvisCockpitClient(input: {
       ),
     );
 
+  const streamCockpitEvents = () =>
+    Stream.unwrap(
+      resolveRequestAuth(input, "cockpit.events").pipe(
+        Effect.flatMap((auth) =>
+          Effect.tryPromise({
+            try: async () => {
+              const requestUrl = new URL("/v1/cockpit/events?sync=fast", input.baseUrl);
+              const send = async (token: string | undefined) =>
+                fetchImpl(requestUrl, {
+                  headers: {
+                    accept: "text/event-stream",
+                    ...(token ? { authorization: `Bearer ${token}` } : {}),
+                  },
+                });
+              const first = await send(auth.token);
+              const response =
+                !first.ok && isAuthRejectedStatus(first.status) && auth.recoveryToken !== undefined
+                  ? await send(auth.recoveryToken)
+                  : first;
+              if (!response.ok) {
+                const responseBody = truncateResponseBody(await response.text());
+                throw new JarvisClientError({
+                  operation: "cockpit.events",
+                  status: response.status,
+                  responseBody,
+                  message: summarizeHttpError("cockpit.events", response.status, responseBody),
+                });
+              }
+              return streamJarvisCockpitSse(response);
+            },
+            catch: (cause) =>
+              cause instanceof JarvisClientError
+                ? cause
+                : new JarvisClientError({
+                    operation: "cockpit.events",
+                    message: "Jarvis SSE request failed before a response was opened.",
+                    cause,
+                  }),
+          }),
+        ),
+      ),
+    );
+
   return {
+    streamCockpitEvents,
     getCatalog: () =>
       requestJson("cockpit.catalog", "/v1/cockpit/catalog").pipe(
         Effect.flatMap(decodeFor("cockpit.catalog", decodeCatalog)),
@@ -1259,8 +1472,40 @@ export function makeJarvisClient(config: {
         ),
         Effect.flatMap(run),
       );
+    const withClientStream = () =>
+      Stream.unwrap(
+        getSettings.pipe(
+          Effect.mapError(
+            (cause) =>
+              new JarvisClientError({
+                operation: "cockpit.events",
+                message: "Failed to load Jarvis brain settings.",
+                cause,
+              }),
+          ),
+          Effect.flatMap((settings) =>
+            Effect.try({
+              try: () =>
+                makeJarvisClientFromConnection({
+                  config,
+                  settings,
+                  ...(config.oauthAccessToken !== undefined
+                    ? { oauthAccessToken: config.oauthAccessToken }
+                    : {}),
+                }).streamCockpitEvents(),
+              catch: (cause) =>
+                new JarvisClientError({
+                  operation: "cockpit.events",
+                  message: "Jarvis brain URL is not valid.",
+                  cause,
+                }),
+            }),
+          ),
+        ),
+      );
 
     return {
+      streamCockpitEvents: withClientStream,
       getCatalog: () => withClient("cockpit.catalog", (client) => client.getCatalog()),
       getCapabilities: () => withClient("capabilities.get", (client) => client.getCapabilities()),
       getMcpStatus: () => withClient("mcp.status", (client) => client.getMcpStatus()),
@@ -1501,6 +1746,13 @@ function makeMissingConfigurationClient(message: string): JarvisClient {
     );
 
   return {
+    streamCockpitEvents: () =>
+      Stream.fail(
+        new JarvisClientError({
+          operation: "cockpit.events",
+          message,
+        }),
+      ),
     getCatalog: () => fail("jarvis.client.configure"),
     getCapabilities: () => fail("jarvis.client.configure"),
     getMcpStatus: () => fail("jarvis.client.configure"),
@@ -2404,6 +2656,13 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
   };
 
   return {
+    streamCockpitEvents: () =>
+      Stream.fail(
+        new JarvisClientError({
+          operation: "cockpit.events",
+          message: "Jarvis fixture mode does not provide Cockpit SSE.",
+        }),
+      ),
     getCatalog: () =>
       Effect.succeed({
         api_version: "v1",
