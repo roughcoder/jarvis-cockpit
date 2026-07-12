@@ -1035,7 +1035,6 @@ function SidebarJarvisProjectConversations({
   const snapshotQuery = useEnvironmentQuery(
     serverEnvironment.jarvisSnapshot({ environmentId, input: {} }),
   );
-  const refreshSnapshot = snapshotQuery.refresh;
   const refreshProjectThreads = projectThreadsQuery.refresh;
   const conversations =
     projectThreadsQuery.data?.ok === true ? (projectThreadsQuery.data.threads ?? []) : [];
@@ -1053,14 +1052,13 @@ function SidebarJarvisProjectConversations({
     const interval = window.setInterval(
       () => {
         if (!document.hidden) {
-          refreshSnapshot();
           refreshProjectThreads();
         }
       },
       hasActiveWorkerSessions || hasActiveProjectThreads ? 2_000 : 10_000,
     );
     return () => window.clearInterval(interval);
-  }, [hasActiveProjectThreads, hasActiveWorkerSessions, refreshProjectThreads, refreshSnapshot]);
+  }, [hasActiveProjectThreads, hasActiveWorkerSessions, refreshProjectThreads]);
   const conversationItems = useMemo(
     () =>
       projectConversationTreeItems({

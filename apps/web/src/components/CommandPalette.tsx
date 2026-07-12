@@ -144,7 +144,6 @@ import { ComposerHandleContext, useComposerHandleContext } from "../composerHand
 import type { ChatComposerHandle } from "./chat/ChatComposer";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
-const JARVIS_WORKER_SNAPSHOT_POLL_MS = 30_000;
 
 function getLocalFileManagerName(platform: string): string {
   if (isMacPlatform(platform)) {
@@ -545,20 +544,6 @@ function OpenCommandPaletteDialog(props: {
     [jarvisProjectsQuery.data?.projects],
   );
   const jarvisWorkers = jarvisSnapshotQuery.data?.snapshot?.workers ?? [];
-  const jarvisSnapshotRefreshRef = useRef(jarvisSnapshotQuery.refresh);
-  useEffect(() => {
-    jarvisSnapshotRefreshRef.current = jarvisSnapshotQuery.refresh;
-  }, [jarvisSnapshotQuery.refresh]);
-  useEffect(() => {
-    if (jarvisStartEnvironmentId === null) {
-      return;
-    }
-    jarvisSnapshotRefreshRef.current();
-    const id = window.setInterval(() => {
-      jarvisSnapshotRefreshRef.current();
-    }, JARVIS_WORKER_SNAPSHOT_POLL_MS);
-    return () => window.clearInterval(id);
-  }, [jarvisStartEnvironmentId]);
   const jarvisAnchorProject = useMemo(
     () =>
       projects.find(

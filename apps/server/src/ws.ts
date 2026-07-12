@@ -28,6 +28,9 @@ import {
   type OrchestrationCommand,
   type GitActionProgressEvent,
   type GitManagerServiceError,
+  type JarvisProjectThreadDetail,
+  type JarvisProjectThreadMessage,
+  type JarvisProjectThreadStreamItem,
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
@@ -136,7 +139,16 @@ import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
-const JARVIS_COCKPIT_POLL_INTERVAL = Duration.seconds(10);
+const DEFAULT_JARVIS_COCKPIT_POLL_INTERVAL_SECONDS = 2;
+const configuredJarvisCockpitPollIntervalSeconds = Number.parseFloat(
+  process.env.JARVIS_COCKPIT_POLL_INTERVAL ?? "",
+);
+const JARVIS_COCKPIT_POLL_INTERVAL = Duration.seconds(
+  Number.isFinite(configuredJarvisCockpitPollIntervalSeconds) &&
+    configuredJarvisCockpitPollIntervalSeconds > 0
+    ? configuredJarvisCockpitPollIntervalSeconds
+    : DEFAULT_JARVIS_COCKPIT_POLL_INTERVAL_SECONDS,
+);
 
 function jarvisShellPollingStream(
   jarvisClient: JarvisClient,
@@ -192,6 +204,85 @@ function jarvisThreadPollingStream(
       ),
     ),
     Stream.flatMap((event) => (Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty)),
+  );
+}
+
+function projectThreadMessageEquals(
+  left: JarvisProjectThreadMessage,
+  right: JarvisProjectThreadMessage,
+): boolean {
+  return (
+    left.role === right.role &&
+    left.peer_id === right.peer_id &&
+    left.content === right.content &&
+    left.observed_at === right.observed_at
+  );
+}
+
+function projectThreadMetadataEquals(
+  left: JarvisProjectThreadDetail,
+  right: JarvisProjectThreadDetail,
+): boolean {
+  const { messages: _leftMessages, ...leftMetadata } = left;
+  const { messages: _rightMessages, ...rightMetadata } = right;
+  return JSON.stringify(leftMetadata) === JSON.stringify(rightMetadata);
+}
+
+function projectThreadStreamItems(
+  previous: JarvisProjectThreadDetail,
+  next: JarvisProjectThreadDetail,
+): ReadonlyArray<JarvisProjectThreadStreamItem> {
+  const sharedMessageCount = Math.min(previous.messages.length, next.messages.length);
+  const historyIsPrefix = Array.from({ length: sharedMessageCount }).every((_, index) =>
+    projectThreadMessageEquals(previous.messages[index]!, next.messages[index]!),
+  );
+  if (!historyIsPrefix || next.messages.length < previous.messages.length) {
+    return [{ kind: "snapshot", thread: next }];
+  }
+
+  const items: JarvisProjectThreadStreamItem[] = [];
+  if (!projectThreadMetadataEquals(previous, next)) {
+    const { messages: _messages, ...thread } = next;
+    items.push({ kind: "thread-updated", thread });
+  }
+  const appendedMessages = next.messages.slice(previous.messages.length);
+  if (appendedMessages.length > 0) {
+    items.push({ kind: "messages-appended", messages: appendedMessages });
+  }
+  return items;
+}
+
+function jarvisProjectThreadPollingStream(
+  jarvisClient: JarvisClient,
+  projectId: string,
+  threadId: string,
+  initialThread: JarvisProjectThreadDetail,
+): Stream.Stream<JarvisProjectThreadStreamItem> {
+  return Stream.unwrap(
+    Ref.make(initialThread).pipe(
+      Effect.map((previousThread) =>
+        Stream.fromSchedule(Schedule.spaced(JARVIS_COCKPIT_POLL_INTERVAL)).pipe(
+          Stream.mapEffect(() =>
+            jarvisClient.getProjectThread(projectId, threadId).pipe(
+              Effect.flatMap((nextThread) =>
+                Ref.getAndSet(previousThread, nextThread).pipe(
+                  Effect.map((previous) => projectThreadStreamItems(previous, nextThread)),
+                ),
+              ),
+              Effect.tapError((cause) =>
+                Effect.logWarning("Jarvis project thread poll failed", {
+                  cause,
+                  projectId,
+                  threadId,
+                }),
+              ),
+              Effect.orElseSucceed(() => [] as ReadonlyArray<JarvisProjectThreadStreamItem>),
+            ),
+          ),
+          Stream.flatMap(Stream.fromIterable),
+        ),
+      ),
+    ),
   );
 }
 
@@ -379,6 +470,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverGetJarvisProjectFiles, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetJarvisProjectThreads, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetJarvisProjectThread, AuthOrchestrationReadScope],
+  [WS_METHODS.subscribeJarvisProjectThread, AuthOrchestrationReadScope],
   [WS_METHODS.serverValidateJarvisWork, AuthOrchestrationReadScope],
   [WS_METHODS.serverPruneJarvisWorkerWorktrees, AuthOrchestrationOperateScope],
   [WS_METHODS.serverCloseJarvisSession, AuthOrchestrationOperateScope],
@@ -1708,6 +1800,26 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "server",
             },
+          ),
+        [WS_METHODS.subscribeJarvisProjectThread]: ({ projectId, threadId }) =>
+          observeRpcStreamEffect(
+            WS_METHODS.subscribeJarvisProjectThread,
+            jarvisClient.getProjectThread(projectId, threadId).pipe(
+              Effect.map((thread) =>
+                Stream.concat(
+                  Stream.make({ kind: "snapshot" as const, thread }),
+                  jarvisProjectThreadPollingStream(jarvisClient, projectId, threadId, thread),
+                ),
+              ),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationGetSnapshotError({
+                    message: `Failed to load Jarvis project thread ${threadId}`,
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverValidateJarvisWork]: ({ input }) =>
           observeRpcEffect(

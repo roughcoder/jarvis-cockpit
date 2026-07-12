@@ -653,6 +653,27 @@ export const JarvisProjectThreadDetail = Schema.Struct({
 });
 export type JarvisProjectThreadDetail = typeof JarvisProjectThreadDetail.Type;
 
+/**
+ * Durable project-conversation updates. A snapshot is sent on every new
+ * subscription so clients can safely resynchronize after reconnecting; normal
+ * live updates carry only newly observed messages.
+ */
+export const JarvisProjectThreadStreamItem = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("snapshot"),
+    thread: JarvisProjectThreadDetail,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("messages-appended"),
+    messages: Schema.Array(JarvisProjectThreadMessage),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("thread-updated"),
+    thread: JarvisProjectThread,
+  }),
+]);
+export type JarvisProjectThreadStreamItem = typeof JarvisProjectThreadStreamItem.Type;
+
 export const JarvisProjectThreadsResponse = Schema.Struct({
   api_version: Schema.Literal("v1"),
   schema_version: Schema.Number,
