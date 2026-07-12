@@ -12,6 +12,8 @@ import type { JarvisClient, JarvisCockpitEvent } from "./JarvisClient.ts";
 
 const DEFAULT_FAILURE_THRESHOLD = 3;
 const MAX_RECONNECT_DELAY = Duration.seconds(30);
+export const JARVIS_SSE_THREAD_DEBOUNCE = Duration.millis(250);
+export const JARVIS_SSE_SHELL_DEBOUNCE = Duration.millis(500);
 
 interface JarvisEventsState {
   readonly subscribers: number;
@@ -30,10 +32,19 @@ export interface MakeJarvisEventsHubOptions {
   readonly failureThreshold?: number;
 }
 
-export function debounceJarvisChanges(
+/**
+ * Debounce a burst, then retain only the newest signal while a sequential
+ * refresh is in flight. A signal is only a prompt to re-read authoritative
+ * state, so dropping stale prompts is safe and bounds refresh backlog at one.
+ */
+export function coalesceJarvisChanges(
   changes: Stream.Stream<JarvisCockpitEvent>,
+  debounce: Duration.Duration = JARVIS_SSE_THREAD_DEBOUNCE,
 ): Stream.Stream<JarvisCockpitEvent> {
-  return changes.pipe(Stream.debounce(Duration.millis(250)));
+  return changes.pipe(
+    Stream.debounce(debounce),
+    Stream.buffer({ capacity: 1, strategy: "sliding" }),
+  );
 }
 
 function reconnectDelay(failures: number): Duration.Duration {

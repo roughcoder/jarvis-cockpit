@@ -112,7 +112,8 @@ import {
   type JarvisClient,
 } from "./jarvis/JarvisClient.ts";
 import {
-  debounceJarvisChanges,
+  coalesceJarvisChanges,
+  JARVIS_SSE_SHELL_DEBOUNCE,
   makeJarvisEventsHub,
   type JarvisEventsHub,
 } from "./jarvis/JarvisEvents.ts";
@@ -199,7 +200,11 @@ function jarvisShellPollingStream(
       Effect.orElseSucceed(() => Option.none<OrchestrationShellStreamItem>()),
     );
   return Stream.merge(
-    jarvisEvents.changes.pipe(Stream.mapEffect(refresh), Stream.flatMap(streamFromOption)),
+    coalesceJarvisChanges(jarvisEvents.changes, JARVIS_SSE_SHELL_DEBOUNCE).pipe(
+      // The upstream sliding buffer retains only one latest refresh after a slow read.
+      Stream.mapEffect(refresh, { concurrency: 1 }),
+      Stream.flatMap(streamFromOption),
+    ),
     Stream.merge(
       jarvisFallbackOrReconciliationStream(
         jarvisEvents,
@@ -245,8 +250,8 @@ function jarvisThreadPollingStream(
       Effect.orElseSucceed(() => Option.none<OrchestrationThreadStreamItem>()),
     );
   return Stream.merge(
-    debounceJarvisChanges(jarvisEvents.changes).pipe(
-      Stream.mapEffect(refresh),
+    coalesceJarvisChanges(jarvisEvents.changes).pipe(
+      Stream.mapEffect(refresh, { concurrency: 1 }),
       Stream.flatMap(streamFromOption),
     ),
     Stream.merge(
@@ -341,8 +346,8 @@ function jarvisProjectThreadPollingStream(
           const flatten = (items: ReadonlyArray<JarvisProjectThreadStreamItem>) =>
             items.length > 0 ? Stream.fromIterable(items) : Stream.empty;
           return Stream.merge(
-            debounceJarvisChanges(jarvisEvents.changes).pipe(
-              Stream.mapEffect(refresh),
+            coalesceJarvisChanges(jarvisEvents.changes).pipe(
+              Stream.mapEffect(refresh, { concurrency: 1 }),
               Stream.flatMap(flatten),
             ),
             Stream.merge(

@@ -1,6 +1,10 @@
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -10,7 +14,11 @@ import {
   makeJarvisFixtureClient,
   parseJarvisCockpitSse,
 } from "./JarvisClient.ts";
-import { debounceJarvisChanges, makeJarvisEventsHub } from "./JarvisEvents.ts";
+import {
+  coalesceJarvisChanges,
+  JARVIS_SSE_SHELL_DEBOUNCE,
+  makeJarvisEventsHub,
+} from "./JarvisEvents.ts";
 
 const encoder = new TextEncoder();
 
@@ -120,7 +128,7 @@ it.effect("does not open SSE when disabled, preserving polling fallback", () =>
   ),
 );
 
-it.effect("debounces bursts before a change-driven thread refresh", () =>
+it.effect("coalesces shell change bursts before a refresh", () =>
   Effect.gen(function* () {
     const change = {
       type: "unknown.future.event",
@@ -129,8 +137,54 @@ it.effect("debounces bursts before a change-driven thread refresh", () =>
       authoritative: false,
     };
     const emitted = yield* Stream.runCollect(
-      debounceJarvisChanges(Stream.make(change, { ...change, cursor: "cursor-2" }, change)),
+      coalesceJarvisChanges(
+        Stream.make(change, { ...change, cursor: "cursor-2" }, change),
+        JARVIS_SSE_SHELL_DEBOUNCE,
+      ),
     );
     assert.strictEqual(emitted.length, 1);
   }),
+);
+
+it.effect("keeps at most one change-triggered refresh pending behind a slow refresh", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const changes = yield* PubSub.unbounded<{
+        readonly type: string;
+        readonly cursor: string;
+        readonly payload: object;
+        readonly authoritative: boolean;
+      }>();
+      const firstRefresh = yield* Deferred.make<void>();
+      const calls = yield* Ref.make(0);
+      const refresh = Ref.updateAndGet(calls, (count) => count + 1).pipe(
+        Effect.flatMap((count) => (count === 1 ? Deferred.await(firstRefresh) : Effect.void)),
+      );
+      const consumer = yield* Stream.runDrain(
+        coalesceJarvisChanges(Stream.fromPubSub(changes), Duration.millis(1)).pipe(
+          Stream.mapEffect(() => refresh, { concurrency: 1 }),
+        ),
+      ).pipe(Effect.forkScoped);
+      const change = {
+        type: "snapshot",
+        cursor: "cursor-1",
+        payload: {},
+        authoritative: true,
+      };
+
+      yield* PubSub.publish(changes, change);
+      yield* Effect.sleep("10 millis");
+      yield* PubSub.publishAll(changes, [
+        { ...change, cursor: "cursor-2" },
+        { ...change, cursor: "cursor-3" },
+        { ...change, cursor: "cursor-4" },
+      ]);
+      yield* Effect.sleep("10 millis");
+      yield* Deferred.succeed(firstRefresh, undefined);
+      yield* Effect.sleep("10 millis");
+
+      assert.strictEqual(yield* Ref.get(calls), 2);
+      yield* Fiber.interrupt(consumer);
+    }),
+  ),
 );
