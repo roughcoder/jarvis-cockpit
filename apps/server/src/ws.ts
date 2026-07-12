@@ -35,6 +35,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
   type OrchestrationShellStreamItem,
+  type OrchestrationShellSnapshot,
   type OrchestrationThreadStreamItem,
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
@@ -110,6 +111,7 @@ import {
   makeJarvisClient,
   resolveJarvisBrainConnection,
   type JarvisClient,
+  type JarvisCockpitEvent,
 } from "./jarvis/JarvisClient.ts";
 import {
   coalesceJarvisChanges,
@@ -125,6 +127,10 @@ import {
   loadJarvisThreadDetail,
   shouldUseJarvisCockpitReads,
 } from "./jarvis/JarvisOrchestrationReadModel.ts";
+import {
+  jarvisSessionIdFromThreadId,
+  mapJarvisRunsSnapshotToShellSnapshot,
+} from "./jarvis/JarvisProjectionMapper.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
@@ -179,11 +185,98 @@ function jarvisFallbackOrReconciliationStream<A>(
   );
 }
 
+function jarvisEventField(event: JarvisCockpitEvent, key: string) {
+  const envelopeValue = (event as unknown as Record<string, unknown>)[key];
+  if (typeof envelopeValue === "string") {
+    return envelopeValue;
+  }
+  if (
+    typeof event.payload === "object" &&
+    event.payload !== null &&
+    !Array.isArray(event.payload)
+  ) {
+    const payloadValue = (event.payload as Record<string, unknown>)[key];
+    return typeof payloadValue === "string" ? payloadValue : undefined;
+  }
+  return undefined;
+}
+
+function jarvisThreadChangeMatches(
+  jarvisEvents: JarvisEventsHub,
+  sessionRef: string,
+  event: JarvisCockpitEvent,
+): Effect.Effect<boolean> {
+  if (
+    event.type !== "session.updated" &&
+    event.type !== "session.event" &&
+    event.type !== "run.event"
+  ) {
+    return Effect.succeed(false);
+  }
+  if (jarvisEventField(event, "session_ref") === sessionRef) {
+    return Effect.succeed(true);
+  }
+  const runId = jarvisEventField(event, "run_id");
+  if (runId === undefined) {
+    return Effect.succeed(false);
+  }
+  return jarvisEvents.appliedSnapshot.pipe(
+    Effect.map(
+      (snapshot) =>
+        Option.getOrUndefined(snapshot)?.sessions.find(
+          (session) => session.session_ref === sessionRef,
+        )?.run_id === runId,
+    ),
+  );
+}
+
+function jarvisProjectThreadChangeMatches(
+  projectId: string,
+  threadId: string,
+  event: JarvisCockpitEvent,
+): boolean {
+  return (
+    (event.type === "session.updated" ||
+      event.type === "session.event" ||
+      event.type === "run.event") &&
+    jarvisEventField(event, "project_id") === projectId &&
+    jarvisEventField(event, "thread_id") === threadId
+  );
+}
+
+function jarvisAppliedShellRefresh(
+  jarvisEvents: JarvisEventsHub,
+): Effect.Effect<Option.Option<OrchestrationShellStreamItem>> {
+  return jarvisEvents.appliedSnapshot.pipe(
+    Effect.map(
+      Option.map(
+        (snapshot): OrchestrationShellStreamItem => ({
+          kind: "snapshot" as const,
+          snapshot: mapJarvisRunsSnapshotToShellSnapshot(snapshot),
+        }),
+      ),
+    ),
+  );
+}
+
+function loadJarvisShellSnapshotFromHub(
+  jarvisClient: JarvisClient,
+  jarvisEvents: JarvisEventsHub,
+): Effect.Effect<OrchestrationShellSnapshot, JarvisClientError> {
+  return Effect.all([jarvisEvents.isLive, jarvisEvents.appliedSnapshot]).pipe(
+    Effect.flatMap(([isLive, snapshot]) =>
+      isLive && Option.isSome(snapshot)
+        ? Effect.succeed(mapJarvisRunsSnapshotToShellSnapshot(snapshot.value))
+        : loadJarvisShellSnapshot(jarvisClient),
+    ),
+  );
+}
+
 function jarvisShellPollingStream(
   jarvisClient: JarvisClient,
   jarvisEvents: JarvisEventsHub,
 ): Stream.Stream<OrchestrationShellStreamItem> {
-  const refresh = () =>
+  const restRefresh = () =>
     loadJarvisShellSnapshot(jarvisClient).pipe(
       Effect.map((snapshot) => {
         const item: OrchestrationShellStreamItem = {
@@ -199,10 +292,23 @@ function jarvisShellPollingStream(
       ),
       Effect.orElseSucceed(() => Option.none<OrchestrationShellStreamItem>()),
     );
+  const reconciliationRefresh = () =>
+    jarvisEvents.reconcileSnapshot.pipe(
+      Effect.map((snapshot) =>
+        Option.some<OrchestrationShellStreamItem>({
+          kind: "snapshot" as const,
+          snapshot: mapJarvisRunsSnapshotToShellSnapshot(snapshot),
+        }),
+      ),
+      Effect.tapError((cause) =>
+        Effect.logWarning("Jarvis shell reconciliation failed", { cause }),
+      ),
+      Effect.orElseSucceed(() => Option.none<OrchestrationShellStreamItem>()),
+    );
   return Stream.merge(
     coalesceJarvisChanges(jarvisEvents.changes, JARVIS_SSE_SHELL_DEBOUNCE).pipe(
-      // The upstream sliding buffer retains only one latest refresh after a slow read.
-      Stream.mapEffect(refresh, { concurrency: 1 }),
+      // The hub has already applied each validated frame; no REST read on this path.
+      Stream.mapEffect(() => jarvisAppliedShellRefresh(jarvisEvents), { concurrency: 1 }),
       Stream.flatMap(streamFromOption),
     ),
     Stream.merge(
@@ -210,13 +316,13 @@ function jarvisShellPollingStream(
         jarvisEvents,
         true,
         JARVIS_SSE_RECONCILIATION_INTERVAL,
-        refresh,
+        reconciliationRefresh,
       ),
       jarvisFallbackOrReconciliationStream(
         jarvisEvents,
         false,
         JARVIS_COCKPIT_POLL_INTERVAL,
-        refresh,
+        restRefresh,
       ),
     ),
   );
@@ -227,6 +333,7 @@ function jarvisThreadPollingStream(
   jarvisEvents: JarvisEventsHub,
   threadId: ThreadId,
 ): Stream.Stream<OrchestrationThreadStreamItem> {
+  const sessionRef = jarvisSessionIdFromThreadId(threadId);
   const refresh = () =>
     loadJarvisThreadDetail(jarvisClient, threadId).pipe(
       Effect.map((thread) =>
@@ -250,10 +357,18 @@ function jarvisThreadPollingStream(
       Effect.orElseSucceed(() => Option.none<OrchestrationThreadStreamItem>()),
     );
   return Stream.merge(
-    coalesceJarvisChanges(jarvisEvents.changes).pipe(
-      Stream.mapEffect(refresh, { concurrency: 1 }),
-      Stream.flatMap(streamFromOption),
-    ),
+    coalesceJarvisChanges(
+      jarvisEvents.changes.pipe(
+        Stream.mapEffect((event) =>
+          sessionRef === null
+            ? Effect.succeed(Option.none<JarvisCockpitEvent>())
+            : jarvisThreadChangeMatches(jarvisEvents, sessionRef, event).pipe(
+                Effect.map((matches) => (matches ? Option.some(event) : Option.none())),
+              ),
+        ),
+        Stream.flatMap(streamFromOption),
+      ),
+    ).pipe(Stream.mapEffect(refresh, { concurrency: 1 }), Stream.flatMap(streamFromOption)),
     Stream.merge(
       jarvisFallbackOrReconciliationStream(
         jarvisEvents,
@@ -346,10 +461,13 @@ function jarvisProjectThreadPollingStream(
           const flatten = (items: ReadonlyArray<JarvisProjectThreadStreamItem>) =>
             items.length > 0 ? Stream.fromIterable(items) : Stream.empty;
           return Stream.merge(
-            coalesceJarvisChanges(jarvisEvents.changes).pipe(
-              Stream.mapEffect(refresh, { concurrency: 1 }),
-              Stream.flatMap(flatten),
-            ),
+            coalesceJarvisChanges(
+              jarvisEvents.changes.pipe(
+                Stream.filter((event) =>
+                  jarvisProjectThreadChangeMatches(projectId, threadId, event),
+                ),
+              ),
+            ).pipe(Stream.mapEffect(refresh, { concurrency: 1 }), Stream.flatMap(flatten)),
             Stream.merge(
               jarvisFallbackOrReconciliationStream(
                 jarvisEvents,
@@ -1385,7 +1503,7 @@ const makeWsRpcLayer = (
             ORCHESTRATION_WS_METHODS.subscribeShell,
             Effect.gen(function* () {
               const snapshot = useJarvisCockpitReads
-                ? yield* loadJarvisShellSnapshot(jarvisClient).pipe(
+                ? yield* loadJarvisShellSnapshotFromHub(jarvisClient, jarvisEvents).pipe(
                     Effect.tapError((cause) =>
                       Effect.logError("orchestration shell snapshot load failed", { cause }),
                     ),
