@@ -26,8 +26,6 @@ export interface ProjectConversationRouteParams {
 
 export type ProjectConversationRouteRenderState =
   | { readonly status: "invalid" }
-  | { readonly status: "loading" }
-  | { readonly status: "error"; readonly message: string }
   | { readonly status: "ready"; readonly params: ProjectConversationRouteParams };
 
 export interface ProjectConversationTurnDraft {
@@ -120,18 +118,9 @@ export function resolveProjectConversationRouteParams(
 
 export function resolveProjectConversationRouteRenderState(input: {
   readonly params: ProjectConversationRouteParams | null;
-  readonly shellError: string | null;
-  readonly shellHasSnapshot: boolean;
-  readonly shellPending: boolean;
 }): ProjectConversationRouteRenderState {
   if (input.params === null) {
     return { status: "invalid" };
-  }
-  if (input.shellError !== null) {
-    return { status: "error", message: input.shellError };
-  }
-  if (input.shellPending && !input.shellHasSnapshot) {
-    return { status: "loading" };
   }
   return { status: "ready", params: input.params };
 }

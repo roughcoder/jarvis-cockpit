@@ -64,7 +64,7 @@ describe("project conversation routes", () => {
     expect(resolveProjectConversationRouteParams({ environmentId: "env-1" })).toBeNull();
   });
 
-  it("resolves every route bootstrap condition to a visible render state", () => {
+  it("does not gate a durable conversation on the global orchestration snapshot", () => {
     const params = buildProjectConversationRouteParams({
       environmentId: "env-1",
       projectId: "jarvis",
@@ -74,36 +74,12 @@ describe("project conversation routes", () => {
     expect(
       resolveProjectConversationRouteRenderState({
         params: null,
-        shellError: null,
-        shellHasSnapshot: false,
-        shellPending: false,
       }),
     ).toEqual({ status: "invalid" });
 
     expect(
       resolveProjectConversationRouteRenderState({
         params,
-        shellError: null,
-        shellHasSnapshot: false,
-        shellPending: true,
-      }),
-    ).toEqual({ status: "loading" });
-
-    expect(
-      resolveProjectConversationRouteRenderState({
-        params,
-        shellError: "Environment bootstrap failed.",
-        shellHasSnapshot: false,
-        shellPending: false,
-      }),
-    ).toEqual({ status: "error", message: "Environment bootstrap failed." });
-
-    expect(
-      resolveProjectConversationRouteRenderState({
-        params,
-        shellError: null,
-        shellHasSnapshot: false,
-        shellPending: false,
       }),
     ).toEqual({ status: "ready", params });
   });
