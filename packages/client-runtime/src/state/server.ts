@@ -18,15 +18,12 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import { projectThreadMessageKey } from "../conversation/jarvisMessageKey.ts";
 import { FINITE_QUERY_FAMILY_MAX_ENTRIES, THREAD_DETAIL_RETENTION } from "./retention.ts";
 
 export interface ServerConfigProjection {
   readonly config: ServerConfig;
   readonly latestEvent: ServerConfigStreamEvent;
-}
-
-function projectThreadMessageKey(message: JarvisProjectThreadDetail["messages"][number]): string {
-  return `${message.role}\u0000${message.peer_id ?? ""}\u0000${message.observed_at}\u0000${message.content}`;
 }
 
 function retainRecentProjectThreadMessages(

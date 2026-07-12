@@ -674,6 +674,13 @@ export const JarvisProjectThread = Schema.Struct({
 export type JarvisProjectThread = typeof JarvisProjectThread.Type;
 
 export const JarvisProjectThreadMessage = Schema.Struct({
+  // Durable public identities are optional during the compatibility window.
+  // Consumers fall back to the complete legacy semantic envelope when absent.
+  event_id: OptionalPossiblyEmptyPublicString,
+  message_id: OptionalPossiblyEmptyPublicString,
+  call_id: OptionalPossiblyEmptyPublicString,
+  correlation_id: OptionalPossiblyEmptyPublicString,
+  sequence: Schema.optional(NonNegativeInt),
   // Tolerant string (not a strict Literal) so an unknown role (e.g. a future "system"/"tool"
   // message) cannot fail the whole thread-detail decode and drop all history; the UI maps
   // "user" to the user side and everything else to the assistant side.

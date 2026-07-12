@@ -1222,3 +1222,46 @@ it.effect("decodes universal durable conversation lifecycle fields", () =>
     assert.strictEqual(conversation?.last_turn_at, generatedAt);
   }),
 );
+
+it.effect("preserves durable project-conversation message and activity identities", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectThreadDetail({
+      api_version: "v1",
+      schema_version: 1,
+      project_id: "jarvis",
+      thread: {
+        thread_id: "thread_durable",
+        project_id: "jarvis",
+        session_id: "project:jarvis:orchestrator:thread_durable",
+        title: "Durable project conversation",
+        created_at: generatedAt,
+        updated_at: generatedAt,
+        messages: [
+          {
+            event_id: "event-tool-result",
+            message_id: "message-tool-result",
+            call_id: "call-1",
+            correlation_id: "correlation-1",
+            sequence: 42,
+            role: "assistant",
+            content: "repository search",
+            observed_at: generatedAt,
+            type: "tool.result",
+          },
+        ],
+      },
+    });
+
+    assert.deepStrictEqual(parsed.thread.messages[0], {
+      event_id: "event-tool-result",
+      message_id: "message-tool-result",
+      call_id: "call-1",
+      correlation_id: "correlation-1",
+      sequence: 42,
+      role: "assistant",
+      content: "repository search",
+      observed_at: generatedAt,
+      type: "tool.result",
+    });
+  }),
+);
