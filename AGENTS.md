@@ -2,9 +2,9 @@
 
 ## Task Completion Requirements
 
-- `vp check` and `vp run typecheck` must pass before considering tasks completed.
-  - If changing native mobile code, `vp run lint:mobile` must also pass.
-- Use `vp test` for the built-in Vite+ test command and `vp run test` when you specifically need the `test` package script.
+- `pnpm exec vp check` and `pnpm exec vp run typecheck` must pass before considering tasks completed.
+  - If changing native mobile code, `pnpm exec vp run lint:mobile` must also pass.
+- Use `pnpm exec vp test` for the built-in Vite+ test command and `pnpm exec vp run test` when you specifically need the `test` package script.
 
 ## Local Development
 

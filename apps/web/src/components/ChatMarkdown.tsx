@@ -19,11 +19,9 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import React, {
   Children,
-  Suspense,
   type ClipboardEvent as ReactClipboardEvent,
   type MouseEvent as ReactMouseEvent,
   isValidElement,
-  use,
   useCallback,
   memo,
   useEffect,
@@ -83,27 +81,6 @@ import {
   BrowserPreviewUnavailableError,
 } from "../browser/openFileInPreview";
 
-class CodeHighlightErrorBoundary extends React.Component<
-  { fallback: ReactNode; children: ReactNode },
-  { hasError: boolean }
-> {
-  constructor(props: { fallback: ReactNode; children: ReactNode }) {
-    super(props);
-    this.state = { hasError: false };
-  }
-
-  static getDerivedStateFromError() {
-    return { hasError: true };
-  }
-
-  override render() {
-    if (this.state.hasError) {
-      return this.props.fallback;
-    }
-    return this.props.children;
-  }
-}
-
 interface ChatMarkdownProps {
   text: string;
   cwd: string | undefined;
@@ -139,7 +116,12 @@ const highlightedCodeCache = new LRUCache<string>(
   MAX_HIGHLIGHT_CACHE_ENTRIES,
   MAX_HIGHLIGHT_CACHE_MEMORY_BYTES,
 );
-const highlighterPromiseCache = new Map<string, Promise<DiffsHighlighter>>();
+interface ResolvedHighlighter {
+  readonly highlighter: DiffsHighlighter;
+  readonly language: string;
+}
+
+const highlighterPromiseCache = new Map<string, Promise<ResolvedHighlighter>>();
 
 function findTaskListMarkerOffset(markdown: string, listItemStart: number): number | null {
   const firstLineEnd = markdown.indexOf("\n", listItemStart);
@@ -272,7 +254,7 @@ function estimateHighlightedSize(html: string, code: string): number {
   return Math.max(html.length * 2, code.length * 3);
 }
 
-function getHighlighterPromise(language: string): Promise<DiffsHighlighter> {
+function getHighlighterPromise(language: string): Promise<ResolvedHighlighter> {
   const cached = highlighterPromiseCache.get(language);
   if (cached) return cached;
 
@@ -280,15 +262,17 @@ function getHighlighterPromise(language: string): Promise<DiffsHighlighter> {
     themes: [resolveDiffThemeName("dark"), resolveDiffThemeName("light")],
     langs: [language as SupportedLanguages],
     preferredHighlighter: "shiki-js",
-  }).catch((err) => {
-    highlighterPromiseCache.delete(language);
-    if (language === "text") {
-      // "text" itself failed — Shiki cannot initialize at all, surface the error
-      throw err;
-    }
-    // Language not supported by Shiki — fall back to "text"
-    return getHighlighterPromise("text");
-  });
+  })
+    .then((highlighter) => ({ highlighter, language }))
+    .catch((err) => {
+      highlighterPromiseCache.delete(language);
+      if (language === "text") {
+        // "text" itself failed — Shiki cannot initialize at all, surface the error
+        throw err;
+      }
+      // Language not supported by Shiki — fall back to "text".
+      return getHighlighterPromise("text");
+    });
   highlighterPromiseCache.set(language, promise);
   return promise;
 }
@@ -630,82 +614,67 @@ function MarkdownCodeBlock({
   );
 }
 
-interface SuspenseShikiCodeBlockProps {
+interface AsyncShikiCodeBlockProps {
   className: string | undefined;
   code: string;
   themeName: DiffThemeName;
   isStreaming: boolean;
 }
 
-function SuspenseShikiCodeBlock({
+function AsyncShikiCodeBlock({
   className,
   code,
   themeName,
   isStreaming,
-}: SuspenseShikiCodeBlockProps) {
+}: AsyncShikiCodeBlockProps) {
   const language = extractFenceLanguage(className);
   const cacheKey = createHighlightCacheKey(code, language, themeName);
   const cachedHighlightedHtml = !isStreaming ? highlightedCodeCache.get(cacheKey) : null;
-
-  if (cachedHighlightedHtml != null) {
-    return (
-      <div
-        className="chat-markdown-shiki"
-        dangerouslySetInnerHTML={{ __html: cachedHighlightedHtml }}
-      />
-    );
-  }
-
-  return (
-    <UncachedShikiCodeBlock
-      code={code}
-      language={language}
-      themeName={themeName}
-      cacheKey={cacheKey}
-      isStreaming={isStreaming}
-    />
-  );
-}
-
-interface UncachedShikiCodeBlockProps {
-  code: string;
-  language: string;
-  themeName: DiffThemeName;
-  cacheKey: string;
-  isStreaming: boolean;
-}
-
-function UncachedShikiCodeBlock({
-  code,
-  language,
-  themeName,
-  cacheKey,
-  isStreaming,
-}: UncachedShikiCodeBlockProps) {
-  const highlighter = use(getHighlighterPromise(language));
-  const highlightedHtml = useMemo(() => {
-    try {
-      return highlighter.codeToHtml(code, { lang: language, theme: themeName });
-    } catch (error) {
-      // Log highlighting failures for debugging while falling back to plain text
-      console.warn(
-        `Code highlighting failed for language "${language}", falling back to plain text.`,
-        error instanceof Error ? error.message : error,
-      );
-      // If highlighting fails for this language, render as plain text
-      return highlighter.codeToHtml(code, { lang: "text", theme: themeName });
-    }
-  }, [code, highlighter, language, themeName]);
+  const [highlightedHtml, setHighlightedHtml] = useState<string | null>(cachedHighlightedHtml);
 
   useEffect(() => {
-    if (!isStreaming) {
-      highlightedCodeCache.set(
-        cacheKey,
-        highlightedHtml,
-        estimateHighlightedSize(highlightedHtml, code),
-      );
+    const cached = !isStreaming ? highlightedCodeCache.get(cacheKey) : null;
+    if (cached != null) {
+      setHighlightedHtml(cached);
+      return;
     }
-  }, [cacheKey, code, highlightedHtml, isStreaming]);
+
+    let cancelled = false;
+    setHighlightedHtml(null);
+    void getHighlighterPromise(language)
+      .then(({ highlighter, language: resolvedLanguage }) => {
+        let html: string;
+        try {
+          html = highlighter.codeToHtml(code, { lang: resolvedLanguage, theme: themeName });
+        } catch (error) {
+          console.warn(
+            `Code highlighting failed for language "${resolvedLanguage}", falling back to plain text.`,
+            error instanceof Error ? error.message : error,
+          );
+          html = highlighter.codeToHtml(code, { lang: "text", theme: themeName });
+        }
+        if (cancelled) return;
+        if (!isStreaming) {
+          highlightedCodeCache.set(cacheKey, html, estimateHighlightedSize(html, code));
+        }
+        setHighlightedHtml(html);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          console.warn(
+            "Code highlighting could not initialize; rendering plain text.",
+            error instanceof Error ? error.message : error,
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cacheKey, code, isStreaming, language, themeName]);
+
+  if (highlightedHtml === null) {
+    return <pre className="chat-markdown-shiki">{code}</pre>;
+  }
 
   return (
     <div className="chat-markdown-shiki" dangerouslySetInnerHTML={{ __html: highlightedHtml }} />
@@ -1505,16 +1474,12 @@ function ChatMarkdown({
             fenceTitle={fenceTitle}
             theme={resolvedTheme}
           >
-            <CodeHighlightErrorBoundary fallback={<pre {...props}>{children}</pre>}>
-              <Suspense fallback={<pre {...props}>{children}</pre>}>
-                <SuspenseShikiCodeBlock
-                  className={codeBlock.className}
-                  code={codeBlock.code}
-                  themeName={diffThemeName}
-                  isStreaming={isStreaming}
-                />
-              </Suspense>
-            </CodeHighlightErrorBoundary>
+            <AsyncShikiCodeBlock
+              className={codeBlock.className}
+              code={codeBlock.code}
+              themeName={diffThemeName}
+              isStreaming={isStreaming}
+            />
           </MarkdownCodeBlock>
         );
       },
