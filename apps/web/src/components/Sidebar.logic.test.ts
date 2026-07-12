@@ -84,22 +84,8 @@ describe("resolveSidebarStageBadgeLabel", () => {
 });
 
 describe("resolveSidebarSurfaceCopy", () => {
-  it("uses project/thread vocabulary for the default app surface", () => {
-    const copy = resolveSidebarSurfaceCopy({ isJarvisCockpitMode: false });
-
-    expect(copy.topLevelLabel).toBe("Projects");
-    expect(copy.topLevelSortLabel).toBe("Sort projects");
-    expect(copy.childSortLabel).toBe("Sort threads");
-    expect(copy.visibleChildLabel).toBe("Visible threads");
-    expect(copy.emptyTopLevelLabel).toBe("No projects yet");
-    expect(copy.emptyChildLabel).toBe("No threads yet");
-    expect(copy.groupedTopLevelCountLabel(2)).toBe("2 projects");
-    expect(copy.createChildActionLabel("App")).toBe("Create new thread in App");
-    expect(copy.createChildTooltipLabel("Mod+N")).toBe("New thread (Mod+N)");
-  });
-
-  it("uses project-first work vocabulary for Jarvis cockpit mode", () => {
-    const copy = resolveSidebarSurfaceCopy({ isJarvisCockpitMode: true });
+  it("uses project-first Jarvis work vocabulary", () => {
+    const copy = resolveSidebarSurfaceCopy();
 
     expect(copy.topLevelLabel).toBe("Projects");
     expect(copy.topLevelSortLabel).toBe("Sort projects");
@@ -200,7 +186,7 @@ describe("buildJarvisProjectFirstSidebarProjects", () => {
     ]);
     expect(projects[0]?.workspaceRoot).toBe(jarvisRegistryProjectWorkspaceRoot("jarvis"));
     expect(projects[1]?.sidebarBadges).toEqual(["Stale"]);
-    expect(projects[2]?.sidebarBadges).toEqual(["Recent work"]);
+    expect(projects[2]?.sidebarBadges).toEqual(["Unassigned"]);
   });
 
   it("does not expose projected work artifacts when the registry is unavailable", () => {

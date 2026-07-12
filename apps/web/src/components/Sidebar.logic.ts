@@ -33,39 +33,20 @@ export interface SidebarSurfaceCopy {
   createChildErrorTitle: string;
 }
 
-export function resolveSidebarSurfaceCopy(input: {
-  isJarvisCockpitMode: boolean;
-}): SidebarSurfaceCopy {
-  if (input.isJarvisCockpitMode) {
-    return {
-      topLevelLabel: "Projects",
-      topLevelSortLabel: "Sort projects",
-      childLabel: "conversations and work",
-      childSortLabel: "Sort work",
-      visibleChildLabel: "Visible work sessions",
-      emptyTopLevelLabel: "No Jarvis projects yet",
-      emptyChildLabel: "No work sessions yet",
-      groupedTopLevelCountLabel: (count) => `${count} projects`,
-      createChildActionLabel: (topLevelName) => `Start work in ${topLevelName}`,
-      createChildTooltipLabel: (shortcutLabel) =>
-        shortcutLabel ? `Start work (${shortcutLabel})` : "Start work",
-      createChildErrorTitle: "Could not start work",
-    };
-  }
-
+export function resolveSidebarSurfaceCopy(): SidebarSurfaceCopy {
   return {
     topLevelLabel: "Projects",
     topLevelSortLabel: "Sort projects",
-    childLabel: "threads",
-    childSortLabel: "Sort threads",
-    visibleChildLabel: "Visible threads",
-    emptyTopLevelLabel: "No projects yet",
-    emptyChildLabel: "No threads yet",
+    childLabel: "conversations and work",
+    childSortLabel: "Sort work",
+    visibleChildLabel: "Visible work sessions",
+    emptyTopLevelLabel: "No Jarvis projects yet",
+    emptyChildLabel: "No work sessions yet",
     groupedTopLevelCountLabel: (count) => `${count} projects`,
-    createChildActionLabel: (topLevelName) => `Create new thread in ${topLevelName}`,
+    createChildActionLabel: (topLevelName) => `Start work in ${topLevelName}`,
     createChildTooltipLabel: (shortcutLabel) =>
-      shortcutLabel ? `New thread (${shortcutLabel})` : "New thread",
-    createChildErrorTitle: "Could not create thread",
+      shortcutLabel ? `Start work (${shortcutLabel})` : "Start work",
+    createChildErrorTitle: "Could not start work",
   };
 }
 
@@ -83,7 +64,7 @@ export interface SidebarProjectView extends SidebarProjectSnapshot {
   jarvisRegistryProjectId: string | null;
   // For a "jarvis-work-artifact" project (a dispatched run), the registry project its work is
   // linked to (from the run/session project_id carried on thread shells). Null when the work is
-  // not linked to a known registry project — such work stays in the standalone "Recent work"
+  // not linked to a known registry project — such work stays in the standalone "Unassigned work"
   // section instead of nesting under a project. Always null for registry/default projects.
   linkedRegistryProjectId: string | null;
   sidebarBadges: readonly string[];
@@ -173,7 +154,7 @@ export function markSidebarProjectsWithSourceKind(
       sidebarSourceKind: sourceKind,
       jarvisRegistryProjectId: null,
       linkedRegistryProjectId,
-      sidebarBadges: sourceKind === "jarvis-work-artifact" ? ["Recent work"] : [],
+      sidebarBadges: sourceKind === "jarvis-work-artifact" ? ["Unassigned"] : [],
     };
   });
 }
@@ -203,7 +184,7 @@ export function buildJarvisProjectFirstSidebarProjects(input: {
     }),
   );
   // Only nest work under a registry project that actually exists in this snapshot; work linked to
-  // an unknown/absent registry project falls back to the standalone "Recent work" section.
+  // an unknown/absent registry project falls back to the standalone "Unassigned work" section.
   const knownRegistryProjectIds = new Set(input.registryProjects.map((project) => project.id));
   const resolveWorkRegistryLink = input.resolveWorkRegistryLink;
   const resolveKnownLink = resolveWorkRegistryLink
