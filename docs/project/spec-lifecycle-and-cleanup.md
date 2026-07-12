@@ -1,5 +1,8 @@
 # Spec: Lifecycle & Cleanup — Archive, Delete, and Worktree/State Reclamation
 
+> Historical design note. The normative conversation lifecycle direction is
+> [`universal-durable-agent-conversations-spec.md`](./universal-durable-agent-conversations-spec.md).
+
 Status: proposed. Owner: Jarvis (roughcoder/jarvis) with cockpit rendering.
 Audience: implementer picking this up cold. Date: 2026-07-07.
 Related: `conversation-workspace-model.md`, `repo-access-and-provisioning.md`,

@@ -1,5 +1,8 @@
 # Design Note: Repo Access And Worker Provisioning
 
+> Historical design note. The normative conversation/workspace direction is
+> [`universal-durable-agent-conversations-spec.md`](./universal-durable-agent-conversations-spec.md).
+
 Date: 2026-07-06
 
 Status: agreed direction (Neil + coordinator discussion); Jarvis-side work not yet specced in

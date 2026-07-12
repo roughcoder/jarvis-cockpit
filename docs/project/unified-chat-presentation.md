@@ -1,5 +1,8 @@
 # Unified Chat Presentation
 
+> Superseded. The normative single-runtime and single-presentation direction is
+> [`universal-durable-agent-conversations-spec.md`](./universal-durable-agent-conversations-spec.md).
+
 Cockpit has two backend conversation contracts but one visual language:
 
 - code-agent threads are adapted by `ChatView` and `MessagesTimeline`;
