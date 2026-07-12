@@ -13,8 +13,26 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 
+import { THREAD_DETAIL_RETENTION } from "./retention.ts";
+
+export interface ThreadTruncation {
+  /** Number of older entries omitted from each locally retained collection. */
+  readonly messages?: number;
+  readonly proposedPlans?: number;
+  readonly checkpoints?: number;
+  readonly activities?: number;
+}
+
+/**
+ * Client-only retention metadata. It is omitted until a window overflows, so
+ * short threads retain the exact state shape received from the server.
+ */
+export type WindowedOrchestrationThread = OrchestrationThread & {
+  readonly truncation?: ThreadTruncation;
+};
+
 export type ThreadDetailReducerResult =
-  | { readonly kind: "updated"; readonly thread: OrchestrationThread }
+  | { readonly kind: "updated"; readonly thread: WindowedOrchestrationThread }
   | { readonly kind: "deleted" }
   | { readonly kind: "unchanged" };
 
@@ -45,7 +63,7 @@ const activityOrder = O.combineAll<OrchestrationThreadActivity>([
  * scoped fields like `environmentId`) is the caller's responsibility.
  */
 export function applyThreadDetailEvent(
-  thread: OrchestrationThread,
+  thread: WindowedOrchestrationThread,
   event: OrchestrationEvent,
 ): ThreadDetailReducerResult {
   switch (event.type) {
@@ -193,7 +211,7 @@ export function applyThreadDetailEvent(
       };
 
       const existingMessage = thread.messages.find((entry) => entry.id === message.id);
-      const messages = existingMessage
+      const nextMessages = existingMessage
         ? Arr.map(thread.messages, (entry) =>
             entry.id !== message.id
               ? entry
@@ -213,6 +231,11 @@ export function applyThreadDetailEvent(
                 },
           )
         : Arr.append(thread.messages, message);
+      const { entries: messages, truncation } = windowThreadCollection(
+        thread,
+        "messages",
+        nextMessages,
+      );
       // Update latestTurn for assistant messages bound to a turn. A completed
       // assistant message only settles the turn once the session is no longer
       // running it — providers may emit several assistant messages per turn
@@ -268,6 +291,7 @@ export function applyThreadDetailEvent(
         thread: {
           ...thread,
           messages,
+          ...(truncation === undefined ? {} : { truncation }),
           checkpoints,
           latestTurn,
           updatedAt: event.occurredAt,
@@ -344,16 +368,26 @@ export function applyThreadDetailEvent(
     case "thread.proposed-plan-upserted": {
       const proposedPlan = event.payload.proposedPlan;
 
-      const proposedPlans = pipe(
+      const nextProposedPlans = pipe(
         thread.proposedPlans,
         Arr.filter((entry) => entry.id !== proposedPlan.id),
         Arr.append(proposedPlan),
         Arr.sort(proposedPlanOrder),
       );
+      const { entries: proposedPlans, truncation } = windowThreadCollection(
+        thread,
+        "proposedPlans",
+        nextProposedPlans,
+      );
 
       return {
         kind: "updated",
-        thread: { ...thread, proposedPlans, updatedAt: event.occurredAt },
+        thread: {
+          ...thread,
+          proposedPlans,
+          ...(truncation === undefined ? {} : { truncation }),
+          updatedAt: event.occurredAt,
+        },
       };
     }
 
@@ -375,11 +409,16 @@ export function applyThreadDetailEvent(
         return { kind: "unchanged" };
       }
 
-      const checkpoints = pipe(
+      const nextCheckpoints = pipe(
         thread.checkpoints,
         Arr.filter((entry) => entry.turnId !== checkpoint.turnId),
         Arr.append(checkpoint),
         Arr.sort(checkpointOrder),
+      );
+      const { entries: checkpoints, truncation } = windowThreadCollection(
+        thread,
+        "checkpoints",
+        nextCheckpoints,
       );
 
       // Mid-turn diff updates produce placeholder checkpoints; record the
@@ -402,7 +441,13 @@ export function applyThreadDetailEvent(
 
       return {
         kind: "updated",
-        thread: { ...thread, checkpoints, latestTurn, updatedAt: event.occurredAt },
+        thread: {
+          ...thread,
+          checkpoints,
+          ...(truncation === undefined ? {} : { truncation }),
+          latestTurn,
+          updatedAt: event.occurredAt,
+        },
       };
     }
 
@@ -424,9 +469,14 @@ export function applyThreadDetailEvent(
         thread.proposedPlans,
         Arr.filter((plan) => plan.turnId === null || retainedTurnIds.has(plan.turnId)),
       );
-      const activities = pipe(
+      const nextActivities = pipe(
         thread.activities,
         Arr.filter((activity) => activity.turnId === null || retainedTurnIds.has(activity.turnId)),
+      );
+      const { entries: activities, truncation } = windowThreadCollection(
+        thread,
+        "activities",
+        nextActivities,
       );
       const latestCheckpoint = checkpoints.at(-1) ?? null;
 
@@ -438,6 +488,7 @@ export function applyThreadDetailEvent(
           messages,
           proposedPlans,
           activities,
+          ...(truncation === undefined ? {} : { truncation }),
           latestTurn:
             latestCheckpoint === null
               ? null
@@ -458,16 +509,26 @@ export function applyThreadDetailEvent(
 
     // ── Activities ──────────────────────────────────────────────────
     case "thread.activity-appended": {
-      const activities = pipe(
+      const nextActivities = pipe(
         thread.activities,
         Arr.filter((activity) => activity.id !== event.payload.activity.id),
         Arr.append(event.payload.activity),
         Arr.sort(activityOrder),
       );
+      const { entries: activities, truncation } = windowThreadCollection(
+        thread,
+        "activities",
+        nextActivities,
+      );
 
       return {
         kind: "updated",
-        thread: { ...thread, activities, updatedAt: event.occurredAt },
+        thread: {
+          ...thread,
+          activities,
+          ...(truncation === undefined ? {} : { truncation }),
+          updatedAt: event.occurredAt,
+        },
       };
     }
 
@@ -480,6 +541,40 @@ export function applyThreadDetailEvent(
 
   // Forward-compatible: ignore unrecognized event types.
   return { kind: "unchanged" };
+}
+
+/** Apply all client retention windows to an incoming cache record or snapshot. */
+export function windowThreadDetail(
+  thread: WindowedOrchestrationThread,
+): WindowedOrchestrationThread {
+  const messages = trimFromFront(thread.messages, THREAD_DETAIL_RETENTION.messages);
+  const proposedPlans = trimFromFront(thread.proposedPlans, THREAD_DETAIL_RETENTION.proposedPlans);
+  const checkpoints = trimFromFront(thread.checkpoints, THREAD_DETAIL_RETENTION.checkpoints);
+  const activities = trimFromFront(thread.activities, THREAD_DETAIL_RETENTION.activities);
+  const truncation = mergeTruncation(thread.truncation, {
+    messages: messages.dropped,
+    proposedPlans: proposedPlans.dropped,
+    checkpoints: checkpoints.dropped,
+    activities: activities.dropped,
+  });
+
+  if (
+    messages.dropped === 0 &&
+    proposedPlans.dropped === 0 &&
+    checkpoints.dropped === 0 &&
+    activities.dropped === 0
+  ) {
+    return thread;
+  }
+
+  return {
+    ...thread,
+    messages: messages.entries,
+    proposedPlans: proposedPlans.entries,
+    checkpoints: checkpoints.entries,
+    activities: activities.entries,
+    ...(truncation === undefined ? {} : { truncation }),
+  };
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -545,4 +640,44 @@ function retainMessagesAfterRevert(
     }
     return retainedTurnIds.has(message.turnId);
   });
+}
+
+type WindowedCollection = keyof typeof THREAD_DETAIL_RETENTION;
+
+function windowThreadCollection<T>(
+  thread: WindowedOrchestrationThread,
+  collection: WindowedCollection,
+  entries: ReadonlyArray<T>,
+): { readonly entries: ReadonlyArray<T>; readonly truncation: ThreadTruncation | undefined } {
+  const trimmed = trimFromFront(entries, THREAD_DETAIL_RETENTION[collection]);
+  return {
+    entries: trimmed.entries,
+    truncation: mergeTruncation(thread.truncation, { [collection]: trimmed.dropped }),
+  };
+}
+
+function trimFromFront<T>(
+  entries: ReadonlyArray<T>,
+  maximum: number,
+): { readonly entries: ReadonlyArray<T>; readonly dropped: number } {
+  const dropped = Math.max(0, entries.length - maximum);
+  return dropped === 0 ? { entries, dropped } : { entries: entries.slice(dropped), dropped };
+}
+
+function mergeTruncation(
+  existing: ThreadTruncation | undefined,
+  additional: ThreadTruncation,
+): ThreadTruncation | undefined {
+  const messages = (existing?.messages ?? 0) + (additional.messages ?? 0);
+  const proposedPlans = (existing?.proposedPlans ?? 0) + (additional.proposedPlans ?? 0);
+  const checkpoints = (existing?.checkpoints ?? 0) + (additional.checkpoints ?? 0);
+  const activities = (existing?.activities ?? 0) + (additional.activities ?? 0);
+  return messages === 0 && proposedPlans === 0 && checkpoints === 0 && activities === 0
+    ? undefined
+    : {
+        ...(messages === 0 ? {} : { messages }),
+        ...(proposedPlans === 0 ? {} : { proposedPlans }),
+        ...(checkpoints === 0 ? {} : { checkpoints }),
+        ...(activities === 0 ? {} : { activities }),
+      };
 }
