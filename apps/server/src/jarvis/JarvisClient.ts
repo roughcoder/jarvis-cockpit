@@ -281,6 +281,17 @@ export interface JarvisCockpitEvent {
   readonly cursor: string | undefined;
   readonly payload: unknown;
   readonly authoritative: boolean;
+  /** True when the SSE data field could not be parsed as a JSON envelope. */
+  readonly malformed?: boolean | undefined;
+  readonly occurred_at?: string | undefined;
+  readonly run_id?: string | undefined;
+  readonly session_ref?: string | undefined;
+  readonly worker_id?: string | undefined;
+  readonly artifact_id?: string | undefined;
+  readonly request_id?: string | undefined;
+  readonly checkpoint_id?: string | undefined;
+  readonly project_id?: string | undefined;
+  readonly thread_id?: string | undefined;
 }
 
 export class JarvisClientService extends Context.Service<JarvisClientService, JarvisClient>()(
@@ -672,11 +683,31 @@ export async function* parseJarvisCockpitSse(
     }
     const envelope = isRecord(decoded) ? decoded : undefined;
     const type = typeof envelope?.type === "string" ? envelope.type : eventType;
-    const event = {
+    const stringField = (field: string): string | undefined =>
+      typeof envelope?.[field] === "string" ? envelope[field] : undefined;
+    const event: JarvisCockpitEvent = {
       type,
       cursor: typeof envelope?.cursor === "string" ? envelope.cursor : cursor,
       payload: envelope?.payload ?? decoded,
       authoritative: type === "snapshot" || eventType === "snapshot",
+      malformed: decoded === undefined,
+      ...(stringField("occurred_at") !== undefined
+        ? { occurred_at: stringField("occurred_at") }
+        : {}),
+      ...(stringField("run_id") !== undefined ? { run_id: stringField("run_id") } : {}),
+      ...(stringField("session_ref") !== undefined
+        ? { session_ref: stringField("session_ref") }
+        : {}),
+      ...(stringField("worker_id") !== undefined ? { worker_id: stringField("worker_id") } : {}),
+      ...(stringField("artifact_id") !== undefined
+        ? { artifact_id: stringField("artifact_id") }
+        : {}),
+      ...(stringField("request_id") !== undefined ? { request_id: stringField("request_id") } : {}),
+      ...(stringField("checkpoint_id") !== undefined
+        ? { checkpoint_id: stringField("checkpoint_id") }
+        : {}),
+      ...(stringField("project_id") !== undefined ? { project_id: stringField("project_id") } : {}),
+      ...(stringField("thread_id") !== undefined ? { thread_id: stringField("thread_id") } : {}),
     };
     eventType = "message";
     cursor = undefined;
