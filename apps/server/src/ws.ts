@@ -111,6 +111,11 @@ import {
   resolveJarvisBrainConnection,
   type JarvisClient,
 } from "./jarvis/JarvisClient.ts";
+import {
+  debounceJarvisChanges,
+  makeJarvisEventsHub,
+  type JarvisEventsHub,
+} from "./jarvis/JarvisEvents.ts";
 import { makeJarvisOAuthAccessToken } from "./jarvis/JarvisOAuth.ts";
 import { dispatchJarvisCommand } from "./jarvis/JarvisDispatch.ts";
 import {
@@ -149,61 +154,115 @@ const JARVIS_COCKPIT_POLL_INTERVAL = Duration.seconds(
     ? configuredJarvisCockpitPollIntervalSeconds
     : DEFAULT_JARVIS_COCKPIT_POLL_INTERVAL_SECONDS,
 );
+const JARVIS_SSE_RECONCILIATION_INTERVAL = Duration.seconds(30);
 
-function jarvisShellPollingStream(
-  jarvisClient: JarvisClient,
-): Stream.Stream<OrchestrationShellStreamItem> {
-  return Stream.fromSchedule(Schedule.spaced(JARVIS_COCKPIT_POLL_INTERVAL)).pipe(
+function streamFromOption<A>(option: Option.Option<A>): Stream.Stream<A> {
+  return Option.isSome(option) ? Stream.succeed(option.value) : Stream.empty;
+}
+
+function jarvisFallbackOrReconciliationStream<A>(
+  jarvisEvents: JarvisEventsHub,
+  activeWhenLive: boolean,
+  interval: Duration.Duration,
+  refresh: () => Effect.Effect<Option.Option<A>, never>,
+): Stream.Stream<A> {
+  return Stream.fromSchedule(Schedule.spaced(interval)).pipe(
     Stream.mapEffect(() =>
-      loadJarvisShellSnapshot(jarvisClient).pipe(
-        Effect.map((snapshot) => {
-          const item: OrchestrationShellStreamItem = {
-            kind: "snapshot" as const,
-            snapshot,
-          };
-          return Option.some(item);
-        }),
-        Effect.tapError((cause) =>
-          Effect.logWarning("Jarvis shell poll failed", {
-            cause,
-          }),
+      jarvisEvents.isLive.pipe(
+        Effect.flatMap((isLive) =>
+          isLive === activeWhenLive ? refresh() : Effect.succeed(Option.none<A>()),
         ),
-        Effect.orElseSucceed(() => Option.none<OrchestrationShellStreamItem>()),
       ),
     ),
     Stream.flatMap((event) => (Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty)),
   );
 }
 
-function jarvisThreadPollingStream(
+function jarvisShellPollingStream(
   jarvisClient: JarvisClient,
-  threadId: ThreadId,
-): Stream.Stream<OrchestrationThreadStreamItem> {
-  return Stream.fromSchedule(Schedule.spaced(JARVIS_COCKPIT_POLL_INTERVAL)).pipe(
-    Stream.mapEffect(() =>
-      loadJarvisThreadDetail(jarvisClient, threadId).pipe(
-        Effect.map((thread) =>
-          Option.map(
-            thread,
-            (value): OrchestrationThreadStreamItem => ({
-              kind: "snapshot" as const,
-              snapshot: {
-                snapshotSequence: 0,
-                thread: value,
-              },
-            }),
-          ),
-        ),
-        Effect.tapError((cause) =>
-          Effect.logWarning("Jarvis thread poll failed", {
-            cause,
-            threadId,
-          }),
-        ),
-        Effect.orElseSucceed(() => Option.none<OrchestrationThreadStreamItem>()),
+  jarvisEvents: JarvisEventsHub,
+): Stream.Stream<OrchestrationShellStreamItem> {
+  const refresh = () =>
+    loadJarvisShellSnapshot(jarvisClient).pipe(
+      Effect.map((snapshot) => {
+        const item: OrchestrationShellStreamItem = {
+          kind: "snapshot" as const,
+          snapshot,
+        };
+        return Option.some(item);
+      }),
+      Effect.tapError((cause) =>
+        Effect.logWarning("Jarvis shell poll failed", {
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => Option.none<OrchestrationShellStreamItem>()),
+    );
+  return Stream.merge(
+    jarvisEvents.changes.pipe(Stream.mapEffect(refresh), Stream.flatMap(streamFromOption)),
+    Stream.merge(
+      jarvisFallbackOrReconciliationStream(
+        jarvisEvents,
+        true,
+        JARVIS_SSE_RECONCILIATION_INTERVAL,
+        refresh,
+      ),
+      jarvisFallbackOrReconciliationStream(
+        jarvisEvents,
+        false,
+        JARVIS_COCKPIT_POLL_INTERVAL,
+        refresh,
       ),
     ),
-    Stream.flatMap((event) => (Option.isSome(event) ? Stream.succeed(event.value) : Stream.empty)),
+  );
+}
+
+function jarvisThreadPollingStream(
+  jarvisClient: JarvisClient,
+  jarvisEvents: JarvisEventsHub,
+  threadId: ThreadId,
+): Stream.Stream<OrchestrationThreadStreamItem> {
+  const refresh = () =>
+    loadJarvisThreadDetail(jarvisClient, threadId).pipe(
+      Effect.map((thread) =>
+        Option.map(
+          thread,
+          (value): OrchestrationThreadStreamItem => ({
+            kind: "snapshot" as const,
+            snapshot: {
+              snapshotSequence: 0,
+              thread: value,
+            },
+          }),
+        ),
+      ),
+      Effect.tapError((cause) =>
+        Effect.logWarning("Jarvis thread poll failed", {
+          cause,
+          threadId,
+        }),
+      ),
+      Effect.orElseSucceed(() => Option.none<OrchestrationThreadStreamItem>()),
+    );
+  return Stream.merge(
+    debounceJarvisChanges(jarvisEvents.changes).pipe(
+      Stream.mapEffect(refresh),
+      Stream.flatMap(streamFromOption),
+    ),
+    Stream.merge(
+      jarvisFallbackOrReconciliationStream(
+        jarvisEvents,
+        true,
+        JARVIS_SSE_RECONCILIATION_INTERVAL,
+        refresh,
+      ),
+      jarvisFallbackOrReconciliationStream(
+        jarvisEvents,
+        false,
+        JARVIS_COCKPIT_POLL_INTERVAL,
+        refresh,
+      ),
+    ),
   );
 }
 
@@ -254,6 +313,7 @@ function projectThreadStreamItems(
 
 function jarvisProjectThreadPollingStream(
   jarvisClient: JarvisClient,
+  jarvisEvents: JarvisEventsHub,
   projectId: string,
   threadId: string,
   initialThread: JarvisProjectThreadDetail,
@@ -261,8 +321,8 @@ function jarvisProjectThreadPollingStream(
   return Stream.unwrap(
     Ref.make(initialThread).pipe(
       Effect.map((previousThread) =>
-        Stream.fromSchedule(Schedule.spaced(JARVIS_COCKPIT_POLL_INTERVAL)).pipe(
-          Stream.mapEffect(() =>
+        (() => {
+          const refresh = () =>
             jarvisClient.getProjectThread(projectId, threadId).pipe(
               Effect.flatMap((nextThread) =>
                 Ref.getAndSet(previousThread, nextThread).pipe(
@@ -277,10 +337,30 @@ function jarvisProjectThreadPollingStream(
                 }),
               ),
               Effect.orElseSucceed(() => [] as ReadonlyArray<JarvisProjectThreadStreamItem>),
+            );
+          const flatten = (items: ReadonlyArray<JarvisProjectThreadStreamItem>) =>
+            items.length > 0 ? Stream.fromIterable(items) : Stream.empty;
+          return Stream.merge(
+            debounceJarvisChanges(jarvisEvents.changes).pipe(
+              Stream.mapEffect(refresh),
+              Stream.flatMap(flatten),
             ),
-          ),
-          Stream.flatMap(Stream.fromIterable),
-        ),
+            Stream.merge(
+              jarvisFallbackOrReconciliationStream(
+                jarvisEvents,
+                true,
+                JARVIS_SSE_RECONCILIATION_INTERVAL,
+                () => refresh().pipe(Effect.map(Option.some)),
+              ).pipe(Stream.flatMap(flatten)),
+              jarvisFallbackOrReconciliationStream(
+                jarvisEvents,
+                false,
+                JARVIS_COCKPIT_POLL_INTERVAL,
+                () => refresh().pipe(Effect.map(Option.some)),
+              ).pipe(Stream.flatMap(flatten)),
+            ),
+          );
+        })(),
       ),
     ),
   );
@@ -591,6 +671,7 @@ function toAuthAccessStreamEvent(
 const makeWsRpcLayer = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  jarvisEvents: JarvisEventsHub,
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -1325,7 +1406,7 @@ const makeWsRpcLayer = (
                   );
 
               const liveStream = useJarvisCockpitReads
-                ? jarvisShellPollingStream(jarvisClient)
+                ? jarvisShellPollingStream(jarvisClient, jarvisEvents)
                 : orchestrationEngine.streamDomainEvents.pipe(
                     Stream.mapEffect(toShellStreamEvent),
                     Stream.flatMap((event) =>
@@ -1426,7 +1507,7 @@ const makeWsRpcLayer = (
               }
 
               const liveStream = useJarvisCockpitReads
-                ? jarvisThreadPollingStream(jarvisClient, input.threadId)
+                ? jarvisThreadPollingStream(jarvisClient, jarvisEvents, input.threadId)
                 : orchestrationEngine.streamDomainEvents.pipe(
                     Stream.filter(
                       (event) =>
@@ -1808,7 +1889,13 @@ const makeWsRpcLayer = (
               Effect.map((thread) =>
                 Stream.concat(
                   Stream.make({ kind: "snapshot" as const, thread }),
-                  jarvisProjectThreadPollingStream(jarvisClient, projectId, threadId, thread),
+                  jarvisProjectThreadPollingStream(
+                    jarvisClient,
+                    jarvisEvents,
+                    projectId,
+                    threadId,
+                    thread,
+                  ),
                 ),
               ),
               Effect.mapError(
@@ -2893,6 +2980,30 @@ function formatJarvisProjectTurnFailure(error: unknown): string {
 export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+    const config = yield* ServerConfig.ServerConfig;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
+    const secretStore = yield* ServerSecretStore.ServerSecretStore;
+    const jarvisOAuthAccessToken = (operation: string) =>
+      makeJarvisOAuthAccessToken({ config, secrets: secretStore }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new JarvisClientError({
+              operation,
+              message: "Failed to issue Jarvis OAuth access token.",
+              cause,
+            }),
+        ),
+      );
+    const jarvisEventsClient = makeJarvisClient({
+      ...config,
+      getSettings: serverSettings.getSettings,
+      oauthAccessToken: jarvisOAuthAccessToken,
+    });
+    // A route-layer hub is shared by every WebSocket client and is stopped
+    // when its last consumer disconnects; fixture mode stays on polling.
+    const jarvisEvents = yield* makeJarvisEventsHub(jarvisEventsClient, {
+      enabled: !config.jarvisFixtureMode && process.env.JARVIS_EVENTS_SSE_ENABLED !== "false",
+    });
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -2912,7 +3023,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
           disableTracing: true,
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(session, previewAutomationBroker).pipe(
+            makeWsRpcLayer(session, previewAutomationBroker, jarvisEvents).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(
