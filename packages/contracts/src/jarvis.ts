@@ -9,6 +9,10 @@ export type JsonObject = typeof JsonObject.Type;
 export const JarvisWriteMetadata = JsonObject;
 export type JarvisWriteMetadata = typeof JarvisWriteMetadata.Type;
 
+// Marks internal diagnostics work (worker readiness probes) so projections can
+// hide it from user-facing project/work lists.
+export const JARVIS_WORK_PURPOSE_WORKER_READINESS = "worker-readiness-test";
+
 const makeJarvisId = <Brand extends string>(brand: Brand) =>
   TrimmedNonEmptyString.pipe(Schema.brand(brand));
 
@@ -1181,6 +1185,7 @@ export type JarvisArtifactsPage = typeof JarvisArtifactsPage.Type;
 export const JarvisStartWorkInput = Schema.Struct({
   phrase: Schema.optional(TrimmedNonEmptyString),
   source: Schema.optional(TrimmedNonEmptyString),
+  project_id: Schema.optional(JarvisProjectId),
   repo: Schema.optional(TrimmedNonEmptyString),
   worker_id: Schema.optional(JarvisWorkerId),
   engine: Schema.optional(JarvisEngineId),

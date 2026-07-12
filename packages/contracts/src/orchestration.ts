@@ -584,8 +584,14 @@ const ThreadTurnStartBootstrap = Schema.Struct({
   prepareWorktree: Schema.optional(ThreadTurnStartBootstrapPrepareWorktree),
   runSetupScript: Schema.optional(Schema.Boolean),
   jarvisEngine: Schema.optional(TrimmedNonEmptyString),
+  // Jarvis registry project the dispatched work belongs to. Carrying this through start-work
+  // keeps runs linked to their project so they never land in the sidebar's unassigned bucket.
+  jarvisProjectId: Schema.optional(TrimmedNonEmptyString),
   jarvisRepo: Schema.optional(TrimmedNonEmptyString),
   jarvisWorkerId: Schema.optional(TrimmedNonEmptyString),
+  // Forwarded to Jarvis start-work metadata.purpose; internal purposes (e.g. worker
+  // readiness tests) are hidden from user-facing work projections.
+  jarvisWorkPurpose: Schema.optional(TrimmedNonEmptyString),
 });
 
 export type ThreadTurnStartBootstrap = typeof ThreadTurnStartBootstrap.Type;

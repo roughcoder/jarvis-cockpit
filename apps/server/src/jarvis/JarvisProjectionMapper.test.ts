@@ -114,6 +114,42 @@ it("maps one Jarvis run with two sessions into one project and two thread shells
   assert.strictEqual(snapshot.threads[0]?.worktreePath, null);
 });
 
+it("hides worker readiness-test work from the orchestration projection", () => {
+  const readinessRun: JarvisRun = {
+    ...run,
+    run_id: "run_readiness" as JarvisRun["run_id"],
+    metadata: { purpose: "worker-readiness-test" },
+  };
+  const readinessSession = {
+    ...makeSession("sess_readiness"),
+    run_id: readinessRun.run_id,
+  };
+  const taggedSession = {
+    ...makeSession("sess_tagged"),
+    metadata: { purpose: "worker-readiness-test" },
+  };
+  const snapshot = mapJarvisRunsSnapshotToShellSnapshot({
+    api_version: "v1",
+    schema_version: 1,
+    cursor: "evt_1",
+    sync: { mode: "fast", status: "fresh", synced_at: now, errors: [] },
+    runs: [run, readinessRun],
+    sessions: [makeSession("sess_1"), readinessSession, taggedSession],
+    workers: [],
+    artifacts: [],
+    generated_at: now,
+  });
+
+  assert.deepStrictEqual(
+    snapshot.projects.map((project) => project.id),
+    ["jarvis-run_run_1"],
+  );
+  assert.deepStrictEqual(
+    snapshot.threads.map((thread) => thread.id),
+    ["jarvis-session_sessref_macbook-worker_sess_1"],
+  );
+});
+
 it("keeps worker-local sessions out of the run-backed orchestration projection", () => {
   const snapshot = mapJarvisRunsSnapshotToShellSnapshot({
     api_version: "v1",

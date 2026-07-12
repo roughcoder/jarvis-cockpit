@@ -1,5 +1,6 @@
 import {
   JarvisEngineId,
+  JarvisProjectId,
   JarvisRequestId,
   JarvisWorkerId,
   OrchestrationDispatchCommandError,
@@ -638,6 +639,12 @@ function startWorkInputForTurnStart(
     source: "manual",
     start: true,
     prompt: command.message.text,
+    ...(command.bootstrap?.jarvisProjectId
+      ? { project_id: JarvisProjectId.make(command.bootstrap.jarvisProjectId) }
+      : {}),
+    ...(command.bootstrap?.jarvisWorkPurpose
+      ? { metadata: { purpose: command.bootstrap.jarvisWorkPurpose } }
+      : {}),
     ...(title ? { title, objective: title } : {}),
     ...(command.bootstrap?.jarvisEngine
       ? { engine: JarvisEngineId.make(command.bootstrap.jarvisEngine) }
