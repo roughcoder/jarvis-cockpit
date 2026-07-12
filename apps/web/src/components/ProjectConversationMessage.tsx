@@ -1,13 +1,4 @@
-import {
-  BotIcon,
-  CheckIcon,
-  ChevronDownIcon,
-  CircleAlertIcon,
-  LoaderCircleIcon,
-  NetworkIcon,
-  RotateCcwIcon,
-} from "lucide-react";
-import { useState } from "react";
+import { CheckIcon, ChevronDownIcon, RotateCcwIcon } from "lucide-react";
 
 import type { ProjectConversationMessageView } from "../jarvisProjectConversations.logic";
 import { deriveWorkspaceProvisionSteps } from "./projectConversationWorkspace.logic";
@@ -44,13 +35,20 @@ export function ProjectConversationMessage({
       <ChatUserMessage className="pb-4">
         <ChatUserMessageBubble>
           <ChatMarkdown text={message.content} cwd={undefined} lineBreaks />
+          {message.technicalContent ? (
+            <details className="group/instructions mt-2 border-t border-foreground/10 pt-2">
+              <summary className="flex cursor-pointer list-none items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground">
+                <ChevronDownIcon className="size-3 transition-transform group-open/instructions:rotate-180" />
+                Review instructions
+              </summary>
+              <div className="mt-2 max-h-72 overflow-y-auto border-s border-border/50 ps-3 text-left">
+                <ChatMarkdown text={message.technicalContent} cwd={undefined} />
+              </div>
+            </details>
+          ) : null}
         </ChatUserMessageBubble>
       </ChatUserMessage>
     );
-  }
-
-  if (message.orchestrationLifecycle) {
-    return <OrchestrationLifecycleCard lifecycle={message.orchestrationLifecycle} />;
   }
 
   return (
@@ -98,92 +96,6 @@ export function ProjectConversationMessage({
           </div>
         ) : null}
       </ChatAssistantMessage>
-    </div>
-  );
-}
-
-function OrchestrationLifecycleCard({
-  lifecycle,
-}: {
-  readonly lifecycle: NonNullable<ProjectConversationMessageView["orchestrationLifecycle"]>;
-}) {
-  const [showDetails, setShowDetails] = useState(false);
-  const completeCount = lifecycle.children.filter((child) => child.status === "completed").length;
-  const failedCount = lifecycle.children.filter((child) => child.status === "failed").length;
-  const heading =
-    lifecycle.status === "completed"
-      ? "Child reviews complete"
-      : lifecycle.status === "failed"
-        ? "Child review orchestration failed"
-        : lifecycle.status === "running"
-          ? "Combining child reviews"
-          : "Waiting for child reviews";
-  return (
-    <div className="pb-4">
-      <section
-        className="overflow-hidden rounded-lg border border-border/65 bg-muted/20"
-        aria-label={heading}
-      >
-        <div className="flex items-center gap-2 border-b border-border/45 px-3 py-2.5">
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground shadow-xs">
-            <NetworkIcon className="size-3.5" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-medium text-foreground">{heading}</p>
-            <p className="text-[11px] text-muted-foreground">
-              {completeCount}/{lifecycle.children.length} complete
-              {failedCount > 0 ? ` · ${failedCount} failed` : ""}
-            </p>
-          </div>
-          {lifecycle.status === "completed" ? (
-            <CheckIcon className="size-4 text-success-foreground" aria-label="Completed" />
-          ) : lifecycle.status === "failed" ? (
-            <CircleAlertIcon className="size-4 text-destructive" aria-label="Failed" />
-          ) : (
-            <LoaderCircleIcon
-              className="size-4 animate-spin text-muted-foreground"
-              aria-label="In progress"
-            />
-          )}
-        </div>
-        <div className="divide-y divide-border/35 px-3">
-          {lifecycle.children.map((child) => (
-            <div key={child.id} className="flex items-center gap-2 py-2">
-              <BotIcon className="size-3.5 shrink-0 text-muted-foreground" />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-medium text-foreground/88">{child.title}</p>
-                <p className="text-[11px] capitalize text-muted-foreground">{child.phase}</p>
-              </div>
-              {child.status === "completed" ? (
-                <CheckIcon className="size-3.5 text-success-foreground" />
-              ) : child.status === "failed" ? (
-                <CircleAlertIcon className="size-3.5 text-destructive" />
-              ) : (
-                <LoaderCircleIcon className="size-3.5 animate-spin text-muted-foreground" />
-              )}
-            </div>
-          ))}
-        </div>
-        <button
-          type="button"
-          className="flex w-full items-center gap-1.5 border-t border-border/45 px-3 py-2 text-left text-[11px] text-muted-foreground transition-colors hover:bg-accent/20 hover:text-foreground"
-          aria-expanded={showDetails}
-          onClick={() => setShowDetails((value) => !value)}
-        >
-          <ChevronDownIcon
-            className={`size-3 transition-transform ${showDetails ? "rotate-180" : ""}`}
-          />
-          Technical details
-        </button>
-        {showDetails ? (
-          <div className="border-t border-border/35 px-3 py-2 font-mono text-[10px] text-muted-foreground">
-            <div>watch {lifecycle.watchId}</div>
-            {lifecycle.children.map((child) => (
-              <div key={child.id}>{child.id}</div>
-            ))}
-          </div>
-        ) : null}
-      </section>
     </div>
   );
 }

@@ -16,6 +16,7 @@ import {
   latestProjectConversation,
   projectConversationHistoryMessages,
   projectConversationMergedMessages,
+  projectConversationOrchestrationLifecycles,
   reduceProjectConversationSendState,
   resolveProjectConversationRouteParams,
   resolveProjectConversationRouteRenderState,
@@ -270,7 +271,7 @@ describe("project conversation history", () => {
   });
 
   it("collapses child watch updates and terminal messages into one lifecycle view", () => {
-    const messages = projectConversationHistoryMessages({
+    const detail = {
       messages: [
         {
           role: "system",
@@ -304,10 +305,12 @@ describe("project conversation history", () => {
           observed_at: "2026-07-07T10:00:03.000Z",
         },
       ],
-    });
+    };
+    const messages = projectConversationHistoryMessages(detail);
+    const lifecycles = projectConversationOrchestrationLifecycles(detail);
 
-    expect(messages).toHaveLength(1);
-    expect(messages[0]?.orchestrationLifecycle).toMatchObject({
+    expect(messages).toHaveLength(0);
+    expect(lifecycles[0]).toMatchObject({
       watchId: "watch-1",
       status: "completed",
       children: [
@@ -318,7 +321,7 @@ describe("project conversation history", () => {
   });
 
   it("upgrades legacy child-watch prose into the lifecycle view", () => {
-    const messages = projectConversationHistoryMessages({
+    const detail = {
       messages: [
         {
           role: "system",
@@ -334,13 +337,57 @@ describe("project conversation history", () => {
           observed_at: "2026-07-07T10:00:02.000Z",
         },
       ],
-    });
+    };
+    const messages = projectConversationHistoryMessages(detail);
+    const lifecycles = projectConversationOrchestrationLifecycles(detail);
 
-    expect(messages).toHaveLength(1);
-    expect(messages[0]?.orchestrationLifecycle).toMatchObject({
+    expect(messages).toHaveLength(0);
+    expect(lifecycles[0]).toMatchObject({
       status: "completed",
       children: [{ id: "run_123", title: "Claude review", status: "completed" }],
     });
+  });
+
+  it("keeps orchestration transport acknowledgements out of the transcript", () => {
+    const messages = projectConversationHistoryMessages({
+      messages: [
+        {
+          role: "assistant",
+          peer_id: "jarvis",
+          content:
+            "Spawned both required child review sessions and registered the watch.\n\nChild chat IDs:\n- run_1\n- run_2",
+          observed_at: "2026-07-07T10:00:01.000Z",
+        },
+        {
+          role: "user",
+          peer_id: "neil",
+          content:
+            "Automatic orchestration continuation: all watched child work sessions are terminal.",
+          observed_at: "2026-07-07T10:00:02.000Z",
+        },
+      ],
+    });
+
+    expect(messages).toEqual([]);
+  });
+
+  it("summarizes generated PR review prompts and retains the full instructions on demand", () => {
+    const [message] = projectConversationHistoryMessages({
+      messages: [
+        {
+          role: "user",
+          peer_id: "neil",
+          content:
+            "You are the PR review orchestrator. Review pull request #125 in roughcoder/jarvis.\nFull workflow follows.",
+          observed_at: "2026-07-07T10:00:01.000Z",
+        },
+      ],
+    });
+
+    expect(message?.content).toBe(
+      "Review roughcoder/jarvis #125 with two independent code agents.",
+    );
+    expect(message?.technicalContent).toContain("Full workflow follows.");
   });
 
   it("identifies only non-user raw tool protocol history frames", () => {

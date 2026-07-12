@@ -11,6 +11,7 @@ function message(
     id: "message-1",
     role: "assistant",
     content: "**Shared** response",
+    technicalContent: null,
     observedAt: "2026-07-12T16:00:00Z",
     peerId: null,
     source: "history",
@@ -71,25 +72,13 @@ describe("ProjectConversationMessage", () => {
     expect(markup).toContain("Waiting for Jarvis");
   });
 
-  it("renders child orchestration as a first-class lifecycle card", () => {
+  it("keeps generated review instructions behind progressive disclosure", () => {
     const markup = renderToStaticMarkup(
       <ProjectConversationMessage
         message={message({
-          content: "",
-          orchestrationLifecycle: {
-            watchId: "watch-1",
-            phase: "waiting",
-            status: "waiting",
-            children: [
-              {
-                id: "run-1",
-                title: "Claude review",
-                phase: "running",
-                status: "running",
-                error: null,
-              },
-            ],
-          },
+          role: "user",
+          content: "Review roughcoder/jarvis #125 with two independent code agents.",
+          technicalContent: "Full generated orchestration prompt",
         })}
         workspaceProvisionPhase={null}
         onRetry={undefined}
@@ -97,9 +86,8 @@ describe("ProjectConversationMessage", () => {
       />,
     );
 
-    expect(markup).toContain('aria-label="Waiting for child reviews"');
-    expect(markup).toContain("Claude review");
-    expect(markup).toContain("0/1 complete");
-    expect(markup).not.toContain("run-1");
+    expect(markup).toContain("Review roughcoder/jarvis #125");
+    expect(markup).toContain("Review instructions");
+    expect(markup).toContain("Full generated orchestration prompt");
   });
 });

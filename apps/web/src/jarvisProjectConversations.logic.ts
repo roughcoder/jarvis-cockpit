@@ -52,6 +52,7 @@ export interface ProjectConversationMessageView {
   readonly id: string;
   readonly role: "user" | "assistant";
   readonly content: string;
+  readonly technicalContent: string | null;
   readonly observedAt: string;
   readonly peerId: string | null;
   readonly source: "history" | "local";
@@ -78,6 +79,14 @@ export interface OrchestrationLifecycleView {
   readonly phase: string;
   readonly status: "waiting" | "running" | "completed" | "failed";
   readonly children: ReadonlyArray<OrchestrationLifecycleChildView>;
+}
+
+export function projectConversationOrchestrationLifecycles(
+  thread: Pick<JarvisProjectThreadDetail, "messages"> | null,
+): OrchestrationLifecycleView[] {
+  return orchestrationLifecycleMessages(thread?.messages ?? []).flatMap((message) =>
+    message.orchestrationLifecycle ? [message.orchestrationLifecycle] : [],
+  );
 }
 
 export interface ProjectConversationRouteInput {
@@ -215,19 +224,27 @@ export function projectConversationHistoryMessages(
   thread: Pick<JarvisProjectThreadDetail, "messages"> | null,
 ): ProjectConversationMessageView[] {
   const source = thread?.messages ?? [];
-  const lifecycleMessages = orchestrationLifecycleMessages(source);
   return source
     .filter(
       (message) =>
         !isRawProjectConversationToolFrame(message) &&
         message.type !== "child_watch" &&
         message.type !== "child_terminal" &&
-        legacyLifecycleMessageKind(message) === null,
+        legacyLifecycleMessageKind(message) === null &&
+        !isRedundantOrchestrationAcknowledgement(message),
     )
     .map((message, index) => historyMessageView(message, index))
     .filter((message) => message.content.trim().length > 0)
-    .concat(lifecycleMessages)
     .sort((left, right) => left.observedAt.localeCompare(right.observedAt));
+}
+
+function isRedundantOrchestrationAcknowledgement(message: JarvisProjectThreadMessage): boolean {
+  const content = message.content.trim();
+  if (content.startsWith("Automatic orchestration continuation:")) return true;
+  if (message.role === "user") return false;
+  return content.startsWith(
+    "Spawned both required child review sessions and registered the watch.",
+  );
 }
 
 function orchestrationLifecycleMessages(
@@ -275,6 +292,7 @@ function orchestrationLifecycleMessages(
       id: `orchestration-${watch.watch_id}`,
       role: "assistant" as const,
       content: "",
+      technicalContent: null,
       observedAt: watch.observed_at,
       peerId: watch.peer_id?.trim() || null,
       source: "history" as const,
@@ -341,6 +359,7 @@ function legacyOrchestrationLifecycleMessages(
       id: `legacy-orchestration-${message.observed_at}`,
       role: "assistant",
       content: "",
+      technicalContent: null,
       observedAt: message.observed_at,
       peerId: message.peer_id?.trim() || null,
       source: "history",
@@ -445,12 +464,14 @@ function historyMessageView(
   message: JarvisProjectThreadMessage,
   index: number,
 ): ProjectConversationMessageView {
+  const generatedReviewPrompt = summarizeGeneratedPrReviewPrompt(message);
   return {
     id: `history-${index}-${message.observed_at}`,
     // Contract role is a tolerant string; render "user" on the user side, everything else
     // (assistant / any future role) on the assistant side.
     role: message.role === "user" ? "user" : "assistant",
-    content: message.content,
+    content: generatedReviewPrompt?.summary ?? message.content,
+    technicalContent: generatedReviewPrompt?.technicalContent ?? null,
     observedAt: message.observed_at,
     peerId: message.peer_id?.trim() || null,
     source: "history",
@@ -475,6 +496,7 @@ function localTurnMessages(
       id: `local-${turn.id}-user`,
       role: "user",
       content: prompt,
+      technicalContent: null,
       observedAt: turn.createdAt,
       peerId: null,
       source: "local",
@@ -510,6 +532,7 @@ function localAssistantMessage(
     id: `local-${turn.id}-assistant`,
     role: "assistant",
     content,
+    technicalContent: null,
     observedAt: turn.createdAt,
     peerId: null,
     source: "local",
@@ -521,6 +544,21 @@ function localAssistantMessage(
     retryPrompt: turn.prompt,
     retryWorkspace: turn.workspaceInput ?? null,
     orchestrationLifecycle: null,
+  };
+}
+
+function summarizeGeneratedPrReviewPrompt(
+  message: JarvisProjectThreadMessage,
+): { readonly summary: string; readonly technicalContent: string } | null {
+  if (message.role !== "user") return null;
+  const match =
+    /^You are the PR review orchestrator\. Review pull request #(\d+) in ([^.\s]+)\./u.exec(
+      message.content.trim(),
+    );
+  if (!match) return null;
+  return {
+    summary: `Review ${match[2]} #${match[1]} with two independent code agents.`,
+    technicalContent: message.content,
   };
 }
 

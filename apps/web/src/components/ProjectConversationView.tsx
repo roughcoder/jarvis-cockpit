@@ -21,17 +21,22 @@ import * as Schema from "effect/Schema";
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
+  BotIcon,
   BrainIcon,
   CheckIcon,
+  ChevronDownIcon,
+  CircleAlertIcon,
   FileTextIcon,
   GitBranchIcon,
   MessageSquareIcon,
+  NetworkIcon,
   PanelRightCloseIcon,
   PanelRightOpenIcon,
   PencilIcon,
   RefreshCwIcon,
   ServerIcon,
   SparklesIcon,
+  LoaderCircleIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
@@ -78,10 +83,12 @@ import {
   isProjectConversationDetailRouteGap,
   projectConversationHistoryMessages,
   projectConversationMergedMessages,
+  projectConversationOrchestrationLifecycles,
   sortProjectConversations,
   visibleProjectFiles,
   type ProjectConversationLocalTurnView,
   type ProjectConversationMessageView,
+  type OrchestrationLifecycleView,
 } from "../jarvisProjectConversations.logic";
 import { buildProjectConversationTurnAttachments } from "./projectConversationComposer.logic";
 import {
@@ -197,6 +204,11 @@ export function ProjectConversationView({
     () => projectConversationHistoryMessages(threadDetailStream.data ?? null),
     [threadDetailStream.data],
   );
+  const orchestrationLifecycles = useMemo(
+    () => projectConversationOrchestrationLifecycles(threadDetailStream.data ?? null),
+    [threadDetailStream.data],
+  );
+  const activeOrchestrationLifecycle = orchestrationLifecycles.at(-1) ?? null;
   const files = useMemo(
     () => visibleProjectFiles(filesQuery.data?.ok === true ? (filesQuery.data.files ?? []) : []),
     [filesQuery.data],
@@ -1072,6 +1084,7 @@ export function ProjectConversationView({
             workspace={conversationWorkspace}
             files={files}
             memoryQuery={memoryQuery}
+            orchestrationLifecycle={activeOrchestrationLifecycle}
             collapsed={contextPanelCollapsed}
           />
         </div>
@@ -1134,12 +1147,14 @@ function ProjectConversationContextPanel({
   workspace,
   files,
   memoryQuery,
+  orchestrationLifecycle,
   collapsed,
 }: {
   readonly project: JarvisProject | null;
   readonly workspace: JarvisConversationWorkspace | null;
   readonly files: JarvisProjectFile[];
   readonly memoryQuery: EnvironmentQueryView<JarvisProjectMemoryResult>;
+  readonly orchestrationLifecycle: OrchestrationLifecycleView | null;
   readonly collapsed: boolean;
 }) {
   const defaultRepo = defaultProjectRepo(project);
@@ -1150,6 +1165,9 @@ function ProjectConversationContextPanel({
   return (
     <aside className="hidden min-h-0 overflow-y-auto border-l border-border/70 bg-muted/15 px-4 py-4 lg:block">
       <div className="space-y-5">
+        {orchestrationLifecycle ? (
+          <ProjectConversationOrchestrationPanel lifecycle={orchestrationLifecycle} />
+        ) : null}
         <section className="space-y-2">
           <div className="flex items-center gap-2 text-xs font-medium uppercase text-muted-foreground">
             <GitBranchIcon className="size-3.5" />
@@ -1220,6 +1238,92 @@ function ProjectConversationContextPanel({
         </section>
       </div>
     </aside>
+  );
+}
+
+function ProjectConversationOrchestrationPanel({
+  lifecycle,
+}: {
+  readonly lifecycle: OrchestrationLifecycleView;
+}) {
+  const completedCount = lifecycle.children.filter((child) => child.status === "completed").length;
+  const failedCount = lifecycle.children.filter((child) => child.status === "failed").length;
+  const progress =
+    lifecycle.children.length === 0 ? 0 : (completedCount / lifecycle.children.length) * 100;
+  const statusLabel =
+    lifecycle.status === "completed"
+      ? "Complete"
+      : lifecycle.status === "failed"
+        ? "Failed"
+        : lifecycle.status === "running"
+          ? "Joining results"
+          : "Waiting for children";
+
+  return (
+    <section className="space-y-2.5" aria-label="Orchestration">
+      <div className="flex items-center gap-2 text-xs font-medium uppercase text-muted-foreground">
+        <NetworkIcon className="size-3.5" />
+        Orchestration
+      </div>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-sm font-medium text-foreground">{statusLabel}</span>
+        <span className="text-[11px] tabular-nums text-muted-foreground">
+          {completedCount}/{lifecycle.children.length}
+          {failedCount > 0 ? ` · ${failedCount} failed` : ""}
+        </span>
+      </div>
+      <div className="h-1 overflow-hidden rounded-full bg-muted">
+        <div
+          className={cn(
+            "h-full origin-left rounded-full transition-transform duration-300",
+            lifecycle.status === "failed" ? "bg-destructive" : "bg-success",
+          )}
+          style={{ transform: `scaleX(${progress / 100})` }}
+        />
+      </div>
+      <div className="divide-y divide-border/55 border-y border-border/55">
+        {lifecycle.children.map((child) => (
+          <div key={child.id} className="flex min-w-0 items-center gap-2 py-2">
+            <BotIcon className="size-3.5 shrink-0 text-muted-foreground" />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-xs font-medium text-foreground" title={child.title}>
+                {child.title}
+              </div>
+              <div className="text-[11px] capitalize text-muted-foreground">{child.phase}</div>
+            </div>
+            {child.status === "completed" ? (
+              <CheckIcon
+                className="size-3.5 shrink-0 text-success-foreground"
+                aria-label="Completed"
+              />
+            ) : child.status === "failed" ? (
+              <CircleAlertIcon className="size-3.5 shrink-0 text-destructive" aria-label="Failed" />
+            ) : (
+              <LoaderCircleIcon
+                className="size-3.5 shrink-0 animate-spin text-muted-foreground"
+                aria-label="In progress"
+              />
+            )}
+          </div>
+        ))}
+      </div>
+      <details className="group/orchestration-details">
+        <summary className="flex cursor-pointer list-none items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground">
+          <ChevronDownIcon className="size-3 transition-transform group-open/orchestration-details:rotate-180" />
+          Technical details
+        </summary>
+        <div className="mt-2 space-y-1 border-s border-border/50 ps-3 font-mono text-[10px] text-muted-foreground">
+          <div className="truncate" title={lifecycle.watchId}>
+            watch {lifecycle.watchId}
+          </div>
+          {lifecycle.children.map((child) => (
+            <div key={child.id} className="truncate" title={child.id}>
+              {child.id}
+            </div>
+          ))}
+        </div>
+      </details>
+    </section>
   );
 }
 
