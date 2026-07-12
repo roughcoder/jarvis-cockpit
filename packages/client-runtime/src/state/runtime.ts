@@ -21,6 +21,7 @@ import {
   subscribe,
 } from "../rpc/client.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import { BOUNDED_FINITE_QUERY_ATOM_IDLE_TTL_MS, createBoundedAtomFamily } from "./retention.ts";
 
 interface EnvironmentAtomOptions<Input, A, E, R> {
   readonly label: string;
@@ -41,6 +42,8 @@ interface EnvironmentQueryAtomOptions<Input, A, E, R> extends EnvironmentAtomOpt
   readonly staleTimeMs?: number;
   readonly idleTtlMs?: number;
   readonly refreshIntervalMs?: number;
+  /** Limits inactive atom identities for transcript-bearing finite queries. */
+  readonly maxEntries?: number;
 }
 
 interface EnvironmentSubscriptionAtomOptions<Input, A, E, R> {
@@ -472,19 +475,24 @@ function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
       { initialValue: null },
     ),
   );
-  const family = Atom.family((key: string) => {
+  const createQueryAtom = (key: string, cachedValue?: A) => {
     const target = parseEnvironmentRpcKey<Input>(key);
-    const idleTtlMs = options.idleTtlMs ?? 5 * 60_000;
+    const idleTtlMs =
+      options.idleTtlMs ??
+      (options.maxEntries === undefined ? 5 * 60_000 : BOUNDED_FINITE_QUERY_ATOM_IDLE_TTL_MS);
     const queryAtom = runtime
-      .atom((get) => {
-        const generation = Option.getOrNull(
-          AsyncResult.value(get(rpcGenerationAtom(target.environmentId))),
-        );
-        if (generation === null) {
-          return Effect.never;
-        }
-        return runInEnvironment(target.environmentId, options.execute(target.input));
-      })
+      .atom(
+        (get) => {
+          const generation = Option.getOrNull(
+            AsyncResult.value(get(rpcGenerationAtom(target.environmentId))),
+          );
+          if (generation === null) {
+            return Effect.never;
+          }
+          return runInEnvironment(target.environmentId, options.execute(target.input));
+        },
+        cachedValue === undefined ? undefined : { initialValue: cachedValue },
+      )
       .pipe(
         Atom.swr({
           staleTime: options.staleTimeMs ?? 30_000,
@@ -497,8 +505,13 @@ function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         ? queryAtom
         : queryAtom.pipe(Atom.withRefresh(options.refreshIntervalMs))
     ).pipe(Atom.setIdleTTL(idleTtlMs), Atom.withLabel(`${options.label}:${key}`));
-  });
-  return (target) => family(environmentRpcKey(target));
+  };
+  if (options.maxEntries === undefined) {
+    const family = Atom.family(createQueryAtom);
+    return (target) => family(environmentRpcKey(target));
+  }
+  const family = createBoundedAtomFamily(createQueryAtom, options.maxEntries);
+  return (target) => family.get(environmentRpcKey(target));
 }
 
 export function createEnvironmentSubscriptionAtomFamily<R, ER, Input, A, E>(
@@ -561,6 +574,7 @@ export function createEnvironmentRpcQueryAtomFamily<R, ER, TTag extends Environm
     readonly staleTimeMs?: number;
     readonly idleTtlMs?: number;
     readonly refreshIntervalMs?: number;
+    readonly maxEntries?: number;
   },
 ) {
   return createEnvironmentQueryAtomFamily(runtime, {
@@ -570,6 +584,7 @@ export function createEnvironmentRpcQueryAtomFamily<R, ER, TTag extends Environm
     ...(options.refreshIntervalMs === undefined
       ? {}
       : { refreshIntervalMs: options.refreshIntervalMs }),
+    ...(options.maxEntries === undefined ? {} : { maxEntries: options.maxEntries }),
     execute: (input: EnvironmentRpcInput<TTag>) => request(options.tag, input),
   });
 }

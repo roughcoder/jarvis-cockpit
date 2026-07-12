@@ -11,7 +11,12 @@ import {
 } from "@t3tools/contracts";
 import type { OrchestrationThread } from "@t3tools/contracts";
 
-import { applyThreadDetailEvent } from "./threadReducer.ts";
+import {
+  applyThreadDetailEvent,
+  windowThreadDetail,
+  type WindowedOrchestrationThread,
+} from "./threadReducer.ts";
+import { THREAD_DETAIL_RETENTION } from "./retention.ts";
 
 const baseEventFields = {
   eventId: EventId.make("event-1"),
@@ -43,7 +48,120 @@ const baseThread: OrchestrationThread = {
   session: null,
 };
 
+function messageSentEvent(messageId: string, text: string, streaming = false) {
+  return {
+    ...baseEventFields,
+    sequence: 6,
+    occurredAt: "2026-04-01T06:00:00.000Z",
+    aggregateKind: "thread" as const,
+    aggregateId: ThreadId.make("thread-1"),
+    type: "thread.message-sent" as const,
+    payload: {
+      threadId: ThreadId.make("thread-1"),
+      messageId: MessageId.make(messageId),
+      role: "user" as const,
+      text,
+      turnId: null,
+      streaming,
+      createdAt: "2026-04-01T06:00:00.000Z",
+      updatedAt: "2026-04-01T06:00:00.000Z",
+    },
+  };
+}
+
 describe("applyThreadDetailEvent", () => {
+  describe("retention windows", () => {
+    it("preserves short thread state without adding retention metadata", () => {
+      expect(windowThreadDetail(baseThread)).toBe(baseThread);
+
+      const result = applyThreadDetailEvent(baseThread, messageSentEvent("message-1", "hello"));
+
+      expect(result).toEqual({
+        kind: "updated",
+        thread: {
+          ...baseThread,
+          messages: [
+            {
+              id: MessageId.make("message-1"),
+              role: "user",
+              text: "hello",
+              turnId: null,
+              streaming: false,
+              createdAt: "2026-04-01T06:00:00.000Z",
+              updatedAt: "2026-04-01T06:00:00.000Z",
+            },
+          ],
+          updatedAt: "2026-04-01T06:00:00.000Z",
+        },
+      });
+    });
+
+    it("front-trims messages at the boundary and records omitted history", () => {
+      let thread: WindowedOrchestrationThread = baseThread;
+      for (let index = 0; index <= THREAD_DETAIL_RETENTION.messages; index += 1) {
+        const result = applyThreadDetailEvent(
+          thread,
+          messageSentEvent(
+            `message-${index}`,
+            String(index),
+            index === THREAD_DETAIL_RETENTION.messages,
+          ),
+        );
+        expect(result.kind).toBe("updated");
+        if (result.kind === "updated") {
+          thread = result.thread;
+        }
+      }
+
+      expect(thread.messages).toHaveLength(THREAD_DETAIL_RETENTION.messages);
+      expect(thread.messages[0]?.id).toBe("message-1");
+      expect(thread.messages.at(-1)).toMatchObject({
+        id: `message-${THREAD_DETAIL_RETENTION.messages}`,
+        streaming: true,
+      });
+      expect(thread.truncation).toEqual({ messages: 1 });
+    });
+
+    it("windows all snapshot collections and keeps their newest entries", () => {
+      const oversized = {
+        ...baseThread,
+        messages: Array.from({ length: THREAD_DETAIL_RETENTION.messages + 1 }, (_, index) => ({
+          id: MessageId.make(`message-${index}`),
+          role: "user" as const,
+          text: String(index),
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-04-01T06:00:00.000Z",
+          updatedAt: "2026-04-01T06:00:00.000Z",
+        })),
+        proposedPlans: Array.from(
+          { length: THREAD_DETAIL_RETENTION.proposedPlans + 1 },
+          (_, index) => ({ id: `plan-${index}` }),
+        ),
+        checkpoints: Array.from(
+          { length: THREAD_DETAIL_RETENTION.checkpoints + 1 },
+          (_, index) => ({ turnId: `turn-${index}` }),
+        ),
+        activities: Array.from({ length: THREAD_DETAIL_RETENTION.activities + 1 }, (_, index) => ({
+          id: `activity-${index}`,
+        })),
+      } as any;
+
+      const windowed = windowThreadDetail(oversized);
+
+      expect(windowed.messages[0]?.id).toBe("message-1");
+      expect(windowed.proposedPlans[0]).toMatchObject({ id: "plan-1" });
+      expect(windowed.checkpoints[0]).toMatchObject({ turnId: "turn-1" });
+      expect(windowed.activities[0]).toMatchObject({ id: "activity-1" });
+      expect(windowed.truncation).toEqual({
+        messages: 1,
+        proposedPlans: 1,
+        checkpoints: 1,
+        activities: 1,
+      });
+    });
+  });
+
   describe("project events", () => {
     it("returns unchanged for project.created", () => {
       const result = applyThreadDetailEvent(baseThread, {
