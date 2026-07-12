@@ -718,6 +718,34 @@ it.effect("cockpit client decodes JSON project thread turn responses", () =>
   }),
 );
 
+it.effect("cockpit client fails project turns when SSE reports a turn error", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async () =>
+        new Response(
+          [
+            'event: thread.turn.started\ndata: {"type":"thread.turn.started","payload":{"thread_id":"thread-1"}}',
+            'data: {"type":"thread.turn.error","payload":{"error":{"code":"memory_unavailable","message":"orchestrator turn failed","recoverable":true},"private_detail":"must not leak"}}',
+            "",
+          ].join("\n\n"),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+    });
+
+    const error = yield* client
+      .sendProjectThreadTurn("dogfood", "thread-1", { text: "Continue" })
+      .pipe(Effect.flip);
+
+    assert.ok(error instanceof JarvisClientError);
+    assert.strictEqual(error.operation, "projects.threads.turn");
+    assert.match(error.message, /memory_unavailable/);
+    assert.match(error.message, /orchestrator turn failed/);
+    assert.ok(!/private_detail|must not leak/u.test(error.message));
+    assert.strictEqual(error.responseBody, null);
+  }),
+);
+
 it.effect("cockpit client renames project threads with a PATCH request", () =>
   Effect.gen(function* () {
     const requests: Array<{ url: string; method: string; body: unknown }> = [];

@@ -3626,12 +3626,16 @@ function parseProjectThreadTurnResponse(
       );
     }
   }
-  return Effect.succeed(parseProjectThreadTurnSse(text));
+  return parseProjectThreadTurnSse(operation, text);
 }
 
-function parseProjectThreadTurnSse(text: string): JarvisProjectThreadTurnResult {
+function parseProjectThreadTurnSse(
+  operation: string,
+  text: string,
+): Effect.Effect<JarvisProjectThreadTurnResult, JarvisClientError> {
   const events: Record<string, Schema.Json>[] = [];
   const replyParts: string[] = [];
+  let turnError: { readonly code: string | null; readonly message: string } | null = null;
   for (const block of text.split(/\r?\n\r?\n/u)) {
     const trimmedBlock = block.trim();
     if (trimmedBlock.length === 0) {
@@ -3658,6 +3662,18 @@ function parseProjectThreadTurnSse(text: string): JarvisProjectThreadTurnResult 
       }
     }
     events.push({ event: eventType, data: data as Schema.Json });
+    const dataType = isRecord(data) && typeof data.type === "string" ? data.type : null;
+    if (eventType === "thread.turn.error" || dataType === "thread.turn.error") {
+      const payload = isRecord(data) && isRecord(data.payload) ? data.payload : data;
+      const error = isRecord(payload) && isRecord(payload.error) ? payload.error : null;
+      turnError = {
+        code: error && typeof error.code === "string" ? error.code : null,
+        message:
+          error && typeof error.message === "string" && error.message.trim().length > 0
+            ? error.message.trim()
+            : "Jarvis reported that the project conversation turn failed.",
+      };
+    }
     if (eventType === "thread.reply") {
       if (typeof data === "string") {
         replyParts.push(data);
@@ -3669,11 +3685,20 @@ function parseProjectThreadTurnSse(text: string): JarvisProjectThreadTurnResult 
       }
     }
   }
-  return {
+  if (turnError) {
+    const code = turnError.code ? ` (${turnError.code})` : "";
+    return Effect.fail(
+      new JarvisClientError({
+        operation,
+        message: `Jarvis project conversation turn failed${code}: ${turnError.message}`,
+      }),
+    );
+  }
+  return Effect.succeed({
     ok: true,
     text: replyParts.join(""),
     events,
-  };
+  });
 }
 
 function appendQuery(path: string, params: Record<string, string | number | undefined>): string {
