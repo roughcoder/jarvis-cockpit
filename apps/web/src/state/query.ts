@@ -1,5 +1,8 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import { retainFiniteQueryAtom } from "@t3tools/client-runtime/state/retention";
+import {
+  cacheFiniteQueryValue,
+  retainFiniteQueryAtom,
+} from "@t3tools/client-runtime/state/retention";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -29,6 +32,11 @@ export function useEnvironmentQuery<A, E>(
   const selectedAtom = atom ?? EMPTY_ASYNC_RESULT_ATOM;
   const result = useAtomValue(selectedAtom);
   const refresh = useAtomRefresh(selectedAtom);
+  useEffect(() => {
+    if (atom !== null && AsyncResult.isSuccess(result)) {
+      cacheFiniteQueryValue(selectedAtom, result.value);
+    }
+  }, [atom, result, selectedAtom]);
   useEffect(
     () => (atom === null ? undefined : retainFiniteQueryAtom(selectedAtom)),
     [atom, selectedAtom],
