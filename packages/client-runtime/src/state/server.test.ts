@@ -110,4 +110,31 @@ describe("server state projection", () => {
     expect(resynchronized).toBe(THREAD);
     expect(resynchronized?.messages).toEqual(THREAD.messages);
   });
+
+  it("front-trims appended project-thread history to the newest 500 messages", () => {
+    const current = {
+      ...THREAD,
+      messages: Array.from({ length: 500 }, (_, index) => ({
+        role: "assistant",
+        peer_id: "jarvis",
+        content: `message-${index}`,
+        observed_at: `2026-07-12T10:${String(index).padStart(2, "0")}:00.000Z`,
+      })),
+    } as JarvisProjectThreadDetail;
+    const next = applyJarvisProjectThreadStreamItem(current, {
+      kind: "messages-appended",
+      messages: [
+        {
+          role: "assistant",
+          peer_id: "jarvis",
+          content: "message-500",
+          observed_at: "2026-07-12T18:20:00.000Z",
+        },
+      ],
+    });
+
+    expect(next?.messages).toHaveLength(500);
+    expect(next?.messages[0]?.content).toBe("message-1");
+    expect(next?.messages.at(-1)?.content).toBe("message-500");
+  });
 });

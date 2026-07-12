@@ -25,8 +25,21 @@ export interface ServerConfigProjection {
   readonly latestEvent: ServerConfigStreamEvent;
 }
 
+// TODO(perf/w3-memory-guardrails): unify with the native thread retention limit once PR #17 lands.
+const JARVIS_PROJECT_THREAD_MESSAGE_LIMIT = 500;
+
 function projectThreadMessageKey(message: JarvisProjectThreadDetail["messages"][number]): string {
   return `${message.role}\u0000${message.peer_id ?? ""}\u0000${message.observed_at}\u0000${message.content}`;
+}
+
+function retainRecentProjectThreadMessages(
+  thread: JarvisProjectThreadDetail,
+): JarvisProjectThreadDetail {
+  if (thread.messages.length <= JARVIS_PROJECT_THREAD_MESSAGE_LIMIT) return thread;
+  return {
+    ...thread,
+    messages: thread.messages.slice(-JARVIS_PROJECT_THREAD_MESSAGE_LIMIT),
+  };
 }
 
 /** Apply a durable project-thread update without replacing an unchanged transcript. */
@@ -36,7 +49,7 @@ export function applyJarvisProjectThreadStreamItem(
 ): JarvisProjectThreadDetail | null {
   switch (item.kind) {
     case "snapshot":
-      return item.thread;
+      return retainRecentProjectThreadMessages(item.thread);
     case "thread-updated":
       return current === null ? null : { ...current, ...item.thread, messages: current.messages };
     case "messages-appended": {
@@ -49,7 +62,9 @@ export function applyJarvisProjectThreadStreamItem(
         seen.add(key);
         messages.push(message);
       }
-      return messages.length === current.messages.length ? current : { ...current, messages };
+      return messages.length === current.messages.length
+        ? current
+        : retainRecentProjectThreadMessages({ ...current, messages });
     }
   }
 }
@@ -278,6 +293,9 @@ export function createServerEnvironmentAtoms<R, E>(
     jarvisProjectThreadStream: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:jarvis-project-thread-stream",
       tag: WS_METHODS.subscribeJarvisProjectThread,
+      // A project-thread subscription owns a 2s server poll, so dispose it as
+      // soon as its conversation view unmounts instead of retaining it idle.
+      idleTtlMs: 0,
       transform: (stream) =>
         stream.pipe(
           Stream.mapAccum(
