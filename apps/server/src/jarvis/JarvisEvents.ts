@@ -196,17 +196,19 @@ export function applyJarvisCockpitEvent(
         }
         if (event.payload.status === "closed") {
           return replace({
-            requests: remove(current.requests, requestId, (value) => value.request_id),
+            requests: remove(current.requests ?? [], requestId, (value) => value.request_id),
           });
         }
         const row = decodeRequest(event.payload);
-        return replace({ requests: upsert(current.requests, row, (value) => value.request_id) });
+        return replace({
+          requests: upsert(current.requests ?? [], row, (value) => value.request_id),
+        });
       }
       case "checkpoint.updated": {
         const row = decodeCheckpoint(event.payload);
         return replace({
           checkpoints: upsert(
-            current.checkpoints,
+            current.checkpoints ?? [],
             row,
             (value) => `${value.session_ref}:${value.checkpoint_id}`,
           ),

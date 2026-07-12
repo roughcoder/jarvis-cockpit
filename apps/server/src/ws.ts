@@ -431,7 +431,7 @@ function projectThreadStreamItems(
   return items;
 }
 
-function jarvisProjectThreadPollingStream(
+export function jarvisProjectThreadPollingStream(
   jarvisClient: JarvisClient,
   jarvisEvents: JarvisEventsHub,
   projectId: string,
@@ -475,12 +475,12 @@ function jarvisProjectThreadPollingStream(
                 JARVIS_SSE_RECONCILIATION_INTERVAL,
                 () => refresh().pipe(Effect.map(Option.some)),
               ).pipe(Stream.flatMap(flatten)),
-              jarvisFallbackOrReconciliationStream(
-                jarvisEvents,
-                false,
-                JARVIS_COCKPIT_POLL_INTERVAL,
-                () => refresh().pipe(Effect.map(Option.some)),
-              ).pipe(Stream.flatMap(flatten)),
+              // Cockpit SSE has no connector project-thread frames yet, so a
+              // live SSE cache cannot replace this conversation poll.
+              Stream.fromSchedule(Schedule.spaced(JARVIS_COCKPIT_POLL_INTERVAL)).pipe(
+                Stream.mapEffect(refresh, { concurrency: 1 }),
+                Stream.flatMap(flatten),
+              ),
             ),
           );
         })(),

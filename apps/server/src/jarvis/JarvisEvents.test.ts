@@ -72,8 +72,8 @@ it.effect("applies validated granular projection rows and removals at a shared t
     const session = snapshot.sessions[0];
     const worker = snapshot.workers[0];
     const artifact = snapshot.artifacts[0];
-    const request = snapshot.requests[0];
-    const checkpoint = snapshot.checkpoints[0];
+    const request = snapshot.requests?.[0];
+    const checkpoint = snapshot.checkpoints?.[0];
     assert.ok(run);
     assert.ok(session);
     assert.ok(worker);
@@ -112,11 +112,12 @@ it.effect("applies validated granular projection rows and removals at a shared t
       false,
     );
     assert.strictEqual(
-      current.requests.some((item) => item.request_id === request.request_id),
+      (current.requests ?? []).some((item) => item.request_id === request.request_id),
       false,
     );
     assert.strictEqual(
-      current.checkpoints.find((item) => item.checkpoint_id === checkpoint.checkpoint_id)?.label,
+      (current.checkpoints ?? []).find((item) => item.checkpoint_id === checkpoint.checkpoint_id)
+        ?.label,
       "Applied checkpoint",
     );
   }),
