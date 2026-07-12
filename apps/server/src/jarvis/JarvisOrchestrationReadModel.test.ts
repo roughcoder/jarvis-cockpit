@@ -103,10 +103,12 @@ it.effect("merges only new Jarvis session events after the retained event cursor
   }),
 );
 
-it.effect("evicts terminal Jarvis session history after its final fetch", () =>
+it.effect("serves terminal Jarvis session history from the final cached fetch", () =>
   Effect.gen(function* () {
     const fixture = makeJarvisFixtureClient();
     const eventAfters: Array<string | undefined> = [];
+    const checkpointAfters: Array<string | undefined> = [];
+    const requestAfters: Array<string | undefined> = [];
     const client = {
       ...fixture,
       getSnapshot: () =>
@@ -123,13 +125,112 @@ it.effect("evicts terminal Jarvis session history after its final fetch", () =>
         eventAfters.push(options?.after);
         return fixture.getSessionEvents(sessionRef, options);
       },
+      getCheckpoints: (sessionRef: string, options?: { readonly after?: string }) => {
+        checkpointAfters.push(options?.after);
+        return fixture.getCheckpoints(sessionRef, options);
+      },
+      getRequests: (sessionRef: string, options?: { readonly after?: string }) => {
+        requestAfters.push(options?.after);
+        return fixture.getRequests(sessionRef, options);
+      },
     };
     const cache = makeJarvisSessionReadCache();
 
     yield* loadJarvisReadModel(client, cache);
     yield* loadJarvisReadModel(client, cache);
 
+    assert.deepStrictEqual(eventAfters, [undefined]);
+    assert.deepStrictEqual(checkpointAfters, [undefined]);
+    assert.deepStrictEqual(requestAfters, [undefined]);
+  }),
+);
+
+it.effect("prunes Jarvis session history that is absent from a later snapshot", () =>
+  Effect.gen(function* () {
+    const fixture = makeJarvisFixtureClient();
+    const snapshot = yield* fixture.getSnapshot();
+    const session = snapshot.sessions[0];
+    assert.ok(session);
+    const eventAfters: Array<string | undefined> = [];
+    let includeSession = true;
+    const client = {
+      ...fixture,
+      getSnapshot: () =>
+        fixture.getSnapshot().pipe(
+          Effect.map((current) => ({
+            ...current,
+            sessions: includeSession ? current.sessions : [],
+          })),
+        ),
+      getSessionEvents: (sessionRef: string, options?: { readonly after?: string }) => {
+        eventAfters.push(options?.after);
+        return fixture.getSessionEvents(sessionRef, options);
+      },
+    };
+    const cache = makeJarvisSessionReadCache();
+
+    yield* loadJarvisReadModel(client, cache);
+    includeSession = false;
+    yield* loadJarvisReadModel(client, cache);
+    yield* cache.read(client, session);
+
     assert.deepStrictEqual(eventAfters, [undefined, undefined]);
+  }),
+);
+
+it.effect("keeps only the most recently read Jarvis session histories", () =>
+  Effect.gen(function* () {
+    const fixture = makeJarvisFixtureClient();
+    const snapshot = yield* fixture.getSnapshot();
+    const baseSession = snapshot.sessions[0];
+    assert.ok(baseSession);
+    const baseEvent = (yield* fixture.getSessionEvents(baseSession.session_ref)).items[0];
+    assert.ok(baseEvent);
+    const session = (suffix: string): JarvisWorkerSession => ({
+      ...baseSession,
+      session_ref: `sessref_cache_${suffix}` as JarvisWorkerSession["session_ref"],
+      session_id: `sess_cache_${suffix}` as JarvisWorkerSession["session_id"],
+      latest_event_cursor: `evt_cache_${suffix}`,
+    });
+    const sessions = [session("a"), session("b"), session("c")];
+    const eventAfters = new Map<string, Array<string | undefined>>();
+    const client = {
+      ...fixture,
+      getSessionEvents: (sessionRef: string, options?: { readonly after?: string }) => {
+        const calls = eventAfters.get(sessionRef) ?? [];
+        calls.push(options?.after);
+        eventAfters.set(sessionRef, calls);
+        if (options?.after !== undefined) {
+          return Effect.succeed({ items: [], cursor: null, has_more: false });
+        }
+        const eventId = JarvisSessionEvent.fields.event_id.make(
+          `evt_cache_${sessionRef.slice("sessref_cache_".length)}`,
+        );
+        return Effect.succeed({
+          items: [
+            {
+              ...baseEvent,
+              event_id: eventId,
+              session_ref: sessionRef as typeof baseEvent.session_ref,
+            },
+          ],
+          cursor: eventId,
+          has_more: false,
+        });
+      },
+    };
+    const cache = makeJarvisSessionReadCache({ maxSessions: 2 });
+    const [sessionA, sessionB, sessionC] = sessions;
+    assert.ok(sessionA && sessionB && sessionC);
+
+    yield* cache.read(client, sessionA);
+    yield* cache.read(client, sessionB);
+    yield* cache.read(client, sessionA);
+    yield* cache.read(client, sessionC);
+    yield* cache.read(client, sessionB);
+
+    assert.deepStrictEqual(eventAfters.get(sessionA.session_ref), [undefined, "evt_cache_a"]);
+    assert.deepStrictEqual(eventAfters.get(sessionB.session_ref), [undefined, undefined]);
   }),
 );
 
@@ -219,6 +320,35 @@ it.effect("falls back to one full Jarvis event read when the retained cursor has
       recovered.events.items.map((event) => event.event_id),
       [firstEvent.event_id, secondEvent.event_id],
     );
+  }),
+);
+
+it.effect("does not treat an empty latest Jarvis event cursor as a gap", () =>
+  Effect.gen(function* () {
+    const fixture = makeJarvisFixtureClient();
+    const snapshot = yield* fixture.getSnapshot();
+    const session = snapshot.sessions[0];
+    assert.ok(session);
+    const firstEvent = (yield* fixture.getSessionEvents(session.session_ref)).items[0];
+    assert.ok(firstEvent);
+    const eventAfters: Array<string | undefined> = [];
+    const client = {
+      ...fixture,
+      getSessionEvents: (_sessionRef: string, options?: { readonly after?: string }) => {
+        eventAfters.push(options?.after);
+        return Effect.succeed(
+          options?.after === firstEvent.event_id
+            ? { items: [], cursor: null, has_more: false }
+            : { items: [firstEvent], cursor: firstEvent.event_id, has_more: false },
+        );
+      },
+    };
+    const cache = makeJarvisSessionReadCache();
+
+    yield* cache.read(client, { ...session, latest_event_cursor: firstEvent.event_id });
+    yield* cache.read(client, { ...session, latest_event_cursor: "" });
+
+    assert.deepStrictEqual(eventAfters, [undefined, firstEvent.event_id]);
   }),
 );
 

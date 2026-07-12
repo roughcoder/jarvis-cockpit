@@ -28,6 +28,7 @@ const JARVIS_SESSION_CHECKPOINTS_MAX_PAGES = 100;
 const JARVIS_SESSION_REQUESTS_PAGE_LIMIT = 100;
 const JARVIS_SESSION_REQUESTS_MAX_PAGES = 100;
 const DEFAULT_JARVIS_SESSION_HISTORY_MAX_ITEMS = 2_000;
+const DEFAULT_JARVIS_SESSION_HISTORY_MAX_SESSIONS = 200;
 
 interface JarvisCursorPage<Item> {
   readonly items: ReadonlyArray<Item>;
@@ -46,12 +47,18 @@ interface JarvisSessionHistory {
   readonly requests: JarvisRetainedHistory<JarvisSessionRequest>;
 }
 
+interface CachedJarvisSessionHistory {
+  readonly history: JarvisSessionHistory;
+  readonly terminal: boolean;
+  readonly lastRead: number;
+}
+
 export interface JarvisSessionReadCache {
   readonly read: (
     client: JarvisClient,
-    session: Pick<JarvisWorkerSession, "session_ref" | "latest_event_cursor">,
+    session: Pick<JarvisWorkerSession, "session_ref" | "latest_event_cursor" | "status">,
   ) => Effect.Effect<JarvisSessionHistory, JarvisClientError>;
-  readonly evict: (sessionRef: string) => void;
+  readonly prune: (sessionRefs: ReadonlySet<string>) => void;
 }
 
 function configuredJarvisSessionHistoryMaxItems(): number {
@@ -59,6 +66,13 @@ function configuredJarvisSessionHistoryMaxItems(): number {
   return Number.isSafeInteger(configured) && configured > 0
     ? configured
     : DEFAULT_JARVIS_SESSION_HISTORY_MAX_ITEMS;
+}
+
+function configuredJarvisSessionHistoryMaxSessions(): number {
+  const configured = Number.parseInt(process.env.JARVIS_SESSION_HISTORY_MAX_SESSIONS ?? "", 10);
+  return Number.isSafeInteger(configured) && configured > 0
+    ? configured
+    : DEFAULT_JARVIS_SESSION_HISTORY_MAX_SESSIONS;
 }
 
 function cursorFor<Item>(
@@ -138,7 +152,11 @@ function eventGapDetected(
   latestEventCursor: string | null | undefined,
 ): boolean {
   if (incoming.length === 0) {
-    return latestEventCursor != null && latestEventCursor !== existing.cursor;
+    const latestCursor =
+      typeof latestEventCursor === "string" && latestEventCursor.trim().length > 0
+        ? latestEventCursor.trim()
+        : null;
+    return latestCursor !== null && latestCursor !== existing.cursor;
   }
   const lastRetainedEvent = existing.items.at(-1);
   const firstIncomingEvent = incoming[0];
@@ -208,19 +226,44 @@ function refreshJarvisHistory<Item>(input: {
 export function makeJarvisSessionReadCache(
   input: {
     readonly maxItems?: number;
+    readonly maxSessions?: number;
   } = {},
 ): JarvisSessionReadCache {
   const maxItems = input.maxItems ?? DEFAULT_JARVIS_SESSION_HISTORY_MAX_ITEMS;
-  const histories = new Map<string, JarvisSessionHistory>();
+  const maxSessions = input.maxSessions ?? DEFAULT_JARVIS_SESSION_HISTORY_MAX_SESSIONS;
+  const histories = new Map<string, CachedJarvisSessionHistory>();
+  let nextRead = 0;
+
+  const trimToMaxSessions = () => {
+    while (histories.size > maxSessions) {
+      const leastRecentlyRead = [...histories.entries()].reduce((leastRecent, candidate) =>
+        candidate[1].lastRead < leastRecent[1].lastRead ? candidate : leastRecent,
+      );
+      histories.delete(leastRecentlyRead[0]);
+    }
+  };
+
+  const prune = (sessionRefs: ReadonlySet<string>) => {
+    for (const sessionRef of histories.keys()) {
+      if (!sessionRefs.has(sessionRef)) {
+        histories.delete(sessionRef);
+      }
+    }
+    trimToMaxSessions();
+  };
 
   const read = Effect.fn("JarvisSessionReadCache.read")(function* (
     client: JarvisClient,
-    session: Pick<JarvisWorkerSession, "session_ref" | "latest_event_cursor">,
+    session: Pick<JarvisWorkerSession, "session_ref" | "latest_event_cursor" | "status">,
   ) {
     const existing = histories.get(session.session_ref);
+    if (existing?.terminal === true && isTerminalJarvisSession(session)) {
+      histories.set(session.session_ref, { ...existing, lastRead: nextRead++ });
+      return existing.history;
+    }
     const [events, checkpoints, requests] = yield* Effect.all([
       refreshJarvisHistory({
-        existing: existing?.events,
+        existing: existing?.history.events,
         loadPage: (after) =>
           client.getSessionEvents(session.session_ref, {
             ...(after ? { after } : {}),
@@ -231,13 +274,13 @@ export function makeJarvisSessionReadCache(
         maxPages: JARVIS_SESSION_EVENTS_MAX_PAGES,
         gapDetected: (incoming) =>
           eventGapDetected(
-            existing?.events ?? { items: [], cursor: null },
+            existing?.history.events ?? { items: [], cursor: null },
             incoming,
             session.latest_event_cursor,
           ),
       }),
       refreshJarvisHistory({
-        existing: existing?.checkpoints,
+        existing: existing?.history.checkpoints,
         // Requests and checkpoints have the same after-cursor API as events.
         loadPage: (after) =>
           client.getCheckpoints(session.session_ref, {
@@ -249,7 +292,7 @@ export function makeJarvisSessionReadCache(
         maxPages: JARVIS_SESSION_CHECKPOINTS_MAX_PAGES,
       }),
       refreshJarvisHistory({
-        existing: existing?.requests,
+        existing: existing?.history.requests,
         loadPage: (after) =>
           client.getRequests(session.session_ref, {
             ...(after ? { after } : {}),
@@ -261,42 +304,30 @@ export function makeJarvisSessionReadCache(
       }),
     ]);
     const history = { events, checkpoints, requests };
-    histories.set(session.session_ref, history);
+    histories.set(session.session_ref, {
+      history,
+      terminal: isTerminalJarvisSession(session),
+      lastRead: nextRead++,
+    });
+    trimToMaxSessions();
     return history;
   });
 
   return {
     read,
-    evict: (sessionRef) => {
-      histories.delete(sessionRef);
-    },
+    prune,
   };
 }
 
 const jarvisSessionReadCache = makeJarvisSessionReadCache({
   maxItems: configuredJarvisSessionHistoryMaxItems(),
+  maxSessions: configuredJarvisSessionHistoryMaxSessions(),
 });
 
 function isTerminalJarvisSession(session: Pick<JarvisWorkerSession, "status">): boolean {
   return (
     session.status === "completed" || session.status === "failed" || session.status === "stopped"
   );
-}
-
-function loadCachedJarvisSessionHistory(
-  client: JarvisClient,
-  session: Pick<JarvisWorkerSession, "session_ref" | "latest_event_cursor" | "status">,
-  cache: JarvisSessionReadCache,
-): Effect.Effect<JarvisSessionHistory, JarvisClientError> {
-  return cache
-    .read(client, session)
-    .pipe(
-      Effect.tap(() =>
-        isTerminalJarvisSession(session)
-          ? Effect.sync(() => cache.evict(session.session_ref))
-          : Effect.void,
-      ),
-    );
 }
 
 export function shouldUseJarvisCockpitReads(config: {
@@ -326,7 +357,7 @@ export function loadJarvisReadModel(
     Effect.flatMap((snapshot) =>
       Effect.all(
         activeJarvisSessionsForSnapshot(snapshot).map((session) =>
-          loadCachedJarvisSessionHistory(client, session, cache).pipe(
+          cache.read(client, session).pipe(
             Effect.map(({ events, checkpoints, requests }) => ({
               sessionRef: session.session_ref,
               events: appendPendingRequestEvents(events.items, requests.items),
@@ -335,6 +366,11 @@ export function loadJarvisReadModel(
           ),
         ),
       ).pipe(
+        Effect.tap(() =>
+          Effect.sync(() =>
+            cache.prune(new Set(snapshot.sessions.map((session) => session.session_ref))),
+          ),
+        ),
         Effect.map((entries) =>
           mapJarvisRunsSnapshotToReadModel({
             snapshot,
@@ -378,7 +414,7 @@ export function loadJarvisThreadDetail(
     session: client.getSession(sessionRef),
   }).pipe(
     Effect.flatMap(({ snapshot, session }) =>
-      loadCachedJarvisSessionHistory(client, session, cache).pipe(
+      cache.read(client, session).pipe(
         Effect.map(({ events, checkpoints, requests }) => ({
           snapshot,
           session,
