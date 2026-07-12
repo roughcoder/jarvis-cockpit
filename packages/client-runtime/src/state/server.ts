@@ -1,5 +1,7 @@
 import {
   type EnvironmentId,
+  type JarvisProjectThreadDetail,
+  type JarvisProjectThreadStreamItem,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
@@ -21,6 +23,35 @@ import { FINITE_QUERY_FAMILY_MAX_ENTRIES } from "./retention.ts";
 export interface ServerConfigProjection {
   readonly config: ServerConfig;
   readonly latestEvent: ServerConfigStreamEvent;
+}
+
+function projectThreadMessageKey(message: JarvisProjectThreadDetail["messages"][number]): string {
+  return `${message.role}\u0000${message.peer_id ?? ""}\u0000${message.observed_at}\u0000${message.content}`;
+}
+
+/** Apply a durable project-thread update without replacing an unchanged transcript. */
+export function applyJarvisProjectThreadStreamItem(
+  current: JarvisProjectThreadDetail | null,
+  item: JarvisProjectThreadStreamItem,
+): JarvisProjectThreadDetail | null {
+  switch (item.kind) {
+    case "snapshot":
+      return item.thread;
+    case "thread-updated":
+      return current === null ? null : { ...current, ...item.thread, messages: current.messages };
+    case "messages-appended": {
+      if (current === null) return null;
+      const seen = new Set(current.messages.map(projectThreadMessageKey));
+      const messages = [...current.messages];
+      for (const message of item.messages) {
+        const key = projectThreadMessageKey(message);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        messages.push(message);
+      }
+      return messages.length === current.messages.length ? current : { ...current, messages };
+    }
+  }
 }
 
 export function applyServerConfigProjection(
@@ -202,6 +233,9 @@ export function createServerEnvironmentAtoms<R, E>(
     jarvisSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:jarvis-snapshot",
       tag: WS_METHODS.serverGetJarvisSnapshot,
+      // One atom family member exists per environment/input pair, so every
+      // mounted panel shares this visible-state reconciliation cadence.
+      refreshIntervalMs: 10_000,
     }),
     jarvisMcpStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:jarvis-mcp-status",
@@ -240,6 +274,20 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:jarvis-project-thread",
       tag: WS_METHODS.serverGetJarvisProjectThread,
       maxEntries: FINITE_QUERY_FAMILY_MAX_ENTRIES,
+    }),
+    jarvisProjectThreadStream: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:jarvis-project-thread-stream",
+      tag: WS_METHODS.subscribeJarvisProjectThread,
+      transform: (stream) =>
+        stream.pipe(
+          Stream.mapAccum(
+            (): JarvisProjectThreadDetail | null => null,
+            (current, item) => {
+              const next = applyJarvisProjectThreadStreamItem(current, item);
+              return [next, [next]];
+            },
+          ),
+        ),
     }),
     validateJarvisWork: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:validate-jarvis-work",
