@@ -30,7 +30,6 @@ import {
   PanelRightOpenIcon,
   PencilIcon,
   RefreshCwIcon,
-  RotateCcwIcon,
   ServerIcon,
   SparklesIcon,
   TriangleAlertIcon,
@@ -89,7 +88,6 @@ import {
   buildTurnWorkspaceInput,
   clearProjectConversationWorkspaceRepos,
   createProjectConversationWorkspaceStaging,
-  deriveWorkspaceProvisionSteps,
   setProjectConversationWorkspaceEngine,
   type ProjectConversationWorkspaceStaging,
 } from "./projectConversationWorkspace.logic";
@@ -113,7 +111,8 @@ import { toastManager } from "./ui/toast";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { mergeJarvisThreadToolEventsWithReply } from "../jarvisThreadToolEvents.logic";
-import { ThreadToolCallRow } from "./chat/ThreadToolCallRow";
+import { ProjectConversationMessage } from "./ProjectConversationMessage";
+import { ChatHeaderTitle } from "./chat/ChatHeaderTitle";
 
 interface ProjectConversationViewProps {
   readonly environmentId: EnvironmentId;
@@ -807,9 +806,7 @@ export function ProjectConversationView({
                     disabled={conversation === null}
                     title="Rename conversation"
                   >
-                    <h2 className="truncate text-sm font-medium text-foreground">
-                      {conversationTitle.title}
-                    </h2>
+                    <ChatHeaderTitle title={conversationTitle.title} />
                     {conversation !== null ? (
                       <PencilIcon className="size-3 shrink-0 text-muted-foreground/0 transition-colors group-hover/title:text-muted-foreground group-focus-visible/title:text-muted-foreground" />
                     ) : null}
@@ -934,7 +931,7 @@ export function ProjectConversationView({
         >
           <main className="relative flex min-h-0 flex-col overflow-hidden">
             <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-5">
-              <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 pb-4">
+              <div className="mx-auto flex w-full max-w-3xl flex-col pb-4">
                 {loadingProject ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Spinner className="size-4" />
@@ -965,7 +962,7 @@ export function ProjectConversationView({
                   </Empty>
                 ) : null}
                 {messages.map((message) => (
-                  <ProjectConversationMessageRow
+                  <ProjectConversationMessage
                     key={message.id}
                     message={message}
                     workspaceProvisionPhase={conversationWorkspace?.provision_phase ?? null}
@@ -1130,112 +1127,6 @@ function formatProjectConversationSendFailure(error: unknown): string {
     return `Jarvis rejected the turn attachments: ${message}`;
   }
   return message;
-}
-
-function ProjectConversationMessageRow({
-  message,
-  workspaceProvisionPhase,
-  onRetry,
-  retryDisabled,
-}: {
-  readonly message: ProjectConversationMessageView;
-  readonly workspaceProvisionPhase: string | null;
-  readonly onRetry: (() => void) | undefined;
-  readonly retryDisabled: boolean;
-}) {
-  const isUser = message.role === "user";
-  const showProvisionStepper =
-    !isUser &&
-    message.workspaceProvisionRequested &&
-    (message.status === "pending" || message.status === "streaming");
-  return (
-    <div
-      className={cn(
-        "max-w-[85%] rounded-lg px-3 py-2 text-sm",
-        isUser
-          ? "ml-auto bg-primary text-primary-foreground"
-          : "border border-border/70 bg-card/40 text-foreground",
-      )}
-    >
-      {isUser ? <div className="whitespace-pre-wrap">{message.content}</div> : null}
-      {!isUser && (message.status === "pending" || message.status === "streaming") ? (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <Spinner className="size-4" />
-            {message.content || "Waiting for Jarvis"}
-          </div>
-          {showProvisionStepper ? (
-            <WorkspaceProvisionStepper phase={workspaceProvisionPhase} />
-          ) : null}
-        </div>
-      ) : null}
-      {!isUser && message.status === "completed" ? (
-        message.toolItems.length > 0 ? (
-          <div className="space-y-2">
-            {message.toolItems.map((item) =>
-              item.kind === "tool" ? (
-                <ThreadToolCallRow key={item.id} toolCall={item.toolCall} />
-              ) : (
-                <div key={item.id} className="whitespace-pre-wrap">
-                  {item.text}
-                </div>
-              ),
-            )}
-          </div>
-        ) : (
-          <div className="whitespace-pre-wrap">{message.content}</div>
-        )
-      ) : null}
-      {!isUser && message.status === "failed" ? (
-        <div className="space-y-2">
-          <div className="text-destructive">{message.error ?? message.content}</div>
-          {onRetry ? (
-            <Button size="xs" variant="outline" onClick={onRetry} disabled={retryDisabled}>
-              <RotateCcwIcon className="size-3.5" />
-              Retry
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function WorkspaceProvisionStepper({ phase }: { readonly phase: string | null }) {
-  const steps = deriveWorkspaceProvisionSteps(phase);
-  return (
-    <div className="rounded-md border border-border/60 bg-muted/35 px-2.5 py-2">
-      <div className="flex flex-wrap items-center gap-2">
-        {steps.map((step) => (
-          <div
-            key={step.phase}
-            className={cn(
-              "flex min-w-0 items-center gap-1.5 text-[11px]",
-              step.active
-                ? "font-medium text-foreground"
-                : step.complete
-                  ? "text-success-foreground"
-                  : "text-muted-foreground",
-            )}
-          >
-            <span
-              className={cn(
-                "flex size-4 shrink-0 items-center justify-center rounded-full border text-[9px]",
-                step.active
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : step.complete
-                    ? "border-success/40 bg-success/10 text-success-foreground"
-                    : "border-border bg-background",
-              )}
-            >
-              {step.complete ? <CheckIcon className="size-2.5" /> : null}
-            </span>
-            <span className="truncate">{step.label}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
 }
 
 function ProjectConversationContextPanel({
