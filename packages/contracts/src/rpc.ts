@@ -93,6 +93,7 @@ import {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal.ts";
+import { JarvisProjectThreadStreamItem } from "./jarvis.ts";
 import {
   DiscoveredLocalServerList,
   PreviewCloseInput,
@@ -306,6 +307,7 @@ export const WS_METHODS = {
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
+  subscribeJarvisProjectThread: "subscribeJarvisProjectThread",
 } as const;
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -445,6 +447,16 @@ export const WsServerGetJarvisProjectThreadRpc = Rpc.make(WS_METHODS.serverGetJa
   }),
   success: JarvisProjectThreadDetailResult,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsSubscribeJarvisProjectThreadRpc = Rpc.make(WS_METHODS.subscribeJarvisProjectThread, {
+  payload: Schema.Struct({
+    projectId: Schema.String,
+    threadId: Schema.String,
+  }),
+  success: JarvisProjectThreadStreamItem,
+  error: Schema.Union([OrchestrationGetSnapshotError, EnvironmentAuthorizationError]),
+  stream: true,
 });
 
 export const WsServerValidateJarvisWorkRpc = Rpc.make(WS_METHODS.serverValidateJarvisWork, {
@@ -1092,6 +1104,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetJarvisProjectFilesRpc,
   WsServerGetJarvisProjectThreadsRpc,
   WsServerGetJarvisProjectThreadRpc,
+  WsSubscribeJarvisProjectThreadRpc,
   WsServerValidateJarvisWorkRpc,
   WsServerPruneJarvisWorkerWorktreesRpc,
   WsServerCloseJarvisSessionRpc,
