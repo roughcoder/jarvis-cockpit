@@ -43,7 +43,14 @@ export interface ProjectConversationHeaderStatus {
 }
 
 export function isActiveProjectConversationStatus(status: string | null | undefined): boolean {
-  return status === "created" || status === "running";
+  return (
+    status === "created" ||
+    status === "running" ||
+    status === "starting" ||
+    status === "working" ||
+    status === "joining" ||
+    status === "waiting_for_children"
+  );
 }
 
 export function normalizeProjectConversationTitleInput(title: string): string {
@@ -113,11 +120,48 @@ export function resolveProjectConversationHeaderStatus(input: {
   if (status === "running") {
     return { label: "Running", variant: "warning", endedNote: null };
   }
+  if (status === "working") {
+    return { label: "Working", variant: "warning", endedNote: null };
+  }
+  if (status === "starting") {
+    return { label: "Starting", variant: "warning", endedNote: null };
+  }
+  if (status === "joining") {
+    return { label: "Joining results", variant: "warning", endedNote: null };
+  }
+  if (status === "waiting_for_children") {
+    return { label: "Waiting for children", variant: "warning", endedNote: null };
+  }
+  if (status === "waiting_for_input") {
+    return { label: "Needs input", variant: "warning", endedNote: null };
+  }
+  if (status === "waiting_for_approval") {
+    return { label: "Needs approval", variant: "warning", endedNote: null };
+  }
+  if (status === "waiting_for_event") {
+    return { label: "Waiting", variant: "outline", endedNote: null };
+  }
+  if (status === "idle") {
+    return { label: "Idle", variant: "outline", endedNote: null };
+  }
+  if (status === "paused") {
+    return { label: "Paused", variant: "outline", endedNote: null };
+  }
+  if (status === "archived") {
+    return { label: "Archived", variant: "outline", endedNote: null };
+  }
+  if (status === "blocked" || status === "degraded") {
+    return {
+      label: status === "blocked" ? "Blocked" : "Needs attention",
+      variant: "error",
+      endedNote: null,
+    };
+  }
   if (status === "completed") {
-    return { label: "Completed", variant: "success", endedNote };
+    return { label: "Idle", variant: "outline", endedNote: null };
   }
   if (status === "failed") {
-    return { label: "Failed", variant: "error", endedNote };
+    return { label: "Needs attention", variant: "error", endedNote };
   }
   if (status === "created") {
     return { label: "Created", variant: "outline", endedNote };

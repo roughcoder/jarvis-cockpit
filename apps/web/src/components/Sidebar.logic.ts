@@ -683,12 +683,24 @@ export function resolveJarvisProjectConversationStatusPill(
 ): ThreadStatusPill | null {
   switch (status) {
     case "created":
+    case "completed":
+    case "idle":
+    case "paused":
+    case "archived":
       return THREAD_STATUS_PILLS.Idle;
     case "running":
+    case "starting":
+    case "working":
+    case "joining":
+    case "waiting_for_children":
       return THREAD_STATUS_PILLS.Working;
-    case "completed":
-      return THREAD_STATUS_PILLS.Completed;
+    case "waiting_for_approval":
+      return THREAD_STATUS_PILLS["Pending Approval"];
+    case "waiting_for_input":
+      return THREAD_STATUS_PILLS["Awaiting Input"];
     case "failed":
+    case "blocked":
+    case "degraded":
       return THREAD_STATUS_PILLS.Failed;
     default:
       // null/undefined or an unknown (future) status → no pill.

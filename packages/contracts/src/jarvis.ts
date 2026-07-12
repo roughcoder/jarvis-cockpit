@@ -549,14 +549,46 @@ export type JarvisProjectFileRetractInput = typeof JarvisProjectFileRetractInput
 export const JarvisProjectFileUploadResponse = JsonObject;
 export type JarvisProjectFileUploadResponse = typeof JarvisProjectFileUploadResponse.Type;
 
-// Project-thread lifecycle status (brain conversation). See COCKPIT_API.md.
+// Compatibility status vocabulary. New brains project durable conversation
+// operational state; terminal values remain accepted for older deployments.
 export const JarvisProjectThreadStatus = Schema.Literals([
   "created",
   "running",
   "completed",
   "failed",
+  "idle",
+  "starting",
+  "working",
+  "waiting_for_input",
+  "waiting_for_approval",
+  "waiting_for_children",
+  "joining",
+  "waiting_for_event",
+  "blocked",
+  "degraded",
+  "paused",
+  "archived",
 ]);
 export type JarvisProjectThreadStatus = typeof JarvisProjectThreadStatus.Type;
+
+export const JarvisConversationLifecycle = Schema.Literals(["open", "archived"]);
+export type JarvisConversationLifecycle = typeof JarvisConversationLifecycle.Type;
+
+export const JarvisConversationOperationalState = Schema.Literals([
+  "idle",
+  "starting",
+  "working",
+  "waiting_for_input",
+  "waiting_for_approval",
+  "waiting_for_children",
+  "joining",
+  "waiting_for_event",
+  "blocked",
+  "degraded",
+  "paused",
+  "archived",
+]);
+export type JarvisConversationOperationalState = typeof JarvisConversationOperationalState.Type;
 
 // Why a conversation/session ended; null while active.
 export const JarvisEndedReason = Schema.Literals([
@@ -605,6 +637,9 @@ export const JarvisConversationWorkspace = Schema.Struct({
 export type JarvisConversationWorkspace = typeof JarvisConversationWorkspace.Type;
 
 export const JarvisProjectThread = Schema.Struct({
+  // Stable universal-conversation identity. Optional during the v1 compatibility
+  // window; when absent it is identical to thread_id.
+  conversation_id: Schema.optional(JarvisProjectThreadId),
   thread_id: JarvisProjectThreadId,
   project_id: JarvisProjectId,
   // Root threads report `parent_chat_id: ""` (not null) on the wire; accept the
@@ -624,6 +659,10 @@ export const JarvisProjectThread = Schema.Struct({
   host: OptionalPossiblyEmptyPublicString,
   status: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   ended_reason: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  lifecycle: Schema.optional(JarvisConversationLifecycle),
+  operational_state: Schema.optional(JarvisConversationOperationalState),
+  diagnostic_reason: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  last_turn_at: Schema.optional(Schema.NullOr(IsoDateTime)),
   created_at: IsoDateTime,
   updated_at: IsoDateTime,
   created_by: OptionalPossiblyEmptyPublicString,

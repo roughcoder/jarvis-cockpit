@@ -49,6 +49,7 @@ const decodeControlResult = Schema.decodeUnknownEffect(JarvisControlResult);
 const decodeLifecycleResult = Schema.decodeUnknownEffect(JarvisLifecycleResult);
 const decodeSseEvent = Schema.decodeUnknownEffect(JarvisCockpitEvent);
 const decodeProjectThreadDetail = Schema.decodeUnknownEffect(JarvisProjectThreadDetailResponse);
+const decodeProjectThreads = Schema.decodeUnknownEffect(JarvisProjectThreadsResponse);
 const decodeProjectThreadTurn = Schema.decodeUnknownEffect(JarvisProjectThreadTurnInput);
 const encodeProjectThreadDetail = Schema.encodeEffect(JarvisProjectThreadDetailResponse);
 const encodeProjectThreadTurn = Schema.encodeEffect(JarvisProjectThreadTurnInput);
@@ -1165,7 +1166,7 @@ it.effect(
 
 it.effect("decodes root project threads that report empty parent_chat_id", () =>
   Effect.gen(function* () {
-    const parsed = yield* Schema.decodeUnknownEffect(JarvisProjectThreadsResponse)({
+    const parsed = yield* decodeProjectThreads({
       api_version: "v1",
       schema_version: 1,
       project_id: "jarvis",
@@ -1185,5 +1186,39 @@ it.effect("decodes root project threads that report empty parent_chat_id", () =>
     });
 
     assert.strictEqual(parsed.threads[0]?.parent_chat_id, "");
+  }),
+);
+
+it.effect("decodes universal durable conversation lifecycle fields", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectThreads({
+      api_version: "v1",
+      schema_version: 1,
+      project_id: "jarvis",
+      threads: [
+        {
+          conversation_id: "thread_durable",
+          thread_id: "thread_durable",
+          project_id: "jarvis",
+          session_id: "project:jarvis:orchestrator:thread_durable",
+          title: "Durable project conversation",
+          lifecycle: "open",
+          operational_state: "idle",
+          status: "idle",
+          ended_reason: null,
+          last_turn_at: generatedAt,
+          created_at: generatedAt,
+          updated_at: generatedAt,
+        },
+      ],
+    });
+
+    const conversation = parsed.threads[0];
+    assert.strictEqual(conversation?.conversation_id, "thread_durable");
+    assert.strictEqual(conversation?.lifecycle, "open");
+    assert.strictEqual(conversation?.operational_state, "idle");
+    assert.strictEqual(conversation?.status, "idle");
+    assert.strictEqual(conversation?.ended_reason, null);
+    assert.strictEqual(conversation?.last_turn_at, generatedAt);
   }),
 );

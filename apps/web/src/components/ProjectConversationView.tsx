@@ -263,7 +263,7 @@ export function ProjectConversationView({
     serverTitle: conversation?.title ?? "Project conversation",
   });
   const conversationStatus = resolveProjectConversationHeaderStatus({
-    status: conversation?.status,
+    status: conversation?.operational_state ?? conversation?.status,
     endedReason: conversation?.ended_reason,
   });
   const contextPanelToggleState = resolveProjectContextPanelToggleState(contextPanelCollapsed);

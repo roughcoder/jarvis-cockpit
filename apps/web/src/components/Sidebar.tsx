@@ -1061,7 +1061,7 @@ function SidebarJarvisProjectConversations({
     ),
   );
   const hasActiveProjectThreads = conversations.some((conversation) =>
-    isActiveProjectConversationStatus(conversation.status),
+    isActiveProjectConversationStatus(conversation.operational_state ?? conversation.status),
   );
   useEffect(() => {
     const interval = window.setInterval(
@@ -1390,7 +1390,11 @@ function renderProjectConversationTreeNode({
         title={conversation.title}
         engineIconKey={resolveJarvisProjectConversationEngineIconKey(conversation.engine)}
         modelLabel={resolveJarvisProjectConversationModelLabel(conversation.model)}
-        statusPill={resolveJarvisProjectConversationStatusPill(conversation.status)}
+        statusPill={resolveJarvisProjectConversationStatusPill(
+          conversation.kind === "project-thread"
+            ? (conversation.operational_state ?? conversation.status)
+            : conversation.status,
+        )}
         archived={conversation.archived_at != null && conversation.archived_at !== ""}
         canArchive
         depth={depth}

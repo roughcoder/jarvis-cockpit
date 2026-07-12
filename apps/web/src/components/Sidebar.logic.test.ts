@@ -898,12 +898,28 @@ describe("resolveJarvisProjectConversationStatusPill", () => {
     });
   });
 
-  it("maps terminal project-thread statuses to done and error pills", () => {
+  it("keeps completed legacy conversations idle and maps operational problems to errors", () => {
     expect(resolveJarvisProjectConversationStatusPill("completed")).toMatchObject({
-      label: "Completed",
+      label: "Idle",
+      pulse: false,
+    });
+    expect(resolveJarvisProjectConversationStatusPill("idle")).toMatchObject({
+      label: "Idle",
+      pulse: false,
+    });
+    expect(resolveJarvisProjectConversationStatusPill("working")).toMatchObject({
+      label: "Working",
+      pulse: true,
+    });
+    expect(resolveJarvisProjectConversationStatusPill("waiting_for_approval")).toMatchObject({
+      label: "Pending Approval",
       pulse: false,
     });
     expect(resolveJarvisProjectConversationStatusPill("failed")).toMatchObject({
+      label: "Failed",
+      pulse: false,
+    });
+    expect(resolveJarvisProjectConversationStatusPill("degraded")).toMatchObject({
       label: "Failed",
       pulse: false,
     });

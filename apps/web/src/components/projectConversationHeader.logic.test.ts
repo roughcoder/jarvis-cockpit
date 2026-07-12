@@ -101,12 +101,46 @@ describe("project conversation header status", () => {
   it("identifies statuses that need live refresh", () => {
     expect(isActiveProjectConversationStatus("created")).toBe(true);
     expect(isActiveProjectConversationStatus("running")).toBe(true);
+    expect(isActiveProjectConversationStatus("starting")).toBe(true);
+    expect(isActiveProjectConversationStatus("working")).toBe(true);
+    expect(isActiveProjectConversationStatus("joining")).toBe(true);
+    expect(isActiveProjectConversationStatus("waiting_for_children")).toBe(true);
+    expect(isActiveProjectConversationStatus("idle")).toBe(false);
     expect(isActiveProjectConversationStatus("completed")).toBe(false);
     expect(isActiveProjectConversationStatus("failed")).toBe(false);
     expect(isActiveProjectConversationStatus(null)).toBe(false);
   });
 
-  it("resolves running, completed, and failed status indicators", () => {
+  it("renders durable conversation states without implying the conversation ended", () => {
+    expect(resolveProjectConversationHeaderStatus({ status: "idle", endedReason: null })).toEqual({
+      label: "Idle",
+      variant: "outline",
+      endedNote: null,
+    });
+    expect(
+      resolveProjectConversationHeaderStatus({ status: "working", endedReason: null }),
+    ).toEqual({
+      label: "Working",
+      variant: "warning",
+      endedNote: null,
+    });
+    expect(
+      resolveProjectConversationHeaderStatus({ status: "waiting_for_children", endedReason: null }),
+    ).toEqual({
+      label: "Waiting for children",
+      variant: "warning",
+      endedNote: null,
+    });
+    expect(
+      resolveProjectConversationHeaderStatus({ status: "degraded", endedReason: null }),
+    ).toEqual({
+      label: "Needs attention",
+      variant: "error",
+      endedNote: null,
+    });
+  });
+
+  it("maps legacy terminal turn statuses without terminating the conversation", () => {
     expect(
       resolveProjectConversationHeaderStatus({ status: "running", endedReason: null }),
     ).toEqual({
@@ -121,9 +155,9 @@ describe("project conversation header status", () => {
         endedReason: "completed",
       }),
     ).toEqual({
-      label: "Completed",
-      variant: "success",
-      endedNote: "ended: completed",
+      label: "Idle",
+      variant: "outline",
+      endedNote: null,
     });
 
     expect(
@@ -132,7 +166,7 @@ describe("project conversation header status", () => {
         endedReason: "engine_error",
       }),
     ).toEqual({
-      label: "Failed",
+      label: "Needs attention",
       variant: "error",
       endedNote: "ended: engine error",
     });

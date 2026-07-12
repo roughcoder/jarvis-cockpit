@@ -13,6 +13,7 @@ export type ProjectConversationTreeItem =
       readonly engine?: string | null | undefined;
       readonly model?: string | null | undefined;
       readonly status?: string | null | undefined;
+      readonly operational_state?: string | null | undefined;
       readonly archived_at?: string | null | undefined;
       readonly thread: JarvisProjectThread;
     }
@@ -119,6 +120,7 @@ export function projectConversationTreeItems(input: {
     engine: thread.engine,
     model: thread.model,
     status: thread.status,
+    operational_state: thread.operational_state,
     archived_at: thread.archived_at,
     thread,
   }));
