@@ -1,6 +1,3 @@
-export const PROJECT_CONTEXT_PANEL_COLLAPSED_STORAGE_KEY =
-  "t3code:project-conversation-context-panel-collapsed:v1";
-
 export const PROJECT_CONVERSATION_TITLE_MAX_LENGTH = 200;
 
 export interface ProjectConversationRenameResolution {
@@ -168,24 +165,6 @@ export function resolveProjectConversationHeaderStatus(input: {
   }
   // Unknown (future) status → no header badge rather than a misleading "Created".
   return null;
-}
-
-export function resolveProjectContextPanelToggleState(collapsed: boolean): {
-  readonly ariaLabel: string;
-  readonly tooltip: string;
-  readonly nextCollapsed: boolean;
-} {
-  return collapsed
-    ? {
-        ariaLabel: "Show project context panel",
-        tooltip: "Show context",
-        nextCollapsed: false,
-      }
-    : {
-        ariaLabel: "Hide project context panel",
-        tooltip: "Hide context",
-        nextCollapsed: true,
-      };
 }
 
 function formatEndedReason(reason: string): string {

@@ -1,11 +1,16 @@
 import { describe, expect, it } from "@effect/vitest";
+import { JarvisProjectId } from "@t3tools/contracts";
 
 import {
   ARCHIVED_JARVIS_CONVERSATION_GOLDEN,
   ENRICHED_JARVIS_CONVERSATION_GOLDEN,
   LEGACY_JARVIS_CONVERSATION_GOLDEN,
 } from "./__fixtures__/jarvisConversation.golden.ts";
-import { adaptJarvisProjectThread, type JarvisConversationDetail } from "./jarvis.ts";
+import {
+  adaptJarvisProjectThread,
+  enrichAgentConversationWithJarvisContext,
+  type JarvisConversationDetail,
+} from "./jarvis.ts";
 import { projectThreadMessageKey, type JarvisConversationMessage } from "./jarvisMessageKey.ts";
 import type { AgentConversation } from "./model.ts";
 
@@ -405,8 +410,20 @@ describe("Jarvis universal conversation adapter", () => {
       archivedAt: "2026-07-12T11:00:00.000Z",
       workspace: {
         workspaceId: "workspace-1",
-        worktrees: [{ repository: "roughcoder/jarvis-cockpit", branch: "main" }],
+        status: "ready",
+        provisionPhase: "ready",
+        worktrees: [
+          {
+            repository: "roughcoder/jarvis-cockpit",
+            branch: "main",
+            status: "ready",
+            provisionPhase: "ready",
+          },
+        ],
       },
+      project: null,
+      memory: null,
+      artifacts: [],
     });
     expect(conversation.context.workspace).not.toHaveProperty("workerId");
     expect(conversation.context.workspace).not.toHaveProperty("sessionId");
@@ -423,6 +440,116 @@ describe("Jarvis universal conversation adapter", () => {
         },
       ],
     });
+  });
+
+  it("immutably enriches safe project, memory, and artifact context", () => {
+    const base = adaptJarvisProjectThread(ENRICHED_JARVIS_CONVERSATION_GOLDEN);
+    const enriched = enrichAgentConversationWithJarvisContext(base, {
+      project: {
+        id: JarvisProjectId.make("project-golden"),
+        name: "Jarvis",
+        peer_id: "private-peer",
+        aliases: ["assistant-platform"],
+        owner: "platform-team",
+        members: ["operator"],
+        visibility: "private",
+        status: "active",
+        repos: [
+          {
+            name: "jarvis-cockpit",
+            remote: "https://github.com/roughcoder/jarvis-cockpit",
+            default: true,
+          },
+          {
+            name: "private-dependency",
+            remote: "https://token:secret@example.test/private.git?access_token=hidden#fragment",
+            default: false,
+          },
+        ],
+        links: { jira: "JAR", urls: ["https://example.test/project"] },
+        files_root: "/private/fleet/path",
+      },
+      memory: {
+        api_version: "v1",
+        schema_version: 1,
+        project_id: JarvisProjectId.make("project-golden"),
+        peer_id: "private-memory-peer",
+        representation: "Durable project knowledge",
+        conclusions: [
+          {
+            id: "conclusion-1",
+            content: "Use one universal conversation runtime.",
+            artifact_type: "decision",
+            recorded_by: "operator",
+            observed_at: "2026-07-13T00:00:00.000Z",
+          },
+        ],
+      },
+      files: [
+        {
+          doc_id: "artifact-1",
+          title: "Review evidence",
+          session_id: "private-provider-session",
+          original_path: "/private/evidence.md",
+          content_hash: "sha256:evidence",
+          artifact_type: "evidence",
+          uploaded_by: "operator",
+          observed_at: "2026-07-13T00:01:00.000Z",
+          retracted: false,
+          ingestion: { private_worker: "worker-secret" },
+          metadata: { private_path: "/secret" },
+        },
+      ],
+    });
+
+    expect(enriched).not.toBe(base);
+    expect(enriched.context).not.toBe(base.context);
+    expect(base.context).toMatchObject({ project: null, memory: null, artifacts: [] });
+    expect(enriched.context).toMatchObject({
+      project: {
+        id: "project-golden",
+        name: "Jarvis",
+        aliases: ["assistant-platform"],
+        repositories: [
+          {
+            name: "jarvis-cockpit",
+            remote: "https://github.com/roughcoder/jarvis-cockpit",
+            isDefault: true,
+          },
+          {
+            name: "private-dependency",
+            remote: "https://example.test/private.git",
+            isDefault: false,
+          },
+        ],
+        links: { issueTracker: "JAR", urls: ["https://example.test/project"] },
+      },
+      memory: {
+        representation: "Durable project knowledge",
+        conclusions: [
+          {
+            id: "conclusion-1",
+            content: "Use one universal conversation runtime.",
+            artifactType: "decision",
+          },
+        ],
+      },
+      artifacts: [
+        {
+          id: "artifact-1",
+          title: "Review evidence",
+          contentHash: "sha256:evidence",
+          artifactType: "evidence",
+          retracted: false,
+        },
+      ],
+    });
+    const publicContext = JSON.stringify(enriched.context);
+    expect(publicContext).not.toContain("private-peer");
+    expect(publicContext).not.toContain("private-provider-session");
+    expect(publicContext).not.toContain("/private/");
+    expect(publicContext).not.toContain("worker-secret");
+    expect(enriched.diagnostics).toBe(base.diagnostics);
   });
 });
 

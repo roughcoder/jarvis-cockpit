@@ -1,10 +1,6 @@
 import { ProjectId } from "@t3tools/contracts";
 import type {
   EnvironmentId,
-  JarvisConversationWorkspace,
-  JarvisProject,
-  JarvisProjectFile,
-  JarvisProjectMemoryResult,
   JarvisTurnAttachment,
   JarvisTurnWorkspaceInput,
   ServerProvider,
@@ -14,30 +10,23 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { adaptJarvisProjectThread } from "@t3tools/client-runtime/conversation";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  adaptJarvisProjectThread,
+  enrichAgentConversationWithJarvisContext,
+} from "@t3tools/client-runtime/conversation";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import * as Schema from "effect/Schema";
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
-  BotIcon,
-  BrainIcon,
   CheckIcon,
-  ChevronDownIcon,
-  CircleAlertIcon,
-  FileTextIcon,
-  GitBranchIcon,
   MessageSquareIcon,
-  NetworkIcon,
   PanelRightCloseIcon,
   PanelRightOpenIcon,
   PencilIcon,
   RefreshCwIcon,
-  ServerIcon,
   SparklesIcon,
-  LoaderCircleIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
@@ -48,12 +37,12 @@ import {
   primaryServerProvidersAtom,
   serverEnvironment,
 } from "../state/server";
-import { type EnvironmentQueryView, useEnvironmentQuery } from "../state/query";
+import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
 import { cn, randomUUID } from "../lib/utils";
 import { readFileAsDataUrl } from "../lib/fileAttachments";
-import { useLocalStorage } from "../hooks/useLocalStorage";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useEnvironmentSettings } from "../hooks/useSettings";
 import { useTheme } from "../hooks/useTheme";
 import { useComposerHandleContext } from "../composerHandleContext";
@@ -77,7 +66,6 @@ import {
 } from "./ui/alert-dialog";
 import {
   archivedProjectConversationSummary,
-  defaultProjectRepo,
   extractProjectConversationReply,
   formatJarvisCommandFailure,
   formatProjectConversationFailure,
@@ -85,13 +73,22 @@ import {
   isProjectConversationDetailRouteGap,
   projectConversationHistoryMessages,
   projectConversationMergedMessages,
-  projectConversationOrchestrationLifecycles,
   sortProjectConversations,
   visibleProjectFiles,
   type ProjectConversationLocalTurnView,
   type ProjectConversationMessageView,
-  type OrchestrationLifecycleView,
 } from "../jarvisProjectConversations.logic";
+import {
+  LEGACY_PROJECT_CONVERSATION_CONTEXT_PANEL_COLLAPSED_KEY,
+  projectConversationContextContributions,
+  projectConversationContextPanelInitialization,
+} from "../projectConversationContext.logic";
+import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
+import {
+  selectThreadRightPanelState,
+  useRightPanelStore,
+  type RightPanelSurface,
+} from "../rightPanelStore";
 import {
   buildProjectConversationTurnAttachments,
   isProjectConversationComposerDraftEmpty,
@@ -110,9 +107,7 @@ import { BrainWorkspaceStrip } from "./composer/BrainWorkspaceStrip";
 import {
   buildProjectConversationRenameInput,
   buildProjectConversationTitleGenerationContext,
-  PROJECT_CONTEXT_PANEL_COLLAPSED_STORAGE_KEY,
   resolveProjectConversationHeaderStatus,
-  resolveProjectContextPanelToggleState,
   resolveProjectConversationTitle,
 } from "./projectConversationHeader.logic";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
@@ -130,6 +125,9 @@ import { ProjectConversationMessage } from "./ProjectConversationMessage";
 import { ChatHeaderTitle } from "./chat/ChatHeaderTitle";
 import { AgentConversationTimeline } from "./chat/AgentConversationTimeline";
 import { cloneComposerImageForRetry } from "./ChatView.logic";
+import { ConversationContextPanel } from "./ConversationContextPanel";
+import { RightPanelTabs } from "./RightPanelTabs";
+import { RightPanelSheet } from "./RightPanelSheet";
 
 interface ProjectConversationViewProps {
   readonly environmentId: EnvironmentId;
@@ -150,6 +148,10 @@ const PROJECT_CONVERSATION_FILE_DATA_URL_READ_MESSAGES = {
   nonStringResult: "File reader returned a non-string data URL.",
   readFailure: "File read failed.",
 };
+
+const EMPTY_RIGHT_PANEL_PENDING_IDS = new Set<string>();
+const EMPTY_RIGHT_PANEL_PREVIEW_SESSIONS = {};
+const EMPTY_RIGHT_PANEL_TERMINAL_LABELS = new Map<string, string>();
 
 export function ProjectConversationView({
   environmentId,
@@ -221,11 +223,6 @@ export function ProjectConversationView({
     () => projectConversationHistoryMessages(threadDetailStream.data ?? null),
     [threadDetailStream.data],
   );
-  const orchestrationLifecycles = useMemo(
-    () => projectConversationOrchestrationLifecycles(threadDetailStream.data ?? null),
-    [threadDetailStream.data],
-  );
-  const activeOrchestrationLifecycle = orchestrationLifecycles.at(-1) ?? null;
   const files = useMemo(
     () => visibleProjectFiles(filesQuery.data?.ok === true ? (filesQuery.data.files ?? []) : []),
     [filesQuery.data],
@@ -242,6 +239,16 @@ export function ProjectConversationView({
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
   );
+  const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
+  const rightPanelState = useRightPanelStore((state) =>
+    selectThreadRightPanelState(state.byThreadKey, routeThreadRef),
+  );
+  const activeRightPanelSurface = rightPanelState.isOpen
+    ? (rightPanelState.surfaces.find((surface) => surface.id === rightPanelState.activeSurfaceId) ??
+      null)
+    : null;
+  const shouldUseRightPanelSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
+  const initializedRightPanelThreadKeyRef = useRef<string | null>(null);
   const promptRef = useRef("");
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
@@ -260,8 +267,15 @@ export function ProjectConversationView({
     () =>
       threadDetailStream.data === null || threadDetailStream.data === undefined
         ? null
-        : adaptJarvisProjectThread(threadDetailStream.data),
-    [threadDetailStream.data],
+        : enrichAgentConversationWithJarvisContext(
+            adaptJarvisProjectThread(threadDetailStream.data),
+            {
+              project,
+              memory: memoryQuery.data?.ok === true ? (memoryQuery.data.memory ?? null) : null,
+              files,
+            },
+          ),
+    [files, memoryQuery.data, project, threadDetailStream.data],
   );
   const localMessages = useMemo(
     () => messages.filter((message) => message.source === "local"),
@@ -277,11 +291,6 @@ export function ProjectConversationView({
   const [renameDraft, setRenameDraft] = useState("");
   const [renameBusy, setRenameBusy] = useState(false);
   const [renameGenerating, setRenameGenerating] = useState(false);
-  const [contextPanelCollapsed, setContextPanelCollapsed] = useLocalStorage(
-    PROJECT_CONTEXT_PANEL_COLLAPSED_STORAGE_KEY,
-    false,
-    Schema.Boolean,
-  );
   const workspaceStagingKey = `${environmentId}:${projectId}:${String(threadId)}`;
   const [workspaceStagingByThread, setWorkspaceStagingByThread] = useState<
     Record<string, ProjectConversationWorkspaceStaging>
@@ -301,7 +310,14 @@ export function ProjectConversationView({
     status: conversation?.operational_state ?? conversation?.status,
     endedReason: conversation?.ended_reason,
   });
-  const contextPanelToggleState = resolveProjectContextPanelToggleState(contextPanelCollapsed);
+  const contextContributions = useMemo(
+    () =>
+      projectConversationContextContributions({
+        conversation: agentConversation,
+        memoryLoading: memoryQuery.isPending,
+      }),
+    [agentConversation, memoryQuery.isPending],
+  );
   // Project-thread conversations run on the brain (engine "jarvis"), which the gating treats
   // as attachment-capable without a catalog lookup — so we intentionally do NOT fetch the
   // (expensive, route-probing) capabilities here on every conversation mount. A worker-linked
@@ -353,6 +369,21 @@ export function ProjectConversationView({
   }, [threadId]);
 
   useEffect(() => {
+    if (initializedRightPanelThreadKeyRef.current === routeThreadKey) return;
+    initializedRightPanelThreadKeyRef.current = routeThreadKey;
+    const store = useRightPanelStore.getState();
+    const initialization = projectConversationContextPanelInitialization({
+      hasPersistedState: routeThreadKey in store.byThreadKey,
+      legacyCollapsedRaw: window.localStorage.getItem(
+        LEGACY_PROJECT_CONVERSATION_CONTEXT_PANEL_COLLAPSED_KEY,
+      ),
+    });
+    if (initialization === "preserve") return;
+    store.open(routeThreadRef, "context");
+    if (initialization === "closed") store.close(routeThreadRef);
+  }, [routeThreadKey, routeThreadRef]);
+
+  useEffect(() => {
     const engine = conversationWorkspace?.engine?.trim().toLowerCase();
     if (engine !== "codex" && engine !== "claude") {
       return;
@@ -385,6 +416,59 @@ export function ProjectConversationView({
     memoryQuery.refresh();
     filesQuery.refresh();
   };
+
+  const toggleContextPanel = () => {
+    const store = useRightPanelStore.getState();
+    if (rightPanelState.isOpen) {
+      store.close(routeThreadRef);
+      return;
+    }
+    if (rightPanelState.surfaces.some((surface) => surface.kind === "context")) {
+      store.show(routeThreadRef);
+      store.activateSurface(routeThreadRef, "context");
+      return;
+    }
+    store.open(routeThreadRef, "context");
+  };
+
+  const activateRightPanelSurface = (surface: RightPanelSurface) =>
+    useRightPanelStore.getState().activateSurface(routeThreadRef, surface.id);
+  const closeRightPanelSurface = (surface: RightPanelSurface) => {
+    const store = useRightPanelStore.getState();
+    if (surface.kind === "context") {
+      store.close(routeThreadRef);
+      return;
+    }
+    store.closeSurface(routeThreadRef, surface.id);
+  };
+  const closeOtherRightPanelSurfaces = (surface: RightPanelSurface) =>
+    useRightPanelStore.getState().closeOtherSurfaces(routeThreadRef, surface.id);
+  const closeRightPanelSurfacesToRight = (surface: RightPanelSurface) =>
+    useRightPanelStore.getState().closeSurfacesToRight(routeThreadRef, surface.id);
+  const closeAllRightPanelSurfaces = () => useRightPanelStore.getState().close(routeThreadRef);
+  const openContextRightPanel = () => useRightPanelStore.getState().open(routeThreadRef, "context");
+
+  const contextRightPanel = (mode: "inline" | "sheet") => (
+    <RightPanelTabs
+      mode={mode}
+      surfaces={rightPanelState.surfaces}
+      activeSurfaceId={activeRightPanelSurface?.id ?? null}
+      pendingSurfaceIds={EMPTY_RIGHT_PANEL_PENDING_IDS}
+      previewSessions={EMPTY_RIGHT_PANEL_PREVIEW_SESSIONS}
+      terminalLabelsById={EMPTY_RIGHT_PANEL_TERMINAL_LABELS}
+      onActivate={activateRightPanelSurface}
+      onCloseSurface={closeRightPanelSurface}
+      onCloseOtherSurfaces={closeOtherRightPanelSurfaces}
+      onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
+      onCloseAllSurfaces={closeAllRightPanelSurfaces}
+      onAddContext={openContextRightPanel}
+      contextAvailable
+    >
+      {activeRightPanelSurface?.kind === "context" ? (
+        <ConversationContextPanel contributions={contextContributions} />
+      ) : null}
+    </RightPanelTabs>
+  );
 
   const startConversationRename = () => {
     if (conversation === null) return;
@@ -918,20 +1002,26 @@ export function ProjectConversationView({
                     <Button
                       size="icon-xs"
                       variant="outline"
-                      aria-label={contextPanelToggleState.ariaLabel}
-                      onClick={() =>
-                        setContextPanelCollapsed(contextPanelToggleState.nextCollapsed)
+                      aria-label={
+                        rightPanelState.isOpen
+                          ? "Hide conversation context panel"
+                          : "Show conversation context panel"
                       }
+                      onClick={toggleContextPanel}
                     >
-                      {contextPanelCollapsed ? (
-                        <PanelRightOpenIcon className="size-3.5" />
-                      ) : (
+                      {rightPanelState.isOpen ? (
                         <PanelRightCloseIcon className="size-3.5" />
+                      ) : (
+                        <PanelRightOpenIcon className="size-3.5" />
                       )}
                     </Button>
                   }
                 />
-                <TooltipPopup side="bottom">{contextPanelToggleState.tooltip}</TooltipPopup>
+                <TooltipPopup side="bottom">
+                  {rightPanelState.isOpen
+                    ? "Hide conversation context"
+                    : "Show conversation context"}
+                </TooltipPopup>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger
@@ -1007,13 +1097,8 @@ export function ProjectConversationView({
           </div>
         ) : null}
 
-        <div
-          className={cn(
-            "grid min-h-0 flex-1 grid-cols-1 overflow-hidden",
-            contextPanelCollapsed ? "lg:grid-cols-1" : "lg:grid-cols-[minmax(0,1fr)_20rem]",
-          )}
-        >
-          <main className="relative flex min-h-0 flex-col overflow-hidden">
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <div
               className={cn(
                 "min-h-0 flex-1",
@@ -1193,15 +1278,12 @@ export function ProjectConversationView({
               </div>
             </div>
           </main>
-          <ProjectConversationContextPanel
-            project={project}
-            workspace={conversationWorkspace}
-            files={files}
-            memoryQuery={memoryQuery}
-            orchestrationLifecycle={activeOrchestrationLifecycle}
-            collapsed={contextPanelCollapsed}
-          />
         </div>
+        {shouldUseRightPanelSheet && rightPanelState.isOpen ? (
+          <RightPanelSheet open onClose={() => useRightPanelStore.getState().close(routeThreadRef)}>
+            {contextRightPanel("sheet")}
+          </RightPanelSheet>
+        ) : null}
         <AlertDialog
           open={pendingArchiveConfirmation}
           onOpenChange={(open) => {
@@ -1227,6 +1309,7 @@ export function ProjectConversationView({
           </AlertDialogPopup>
         </AlertDialog>
       </div>
+      {!shouldUseRightPanelSheet && rightPanelState.isOpen ? contextRightPanel("inline") : null}
     </div>
   );
 }
@@ -1254,237 +1337,4 @@ function formatProjectConversationSendFailure(error: unknown): string {
     return `Jarvis rejected the turn attachments: ${message}`;
   }
   return message;
-}
-
-function ProjectConversationContextPanel({
-  project,
-  workspace,
-  files,
-  memoryQuery,
-  orchestrationLifecycle,
-  collapsed,
-}: {
-  readonly project: JarvisProject | null;
-  readonly workspace: JarvisConversationWorkspace | null;
-  readonly files: JarvisProjectFile[];
-  readonly memoryQuery: EnvironmentQueryView<JarvisProjectMemoryResult>;
-  readonly orchestrationLifecycle: OrchestrationLifecycleView | null;
-  readonly collapsed: boolean;
-}) {
-  const defaultRepo = defaultProjectRepo(project);
-  const memory = memoryQuery.data?.ok === true ? memoryQuery.data.memory : null;
-  if (collapsed) {
-    return null;
-  }
-  return (
-    <aside className="hidden min-h-0 overflow-y-auto border-l border-border/70 bg-muted/15 px-4 py-4 lg:block">
-      <div className="space-y-5">
-        {orchestrationLifecycle ? (
-          <ProjectConversationOrchestrationPanel lifecycle={orchestrationLifecycle} />
-        ) : null}
-        <section className="space-y-2">
-          <div className="flex items-center gap-2 text-xs font-medium uppercase text-muted-foreground">
-            <GitBranchIcon className="size-3.5" />
-            Project
-          </div>
-          <div className="text-sm font-medium text-foreground">{project?.name ?? "Project"}</div>
-          {defaultRepo ? (
-            <Badge variant="outline" className="max-w-full justify-start truncate">
-              {defaultRepo.remote}
-            </Badge>
-          ) : (
-            <div className="text-xs text-muted-foreground">No default repo</div>
-          )}
-        </section>
-        {workspace ? <ProjectConversationWorkspacePanel workspace={workspace} /> : null}
-        <section className="space-y-2">
-          <div className="flex items-center gap-2 text-xs font-medium uppercase text-muted-foreground">
-            <BrainIcon className="size-3.5" />
-            Memory
-          </div>
-          {memory ? (
-            <div className="space-y-2 text-sm text-muted-foreground">
-              <p className="line-clamp-5">
-                {memory.representation || "No representation recorded."}
-              </p>
-              {memory.conclusions.slice(0, 3).map((conclusion) => (
-                <div key={conclusion.id} className="border-t border-border/60 pt-2">
-                  <div className="text-xs font-medium text-foreground">
-                    {conclusion.artifact_type}
-                  </div>
-                  <div className="line-clamp-3">{conclusion.content}</div>
-                </div>
-              ))}
-            </div>
-          ) : memoryQuery.isPending ? (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Spinner className="size-3.5" />
-              Loading memory
-            </div>
-          ) : (
-            <div className="text-xs text-muted-foreground">No memory summary available.</div>
-          )}
-        </section>
-        <section className="space-y-2">
-          <div className="flex items-center gap-2 text-xs font-medium uppercase text-muted-foreground">
-            <FileTextIcon className="size-3.5" />
-            Files
-          </div>
-          {files.length > 0 ? (
-            <div className="space-y-2">
-              {files.slice(0, 8).map((file) => (
-                <div
-                  key={file.doc_id}
-                  className="min-w-0 border-t border-border/60 pt-2 first:border-0 first:pt-0"
-                >
-                  <div className="truncate text-sm font-medium text-foreground">
-                    {file.title || file.doc_id}
-                  </div>
-                  <div className="truncate text-xs text-muted-foreground">
-                    {file.artifact_type || "file"} · {file.doc_id}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-xs text-muted-foreground">No project files recorded.</div>
-          )}
-        </section>
-      </div>
-    </aside>
-  );
-}
-
-function ProjectConversationOrchestrationPanel({
-  lifecycle,
-}: {
-  readonly lifecycle: OrchestrationLifecycleView;
-}) {
-  const completedCount = lifecycle.children.filter((child) => child.status === "completed").length;
-  const failedCount = lifecycle.children.filter((child) => child.status === "failed").length;
-  const progress =
-    lifecycle.children.length === 0 ? 0 : (completedCount / lifecycle.children.length) * 100;
-  const statusLabel =
-    lifecycle.status === "completed"
-      ? "Complete"
-      : lifecycle.status === "failed"
-        ? "Failed"
-        : lifecycle.status === "running"
-          ? "Joining results"
-          : "Waiting for children";
-
-  return (
-    <section className="space-y-2.5" aria-label="Orchestration">
-      <div className="flex items-center gap-2 text-xs font-medium uppercase text-muted-foreground">
-        <NetworkIcon className="size-3.5" />
-        Orchestration
-      </div>
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="text-sm font-medium text-foreground">{statusLabel}</span>
-        <span className="text-[11px] tabular-nums text-muted-foreground">
-          {completedCount}/{lifecycle.children.length}
-          {failedCount > 0 ? ` · ${failedCount} failed` : ""}
-        </span>
-      </div>
-      <div className="h-1 overflow-hidden rounded-full bg-muted">
-        <div
-          className={cn(
-            "h-full origin-left rounded-full transition-transform duration-300",
-            lifecycle.status === "failed" ? "bg-destructive" : "bg-success",
-          )}
-          style={{ transform: `scaleX(${progress / 100})` }}
-        />
-      </div>
-      <div className="divide-y divide-border/55 border-y border-border/55">
-        {lifecycle.children.map((child) => (
-          <div key={child.id} className="flex min-w-0 items-center gap-2 py-2">
-            <BotIcon className="size-3.5 shrink-0 text-muted-foreground" />
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-xs font-medium text-foreground" title={child.title}>
-                {child.title}
-              </div>
-              <div className="text-[11px] capitalize text-muted-foreground">{child.phase}</div>
-            </div>
-            {child.status === "completed" ? (
-              <CheckIcon
-                className="size-3.5 shrink-0 text-success-foreground"
-                aria-label="Completed"
-              />
-            ) : child.status === "failed" ? (
-              <CircleAlertIcon className="size-3.5 shrink-0 text-destructive" aria-label="Failed" />
-            ) : (
-              <LoaderCircleIcon
-                className="size-3.5 shrink-0 animate-spin text-muted-foreground"
-                aria-label="In progress"
-              />
-            )}
-          </div>
-        ))}
-      </div>
-      <details className="group/orchestration-details">
-        <summary className="flex cursor-pointer list-none items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground">
-          <ChevronDownIcon className="size-3 transition-transform group-open/orchestration-details:rotate-180" />
-          Technical details
-        </summary>
-        <div className="mt-2 space-y-1 border-s border-border/50 ps-3 font-mono text-[10px] text-muted-foreground">
-          <div className="truncate" title={lifecycle.watchId}>
-            watch {lifecycle.watchId}
-          </div>
-          {lifecycle.children.map((child) => (
-            <div key={child.id} className="truncate" title={child.id}>
-              {child.id}
-            </div>
-          ))}
-        </div>
-      </details>
-    </section>
-  );
-}
-
-function ProjectConversationWorkspacePanel({
-  workspace,
-}: {
-  readonly workspace: JarvisConversationWorkspace;
-}) {
-  return (
-    <section className="space-y-2">
-      <div className="flex items-center gap-2 text-xs font-medium uppercase text-muted-foreground">
-        <ServerIcon className="size-3.5" />
-        Workspace
-      </div>
-      <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 text-xs">
-        <span className="text-muted-foreground">Engine</span>
-        <span className="truncate text-foreground">{workspace.engine || "unknown"}</span>
-        <span className="text-muted-foreground">Worker</span>
-        <span className="truncate text-foreground">{workspace.worker_id || "auto"}</span>
-        <span className="text-muted-foreground">Status</span>
-        <span className="truncate text-foreground">{workspace.status || "unknown"}</span>
-      </div>
-      {workspace.worktrees.length > 0 ? (
-        <div className="space-y-2">
-          {workspace.worktrees.map((worktree, index) => (
-            <div
-              key={`${worktree.repo ?? "repo"}:${worktree.name ?? index}`}
-              className="min-w-0 border-t border-border/60 pt-2 first:border-0 first:pt-0"
-            >
-              <div className="truncate text-sm font-medium text-foreground">
-                {worktree.name || worktree.repo || `Worktree ${index + 1}`}
-              </div>
-              <div className="space-y-0.5 text-xs text-muted-foreground">
-                <div className="truncate">repo: {worktree.repo || "unknown"}</div>
-                <div className="truncate">branch: {worktree.branch || "unknown"}</div>
-                <div className="truncate">base: {worktree.base_ref || "default"}</div>
-                <div className="truncate">
-                  status: {worktree.status || "unknown"}
-                  {worktree.provision_phase ? ` / ${worktree.provision_phase}` : ""}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="text-xs text-muted-foreground">No worktrees projected yet.</div>
-      )}
-    </section>
-  );
 }

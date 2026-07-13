@@ -127,6 +127,23 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("keeps conversation context as a thread-scoped singleton and preserves dismissal", () => {
+    useRightPanelStore.getState().open(refA, "context");
+    useRightPanelStore.getState().open(refA, "context");
+    useRightPanelStore.getState().close(refA);
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: false,
+      activeSurfaceId: "context",
+      surfaces: [{ id: "context", kind: "context" }],
+    });
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB)).toEqual({
+      isOpen: false,
+      activeSurfaceId: null,
+      surfaces: [],
+    });
+  });
+
   it("replaces the standalone explorer with peer file surfaces", () => {
     useRightPanelStore.getState().open(refA, "files");
     useRightPanelStore.getState().openFile(refA, "src/index.ts");

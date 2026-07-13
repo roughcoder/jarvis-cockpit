@@ -5,7 +5,6 @@ import {
   buildProjectConversationRenameInput,
   isActiveProjectConversationStatus,
   PROJECT_CONVERSATION_TITLE_MAX_LENGTH,
-  resolveProjectContextPanelToggleState,
   resolveProjectConversationHeaderStatus,
   resolveProjectConversationTitle,
 } from "./projectConversationHeader.logic";
@@ -180,23 +179,5 @@ describe("project conversation header status", () => {
     expect(
       resolveProjectConversationHeaderStatus({ status: "cancelled", endedReason: null }),
     ).toBeNull();
-  });
-});
-
-describe("project context panel toggle state", () => {
-  it("describes expanding a collapsed panel", () => {
-    expect(resolveProjectContextPanelToggleState(true)).toEqual({
-      ariaLabel: "Show project context panel",
-      tooltip: "Show context",
-      nextCollapsed: false,
-    });
-  });
-
-  it("describes collapsing a visible panel", () => {
-    expect(resolveProjectContextPanelToggleState(false)).toEqual({
-      ariaLabel: "Hide project context panel",
-      tooltip: "Hide context",
-      nextCollapsed: true,
-    });
   });
 });

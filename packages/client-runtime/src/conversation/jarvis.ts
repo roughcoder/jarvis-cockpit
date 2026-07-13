@@ -1,4 +1,10 @@
-import type { JarvisConversationWorkspace, JarvisProjectThreadDetail } from "@t3tools/contracts";
+import type {
+  JarvisConversationWorkspace,
+  JarvisProject,
+  JarvisProjectFile,
+  JarvisProjectMemoryResponse,
+  JarvisProjectThreadDetail,
+} from "@t3tools/contracts";
 
 import { projectThreadMessageKey, type JarvisConversationMessage } from "./jarvisMessageKey.ts";
 import type {
@@ -99,9 +105,70 @@ export function adaptJarvisProjectThread(thread: JarvisConversationDetail): Agen
     },
     context: {
       workspace: projectWorkspace(thread.workspace),
+      project: null,
+      memory: null,
+      artifacts: [],
       archivedAt: clean(thread.archived_at),
       archivedBy: clean(thread.archived_by),
       archiveReason: clean(thread.archive_reason),
+    },
+  };
+}
+
+/** Add safe durable project knowledge without exposing provider execution identity. */
+export function enrichAgentConversationWithJarvisContext(
+  conversation: AgentConversation,
+  input: {
+    readonly project: JarvisProject | null;
+    readonly memory: JarvisProjectMemoryResponse | null;
+    readonly files: ReadonlyArray<JarvisProjectFile>;
+  },
+): AgentConversation {
+  return {
+    ...conversation,
+    context: {
+      ...conversation.context,
+      project: input.project
+        ? {
+            id: String(input.project.id),
+            name: input.project.name,
+            aliases: [...input.project.aliases],
+            owner: clean(input.project.owner),
+            members: [...input.project.members],
+            visibility: clean(input.project.visibility),
+            status: clean(input.project.status),
+            repositories: input.project.repos.map((repository) => ({
+              name: repository.name,
+              remote: safeRepositoryRemote(repository.remote),
+              isDefault: repository.default,
+            })),
+            links: {
+              issueTracker: clean(input.project.links?.jira),
+              urls: [...(input.project.links?.urls ?? [])],
+            },
+          }
+        : null,
+      memory: input.memory
+        ? {
+            representation: input.memory.representation,
+            conclusions: input.memory.conclusions.map((conclusion) => ({
+              id: conclusion.id,
+              content: conclusion.content,
+              artifactType: conclusion.artifact_type,
+              recordedBy: clean(conclusion.recorded_by),
+              observedAt: clean(conclusion.observed_at),
+            })),
+          }
+        : null,
+      artifacts: input.files.map((file) => ({
+        id: file.doc_id,
+        title: clean(file.title),
+        contentHash: clean(file.content_hash),
+        artifactType: clean(file.artifact_type),
+        uploadedBy: clean(file.uploaded_by),
+        observedAt: clean(file.observed_at),
+        retracted: file.retracted,
+      })),
     },
   };
 }
@@ -521,12 +588,16 @@ function projectWorkspace(
     workspaceId: clean(workspace.workspace_id),
     rootLabel: clean(workspace.root_label),
     cwdLabel: clean(workspace.cwd_label),
+    status: clean(workspace.status),
+    provisionPhase: clean(workspace.provision_phase),
     worktrees: workspace.worktrees.map((worktree) => ({
       name: clean(worktree.name),
       repository: clean(worktree.repo),
       pathLabel: clean(worktree.path_label),
       branch: clean(worktree.branch),
       baseRef: clean(worktree.base_ref),
+      status: clean(worktree.status),
+      provisionPhase: clean(worktree.provision_phase),
     })),
   };
 }
@@ -604,6 +675,19 @@ function unique(values: ReadonlyArray<string>): string[] {
 function clean(value: string | null | undefined): string | null {
   const cleaned = value?.trim();
   return cleaned ? cleaned : null;
+}
+
+function safeRepositoryRemote(remote: string): string {
+  try {
+    const url = new URL(remote);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return remote;
+  }
 }
 
 function stableId(namespace: string, value: string): string {
