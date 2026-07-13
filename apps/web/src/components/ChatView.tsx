@@ -147,7 +147,7 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
-import { ProjectConversationView } from "./ProjectConversationView";
+import { AgentConversationChatView } from "./AgentConversationChatView";
 import {
   commandForProjectScript,
   nextProjectScriptId,
@@ -5549,7 +5549,7 @@ function ChatViewContent(props: StandardChatViewProps) {
 export default function ChatView(props: ChatViewProps) {
   if (props.routeKind === "agent") {
     return (
-      <ProjectConversationView
+      <AgentConversationChatView
         environmentId={props.environmentId}
         projectId={props.projectId}
         threadId={props.threadId}

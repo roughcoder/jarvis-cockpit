@@ -137,7 +137,7 @@ import {
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
 
-interface ProjectConversationViewProps {
+interface AgentConversationChatViewProps {
   readonly environmentId: EnvironmentId;
   readonly projectId: string;
   readonly threadId: ThreadId;
@@ -174,11 +174,11 @@ function showControlFailure(title: string, fallback: string, error: unknown): vo
   toastManager.add({ type: "error", title, description });
 }
 
-export function ProjectConversationView({
+export function AgentConversationChatView({
   environmentId,
   projectId,
   threadId,
-}: ProjectConversationViewProps) {
+}: AgentConversationChatViewProps) {
   const projectsQuery = useEnvironmentQuery(
     serverEnvironment.jarvisProjects({
       environmentId,
