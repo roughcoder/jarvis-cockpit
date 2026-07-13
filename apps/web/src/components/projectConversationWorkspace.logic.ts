@@ -77,6 +77,7 @@ export function clearProjectConversationWorkspaceRepos(
 
 export function buildTurnWorkspaceInput(
   staging: ProjectConversationWorkspaceStaging,
+  currentEngine?: string | null,
 ): JarvisTurnWorkspaceInput | undefined {
   const repos = uniqueStagedRepos(staging.repos)
     .map((repo) => {
@@ -89,7 +90,14 @@ export function buildTurnWorkspaceInput(
     .filter((repo) => repo.name.length > 0);
 
   if (repos.length === 0) {
-    return undefined;
+    // The engine picker must still take effect with no staged repos, but only
+    // for conversations already routed to a worker engine — brain ("jarvis")
+    // threads never get an engine-only workspace, which would escalate them.
+    const normalizedCurrent = currentEngine?.trim().toLowerCase();
+    const engineChanged =
+      (normalizedCurrent === "codex" || normalizedCurrent === "claude") &&
+      normalizedCurrent !== staging.engine;
+    return engineChanged ? { engine: staging.engine } : undefined;
   }
 
   return {

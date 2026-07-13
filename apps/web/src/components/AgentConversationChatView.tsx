@@ -762,7 +762,7 @@ export function AgentConversationChatView({
     const turnAttachments = submission.attachments;
     const turnWorkspace = submission.workspace;
     const workspaceMatchesSubmission = projectConversationWorkspaceMatchesSubmission(
-      buildTurnWorkspaceInput(workspaceStaging),
+      buildTurnWorkspaceInput(workspaceStaging, conversation?.engine),
       turnWorkspace,
     );
     const clearMatchingRetryDraft =
@@ -868,7 +868,7 @@ export function AgentConversationChatView({
     if (sendBusy || archived || conversation === null) return;
     const sendContext = composerRef.current?.getSendContext();
     if (!sendContext) return;
-    const workspace = buildTurnWorkspaceInput(workspaceStaging);
+    const workspace = buildTurnWorkspaceInput(workspaceStaging, conversation?.engine);
     const attachments = await prepareProjectTurnAttachments({
       images: sendContext.images,
       persistedImages: sendContext.persistedImages,

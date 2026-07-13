@@ -37,6 +37,19 @@ describe("project conversation workspace staging", () => {
     });
   });
 
+  it("sends an engine-only workspace when the picker differs from the live engine", () => {
+    let staging = createProjectConversationWorkspaceStaging("codex");
+    staging = setProjectConversationWorkspaceEngine(staging, "claude");
+
+    // No live engine (or a brain thread) never produces an engine-only escalation.
+    expect(buildTurnWorkspaceInput(staging)).toBeUndefined();
+    expect(buildTurnWorkspaceInput(staging, "jarvis")).toBeUndefined();
+    expect(buildTurnWorkspaceInput(staging, null)).toBeUndefined();
+
+    expect(buildTurnWorkspaceInput(staging, "codex")).toEqual({ engine: "claude" });
+    expect(buildTurnWorkspaceInput(staging, "claude")).toBeUndefined();
+  });
+
   it("toggles repos and clears only repo selections", () => {
     let staging = createProjectConversationWorkspaceStaging("claude");
     staging = toggleProjectConversationWorkspaceRepo(staging, "runtime");
