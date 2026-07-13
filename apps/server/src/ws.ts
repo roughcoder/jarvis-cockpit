@@ -147,8 +147,21 @@ import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import { importProjectSourceFromUrl } from "./projectSourceImport.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
+
+class ProjectSourceImportError extends Schema.TaggedErrorClass<ProjectSourceImportError>()(
+  "ProjectSourceImportError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return this.cause instanceof Error && this.cause.message.trim().length > 0
+      ? this.cause.message
+      : "Project source import failed.";
+  }
+}
+
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -685,6 +698,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverForgetJarvisProjectMemory, AuthOrchestrationOperateScope],
   [WS_METHODS.serverCorrectJarvisProjectMemory, AuthOrchestrationOperateScope],
   [WS_METHODS.serverUploadJarvisProjectFile, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverImportJarvisProjectSource, AuthOrchestrationOperateScope],
   [WS_METHODS.serverRetractJarvisProjectFile, AuthOrchestrationOperateScope],
   [WS_METHODS.serverCreateJarvisProjectThread, AuthOrchestrationOperateScope],
   [WS_METHODS.serverArchiveJarvisProjectThread, AuthOrchestrationOperateScope],
@@ -2383,6 +2397,119 @@ const makeWsRpcLayer = (
                       error instanceof Error && error.message.trim().length > 0
                         ? error.message
                         : "Jarvis project file upload failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverImportJarvisProjectSource]: ({ projectId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverImportJarvisProjectSource,
+            Effect.tryPromise({
+              try: (signal) => importProjectSourceFromUrl(input, undefined, signal),
+              catch: (cause) => new ProjectSourceImportError({ cause }),
+            }).pipe(
+              Effect.flatMap((source) =>
+                jarvisClient.getProjectFiles(projectId).pipe(
+                  Effect.flatMap((files) => {
+                    const sourcePrefix = `src-${source.sourceIdentity.slice(0, 16)}-`;
+                    const currentVersions = files.filter(
+                      (file) => file.retracted !== true && file.doc_id.startsWith(sourcePrefix),
+                    );
+                    const unchanged = currentVersions.find(
+                      (file) =>
+                        file.doc_id === source.docId ||
+                        file.content_hash === `sha256:${source.contentSha256}`,
+                    );
+                    if (unchanged) {
+                      return Effect.succeed({
+                        status: "unchanged",
+                        provider: source.provider,
+                        canonical_url: source.canonicalUrl,
+                        doc_id: unchanged.doc_id,
+                        content_sha256: source.contentSha256,
+                      });
+                    }
+                    return jarvisClient
+                      .uploadProjectFile(projectId, {
+                        doc_id: source.docId,
+                        filename: source.filename,
+                        content_base64: source.contentBase64,
+                        title: source.title,
+                        artifact_type: `${source.provider}-source`,
+                        mime_type: source.mimeType,
+                        idempotency_key: `url-import:${source.sourceIdentity}:${source.contentSha256}`,
+                        metadata: {
+                          surface: "jarvis-cockpit",
+                          source: "url",
+                          source_provider: source.provider,
+                          source_url: source.requestedUrl,
+                          source_canonical_url: source.canonicalUrl,
+                          source_final_url: source.finalUrl,
+                          fetched_at: source.fetchedAt,
+                          content_sha256: source.contentSha256,
+                        },
+                      })
+                      .pipe(
+                        Effect.flatMap((result) =>
+                          Effect.all(
+                            currentVersions.map((file) =>
+                              jarvisClient
+                                .retractProjectFile(projectId, file.doc_id, {
+                                  reason: "Replaced by refreshed source",
+                                  idempotency_key: `url-replace:${source.sourceIdentity}:${file.doc_id}:${source.contentSha256}`,
+                                })
+                                .pipe(
+                                  Effect.map(() => ({ ok: true as const, docId: file.doc_id })),
+                                  Effect.catch((error) =>
+                                    Effect.succeed({
+                                      ok: false as const,
+                                      docId: file.doc_id,
+                                      message:
+                                        error instanceof Error
+                                          ? error.message
+                                          : "The previous source version could not be retired.",
+                                    }),
+                                  ),
+                                ),
+                            ),
+                            { concurrency: 1 },
+                          ).pipe(
+                            Effect.map((retractions) => ({
+                              status: "imported",
+                              provider: source.provider,
+                              canonical_url: source.canonicalUrl,
+                              doc_id: source.docId,
+                              content_sha256: source.contentSha256,
+                              result,
+                              replaced: retractions
+                                .filter((entry) => entry.ok)
+                                .map((entry) => entry.docId),
+                              warnings: retractions
+                                .filter((entry) => !entry.ok)
+                                .map((entry) => `${entry.docId}: ${entry.message}`),
+                            })),
+                          ),
+                        ),
+                      );
+                  }),
+                ),
+              ),
+              Effect.map((result) => ({
+                ok: true,
+                result,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Project source import failed.",
                   },
                 }),
               ),

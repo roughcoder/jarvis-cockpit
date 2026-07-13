@@ -1317,6 +1317,9 @@ export function makeJarvisCockpitClient(input: {
       requestJson("projects.files.upload", `/v1/projects/${encodeURIComponent(projectId)}/files`, {
         method: "POST",
         body: projectFileUploadFormData(input),
+        ...(input.idempotency_key
+          ? { headers: { "X-Idempotency-Key": input.idempotency_key } }
+          : {}),
       }).pipe(Effect.flatMap(decodeFor("projects.files.upload", decodeJsonObject))),
     retractProjectFile: (projectId, docId, input = {}) =>
       requestJson(
@@ -3903,14 +3906,14 @@ function projectFileUploadFormData(input: JarvisProjectFileUploadInput): FormDat
   const mimeType = payload.mime_type ?? "application/octet-stream";
   const content = NodeBuffer.Buffer.from(payload.content_base64, "base64");
   formData.append("file", new Blob([content], { type: mimeType }), payload.filename);
+  if (payload.doc_id !== undefined) {
+    formData.append("doc_id", payload.doc_id);
+  }
   if (payload.title !== undefined) {
     formData.append("title", payload.title);
   }
   if (payload.artifact_type !== undefined) {
     formData.append("artifact_type", payload.artifact_type);
-  }
-  if (payload.idempotency_key !== undefined) {
-    formData.append("idempotency_key", payload.idempotency_key);
   }
   formData.append("metadata", JSON.stringify(payload.metadata));
   return formData;

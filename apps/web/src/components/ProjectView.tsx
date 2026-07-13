@@ -3,6 +3,8 @@ import type {
   JarvisProject,
   JarvisProjectConclusion,
   JarvisProjectFile,
+  JarvisProjectFileUploadInput,
+  JarvisProjectSourceImportInput,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -16,7 +18,6 @@ import {
   ExternalLinkIcon,
   GitBranchIcon,
   LoaderIcon,
-  PencilIcon,
   PlusIcon,
   RefreshCwIcon,
   SaveIcon,
@@ -46,7 +47,9 @@ import {
   repoNameFromRemote,
   validateProjectRepositoryDrafts,
 } from "./settings/JarvisProjects.logic";
+import { ProjectKnowledgeIntake, type ProjectUploadResult } from "./ProjectKnowledgeIntake";
 import { ProjectPullRequestsPanel } from "./ProjectPullRequestsPanel";
+import { ProjectRepositoryControl } from "./ProjectRepositoryControl";
 import { cn } from "../lib/utils";
 import { textToBase64 } from "../lib/fileAttachments";
 import { formatRelativeTimeLabel } from "../timestampFormat";
@@ -172,6 +175,12 @@ export function ProjectView({ environmentId, projectId }: ProjectViewProps) {
       input: { projectId, includeRetracted: false },
     }),
   );
+  const pullRequestsQuery = useEnvironmentQuery(
+    serverEnvironment.jarvisProjectPullRequests({
+      environmentId,
+      input: { projectId },
+    }),
+  );
   const updateProject = useAtomCommand(serverEnvironment.updateJarvisProject, {
     reportFailure: false,
   });
@@ -182,6 +191,9 @@ export function ProjectView({ environmentId, projectId }: ProjectViewProps) {
     reportFailure: false,
   });
   const uploadProjectFile = useAtomCommand(serverEnvironment.uploadJarvisProjectFile, {
+    reportFailure: false,
+  });
+  const importProjectSource = useAtomCommand(serverEnvironment.importJarvisProjectSource, {
     reportFailure: false,
   });
   const archiveProject = useAtomCommand(serverEnvironment.archiveJarvisProject, {
@@ -203,6 +215,13 @@ export function ProjectView({ environmentId, projectId }: ProjectViewProps) {
   const conclusions = useMemo(
     () => newestConclusions(memory?.conclusions ?? []),
     [memory?.conclusions],
+  );
+  const openPullRequests =
+    pullRequestsQuery.data?.ok === true ? (pullRequestsQuery.data.pullRequests ?? []) : [];
+  const pullRequestActivityCount = openPullRequests.reduce(
+    (total, pullRequest) =>
+      total + (pullRequest.commentCount ?? 0) + (pullRequest.reviewCount ?? 0),
+    0,
   );
   const [editingRepos, setEditingRepos] = useState(false);
   const [projectName, setProjectName] = useState("");
@@ -254,6 +273,62 @@ export function ProjectView({ environmentId, projectId }: ProjectViewProps) {
     projectsQuery.refresh();
     memoryQuery.refresh();
     filesQuery.refresh();
+    pullRequestsQuery.refresh();
+  };
+
+  const uploadKnowledgeFile = async (
+    input: JarvisProjectFileUploadInput,
+  ): Promise<ProjectUploadResult> => {
+    if (writingFile) return { ok: false, message: "Another source is already being added." };
+    setWritingFile(true);
+    const result = await uploadProjectFile({ environmentId, input: { projectId, input } });
+    setWritingFile(false);
+    if (result._tag === "Failure") {
+      return isAtomCommandInterrupted(result)
+        ? { ok: false, message: "The upload was interrupted." }
+        : { ok: false, message: formatProjectWriteFailure(squashAtomCommandFailure(result)) };
+    }
+    if (!result.value.ok) {
+      return {
+        ok: false,
+        message: formatProjectWriteFailure(
+          result.value.error?.message ?? "Jarvis did not upload the document.",
+        ),
+      };
+    }
+    await filesQuery.refresh();
+    toastManager.add({ type: "success", title: "Project source added", description: input.title });
+    return { ok: true };
+  };
+
+  const importKnowledgeSource = async (
+    input: JarvisProjectSourceImportInput,
+  ): Promise<ProjectUploadResult> => {
+    if (writingFile) return { ok: false, message: "Another source is already being added." };
+    setWritingFile(true);
+    const result = await importProjectSource({ environmentId, input: { projectId, input } });
+    setWritingFile(false);
+    if (result._tag === "Failure") {
+      return isAtomCommandInterrupted(result)
+        ? { ok: false, message: "The source fetch was interrupted." }
+        : { ok: false, message: formatProjectWriteFailure(squashAtomCommandFailure(result)) };
+    }
+    if (!result.value.ok) {
+      return {
+        ok: false,
+        message: formatProjectWriteFailure(
+          result.value.error?.message ?? "Jarvis did not import the source.",
+        ),
+      };
+    }
+    await filesQuery.refresh();
+    const status = result.value.result?.status;
+    toastManager.add({
+      type: "success",
+      title: status === "unchanged" ? "Source already current" : "Source fetched into the project",
+      description: input.title ?? input.url,
+    });
+    return { ok: true };
   };
 
   const openUploadFileModal = () => {
@@ -622,43 +697,45 @@ export function ProjectView({ environmentId, projectId }: ProjectViewProps) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background text-foreground">
-      <div className="border-b border-border/70 px-4 py-4 sm:px-6">
-        <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0 space-y-3">
+      <header className="border-b border-border/70 bg-card/30 px-4 py-5 sm:px-6">
+        <div className="mx-auto flex w-full max-w-[94rem] flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+          <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline">{statusLabel}</Badge>
-              <Badge variant="secondary">{project.repos.length} repos</Badge>
-              <Badge variant="secondary">{files.length} files</Badge>
+              <Badge variant="outline" className="gap-1.5">
+                <span className="size-1.5 rounded-full bg-emerald-500" />
+                {statusLabel}
+              </Badge>
+              <span className="font-mono text-xs text-muted-foreground">{project.id}</span>
             </div>
-            <div className="space-y-1">
-              <h1 className="truncate text-2xl font-semibold tracking-normal text-foreground sm:text-3xl">
-                {project.name}
-              </h1>
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-                <span>{project.peer_id}</span>
-                {project.owner ? <span>Owner {project.owner}</span> : null}
-                {project.visibility ? <span>{project.visibility}</span> : null}
-              </div>
-            </div>
+            <h1 className="mt-3 truncate text-3xl font-semibold tracking-[-0.035em] text-foreground sm:text-4xl">
+              {project.name}
+            </h1>
+            <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+              <span>{project.peer_id}</span>
+              {defaultRepo ? <span>Default · {defaultRepo.remote}</span> : null}
+              {project.owner ? <span>Owner · {project.owner}</span> : null}
+            </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" onClick={refreshProjectData}>
               <RefreshCwIcon
                 className={cn(
                   "size-4",
-                  (projectsQuery.isPending || memoryQuery.isPending || filesQuery.isPending) &&
+                  (projectsQuery.isPending ||
+                    memoryQuery.isPending ||
+                    filesQuery.isPending ||
+                    pullRequestsQuery.isPending) &&
                     "animate-spin",
                 )}
               />
-              Refresh
+              Refresh deck
             </Button>
-            <Button size="sm" variant="outline" onClick={() => setEditingRepos(true)}>
-              <PencilIcon className="size-4" />
-              Edit repos
+            <Button size="sm" variant="outline" render={<Link to="/settings/projects" />}>
+              <ExternalLinkIcon className="size-4" />
+              Settings
             </Button>
             <Button
               size="sm"
-              variant="outline"
               render={
                 <Link
                   to="/jarvis-project/$environmentId/$projectId/orchestration"
@@ -671,328 +748,287 @@ export function ProjectView({ environmentId, projectId }: ProjectViewProps) {
             </Button>
           </div>
         </div>
-      </div>
+      </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto grid w-full max-w-6xl gap-4 px-4 py-5 sm:px-6 lg:grid-cols-[minmax(0,1.25fr)_minmax(18rem,0.75fr)]">
-          <section className="space-y-4">
-            <div className="rounded-lg border border-border/70 bg-muted/20 p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <h2 className="text-sm font-semibold text-foreground">Repositories</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {defaultRepo
-                      ? `Default remote ${defaultRepo.remote}`
-                      : "No repositories recorded."}
-                  </p>
-                </div>
-                {editingRepos ? (
-                  <div className="flex gap-2">
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      onClick={() => {
-                        resetDrafts(project);
-                        setEditingRepos(false);
-                      }}
-                    >
-                      <XIcon className="size-3" />
-                      Cancel
-                    </Button>
-                    <Button size="xs" onClick={() => void saveProject()} disabled={writingProject}>
-                      {writingProject ? (
-                        <LoaderIcon className="size-3 animate-spin" />
-                      ) : (
-                        <SaveIcon className="size-3" />
-                      )}
-                      Save
-                    </Button>
-                  </div>
-                ) : (
-                  <Button size="xs" variant="outline" onClick={openAddRepositoryModal}>
-                    <PlusIcon className="size-3" />
-                    Add repository
-                  </Button>
+        <main className="mx-auto w-full max-w-[94rem] space-y-5 px-4 py-5 sm:px-6 sm:py-6">
+          <section className="project-control-deck-enter grid overflow-hidden rounded-xl border border-border/70 bg-card shadow-xs sm:grid-cols-2 xl:grid-cols-4">
+            {[
+              ["Repositories", project.repos.length, "linked codebases"],
+              ["Open pull requests", openPullRequests.length, "across linked repos"],
+              ["PR activity", pullRequestActivityCount, "comments and reviews"],
+              ["Project sources", files.length, "available to Jarvis"],
+            ].map(([label, value, detail], index) => (
+              <div
+                key={String(label)}
+                className={cn(
+                  "px-5 py-4 sm:px-6",
+                  index > 0 && "border-t border-border/60 sm:border-l sm:border-t-0",
                 )}
+              >
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  {label}
+                </p>
+                <div className="mt-2 flex items-end justify-between gap-3">
+                  <span className="font-mono text-2xl font-medium tabular-nums text-foreground">
+                    {value}
+                  </span>
+                  <span className="text-right text-xs text-muted-foreground">{detail}</span>
+                </div>
               </div>
+            ))}
+          </section>
 
-              {editingRepos ? (
-                <div className="mt-4 space-y-3">
-                  {!repositoryValidation.ok ? (
-                    <Alert variant="error">
-                      <TriangleAlertIcon />
-                      <AlertTitle>Repository validation failed</AlertTitle>
-                      <AlertDescription>
-                        {projectRepositoryValidationSummary(repositoryValidation)}
-                      </AlertDescription>
-                    </Alert>
-                  ) : null}
-                  {repoDrafts.map((repo, index) => {
-                    const rowErrors = repositoryValidationErrors.filter(
-                      (error) => error.rowIndex === index,
-                    );
-                    const nameError = rowErrors.find((error) => error.field === "name")?.message;
-                    const remoteError = rowErrors.find(
-                      (error) => error.field === "remote",
-                    )?.message;
-                    return (
-                      <div
-                        key={repo.rowId}
-                        className="grid gap-3 rounded-md border border-border/70 bg-background/70 p-3 md:grid-cols-[minmax(8rem,0.7fr)_minmax(12rem,1.3fr)_auto_auto] md:items-start"
-                      >
-                        <label className="space-y-1.5">
-                          <span className="text-xs font-medium text-muted-foreground">Name</span>
-                          <Input
-                            value={repo.name}
-                            onChange={(event) =>
-                              updateRepositoryDraft(index, { name: event.currentTarget.value })
-                            }
-                            aria-label={`Repository ${index + 1} name`}
-                            aria-invalid={Boolean(nameError)}
-                          />
-                          {nameError ? (
-                            <span className="block text-xs text-destructive">{nameError}</span>
-                          ) : null}
-                        </label>
-                        <label className="space-y-1.5">
-                          <span className="text-xs font-medium text-muted-foreground">Remote</span>
-                          <Input
-                            value={repo.remote}
-                            onBlur={() => inferRepositoryName(index)}
-                            onChange={(event) =>
-                              updateRepositoryDraft(index, { remote: event.currentTarget.value })
-                            }
-                            aria-label={`Repository ${index + 1} remote`}
-                            aria-invalid={Boolean(remoteError)}
-                          />
-                          {remoteError ? (
-                            <span className="block text-xs text-destructive">{remoteError}</span>
-                          ) : null}
-                        </label>
-                        <label className="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-background px-3 py-2 md:mt-5">
-                          <span className="text-sm text-foreground">Default</span>
-                          <Switch
-                            checked={repo.default}
-                            onCheckedChange={(checked) =>
-                              setRepoDrafts((drafts) =>
-                                setDefaultProjectRepositoryDraftRow(drafts, index, checked),
-                              )
-                            }
-                            aria-label={`Repository ${index + 1} default`}
-                          />
-                        </label>
-                        <Button
-                          size="icon-sm"
-                          variant="destructive-outline"
-                          onClick={() =>
-                            setRepoDrafts((drafts) =>
-                              removeProjectRepositoryDraftRow(drafts, index),
-                            )
-                          }
-                          aria-label={`Remove repository ${index + 1}`}
-                          className="md:mt-5"
-                        >
-                          <Trash2Icon className="size-4" />
-                        </Button>
-                      </div>
-                    );
-                  })}
+          <ProjectKnowledgeIntake
+            files={files}
+            filesPending={filesQuery.isPending && !filesQuery.data}
+            filesError={
+              filesQuery.error ??
+              (filesQuery.data?.ok === false
+                ? (filesQuery.data.error?.message ?? "Project sources unavailable.")
+                : null)
+            }
+            uploading={writingFile}
+            onUpload={uploadKnowledgeFile}
+            onImport={importKnowledgeSource}
+            onWriteNote={openUploadFileModal}
+          />
+
+          {editingRepos ? (
+            <section className="rounded-xl border border-border/70 bg-card p-5 shadow-xs sm:p-6">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                    Repository configuration
+                  </p>
+                  <h2 className="mt-1 text-lg font-semibold text-foreground">
+                    Edit linked repositories
+                  </h2>
+                </div>
+                <div className="flex gap-2">
                   <Button
                     size="xs"
                     variant="outline"
-                    onClick={() =>
-                      setRepoDrafts((drafts) =>
-                        appendProjectRepositoryDraftRow(
-                          drafts,
-                          `project-repo-${repoRowIdCounter.current++}`,
-                        ),
-                      )
-                    }
+                    onClick={() => {
+                      resetDrafts(project);
+                      setEditingRepos(false);
+                    }}
                   >
-                    <PlusIcon className="size-3" />
-                    Add repository
+                    <XIcon className="size-3.5" /> Cancel
+                  </Button>
+                  <Button size="xs" onClick={() => void saveProject()} disabled={writingProject}>
+                    {writingProject ? (
+                      <LoaderIcon className="size-3.5 animate-spin" />
+                    ) : (
+                      <SaveIcon className="size-3.5" />
+                    )}
+                    Save repositories
                   </Button>
                 </div>
-              ) : (
-                <div className="mt-4 grid gap-2">
-                  {project.repos.map((repo) => (
-                    <div
-                      key={`${repo.remote}:${repo.name}`}
-                      className="flex min-w-0 flex-col gap-2 rounded-md border border-border/70 bg-background/70 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
-                    >
-                      <div className="min-w-0">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <GitBranchIcon className="size-4 shrink-0 text-muted-foreground" />
-                          <span className="truncate text-sm font-medium text-foreground">
-                            {repo.name}
-                          </span>
-                          {repo.default ? <Badge variant="success">Default</Badge> : null}
-                        </div>
-                        <div className="mt-1 truncate text-xs text-muted-foreground">
-                          {repo.remote}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <ProjectPullRequestsPanel environmentId={environmentId} projectId={projectId} />
-
-            <div className="rounded-lg border border-border/70 bg-muted/20 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-semibold text-foreground">Project Memory</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {memoryQuery.isPending && !memoryQuery.data
-                      ? "Loading memory"
-                      : memory?.representation || "No representation recorded."}
-                  </p>
-                </div>
-                <Button size="icon-sm" variant="outline" onClick={openRecordMemoryModal}>
-                  <PlusIcon className="size-4" />
-                  <span className="sr-only">Record memory</span>
-                </Button>
               </div>
-              {memoryQuery.data?.ok === false || memoryQuery.error ? (
+              {!repositoryValidation.ok ? (
                 <Alert variant="error" className="mt-4">
                   <TriangleAlertIcon />
-                  <AlertTitle>Memory failed</AlertTitle>
+                  <AlertTitle>Repository validation failed</AlertTitle>
                   <AlertDescription>
-                    {memoryQuery.error ??
-                      memoryQuery.data?.error?.message ??
-                      "Jarvis did not return project memory."}
+                    {projectRepositoryValidationSummary(repositoryValidation)}
                   </AlertDescription>
                 </Alert>
               ) : null}
-              {conclusions.length > 0 ? (
-                <div className="mt-4 divide-y divide-border/60">
-                  {conclusions.map((conclusion) => (
-                    <div key={conclusion.id} className="py-3 first:pt-0 last:pb-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant="outline">{conclusion.artifact_type}</Badge>
-                        <span className="text-xs text-muted-foreground">
-                          {formatObservedAt(conclusion.observed_at)}
-                        </span>
-                      </div>
-                      <p className="mt-2 text-sm leading-6 text-foreground">{conclusion.content}</p>
+              <div className="mt-4 space-y-3">
+                {repoDrafts.map((repo, index) => {
+                  const rowErrors = repositoryValidationErrors.filter(
+                    (error) => error.rowIndex === index,
+                  );
+                  const nameError = rowErrors.find((error) => error.field === "name")?.message;
+                  const remoteError = rowErrors.find((error) => error.field === "remote")?.message;
+                  return (
+                    <div
+                      key={repo.rowId}
+                      className="grid gap-3 rounded-lg border border-border/70 bg-muted/15 p-3 md:grid-cols-[minmax(8rem,0.7fr)_minmax(12rem,1.3fr)_auto_auto] md:items-start"
+                    >
+                      <label className="space-y-1.5">
+                        <span className="text-xs font-medium text-muted-foreground">Name</span>
+                        <Input
+                          value={repo.name}
+                          onChange={(event) =>
+                            updateRepositoryDraft(index, { name: event.currentTarget.value })
+                          }
+                          aria-invalid={Boolean(nameError)}
+                        />
+                        {nameError ? (
+                          <span className="block text-xs text-destructive">{nameError}</span>
+                        ) : null}
+                      </label>
+                      <label className="space-y-1.5">
+                        <span className="text-xs font-medium text-muted-foreground">Remote</span>
+                        <Input
+                          value={repo.remote}
+                          onBlur={() => inferRepositoryName(index)}
+                          onChange={(event) =>
+                            updateRepositoryDraft(index, { remote: event.currentTarget.value })
+                          }
+                          aria-invalid={Boolean(remoteError)}
+                        />
+                        {remoteError ? (
+                          <span className="block text-xs text-destructive">{remoteError}</span>
+                        ) : null}
+                      </label>
+                      <label className="flex items-center gap-3 rounded-md border border-border/60 bg-background px-3 py-2 md:mt-5">
+                        <span className="text-sm">Default</span>
+                        <Switch
+                          checked={repo.default}
+                          onCheckedChange={(checked) =>
+                            setRepoDrafts((drafts) =>
+                              setDefaultProjectRepositoryDraftRow(drafts, index, checked),
+                            )
+                          }
+                        />
+                      </label>
+                      <Button
+                        size="icon-sm"
+                        variant="destructive-outline"
+                        className="md:mt-5"
+                        onClick={() =>
+                          setRepoDrafts((drafts) => removeProjectRepositoryDraftRow(drafts, index))
+                        }
+                      >
+                        <Trash2Icon className="size-4" />
+                        <span className="sr-only">Remove repository</span>
+                      </Button>
                     </div>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          </section>
-
-          <aside className="space-y-4">
-            <div className="rounded-lg border border-border/70 bg-muted/20 p-4">
-              <h2 className="text-sm font-semibold text-foreground">Project Details</h2>
-              <dl className="mt-4 space-y-3 text-sm">
-                <div>
-                  <dt className="text-xs font-medium uppercase text-muted-foreground">
-                    Project id
-                  </dt>
-                  <dd className="mt-1 break-all text-foreground">{project.id}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs font-medium uppercase text-muted-foreground">
-                    Files root
-                  </dt>
-                  <dd className="mt-1 break-all text-foreground">
-                    {formatOptionalValue(project.files_root, "Not configured")}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs font-medium uppercase text-muted-foreground">Members</dt>
-                  <dd className="mt-1 text-foreground">
-                    {project.members.length > 0 ? project.members.join(", ") : "No members"}
-                  </dd>
-                </div>
-              </dl>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <Button size="xs" variant="outline" render={<Link to="/settings/projects" />}>
-                  <ExternalLinkIcon className="size-3" />
-                  Settings
-                </Button>
+                  );
+                })}
                 <Button
                   size="xs"
                   variant="outline"
                   onClick={() =>
-                    setPendingAction({
-                      kind: "archive",
-                      project: { id: project.id, name: project.name },
-                    })
+                    setRepoDrafts((drafts) =>
+                      appendProjectRepositoryDraftRow(
+                        drafts,
+                        `project-repo-${repoRowIdCounter.current++}`,
+                      ),
+                    )
                   }
-                  disabled={writingProject}
                 >
-                  <ArchiveIcon className="size-3" />
-                  Archive
-                </Button>
-                <Button
-                  size="xs"
-                  variant="destructive"
-                  onClick={() =>
-                    setPendingAction({
-                      kind: "delete",
-                      project: { id: project.id, name: project.name },
-                    })
-                  }
-                  disabled={writingProject}
-                >
-                  <Trash2Icon className="size-3" />
-                  Delete
+                  <PlusIcon className="size-3.5" />
+                  Add row
                 </Button>
               </div>
-            </div>
+            </section>
+          ) : null}
 
-            <div className="rounded-lg border border-border/70 bg-muted/20 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="text-sm font-semibold text-foreground">Files</h2>
-                <Button size="icon-sm" variant="outline" onClick={openUploadFileModal}>
-                  <UploadIcon className="size-4" />
-                  <span className="sr-only">Upload project file</span>
-                </Button>
+          <ProjectRepositoryControl
+            environmentId={environmentId}
+            projectId={projectId}
+            repos={project.repos}
+            onAddRepository={openAddRepositoryModal}
+            onEditRepositories={() => setEditingRepos(true)}
+          />
+
+          <ProjectPullRequestsPanel environmentId={environmentId} projectId={projectId} />
+
+          <section className="project-control-deck-enter rounded-xl border border-border/70 bg-card p-5 shadow-xs sm:p-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  Project memory
+                </p>
+                <h2 className="mt-1 text-lg font-semibold text-foreground">
+                  What the project brain currently knows
+                </h2>
               </div>
-              {filesQuery.data?.ok === false || filesQuery.error ? (
-                <Alert variant="error" className="mt-4">
-                  <TriangleAlertIcon />
-                  <AlertTitle>Files failed</AlertTitle>
-                  <AlertDescription>
-                    {filesQuery.error ??
-                      filesQuery.data?.error?.message ??
-                      "Jarvis did not return project files."}
-                  </AlertDescription>
-                </Alert>
-              ) : filesQuery.isPending && !filesQuery.data ? (
-                <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
-                  <Spinner className="size-4" />
-                  Loading files
-                </div>
-              ) : files.length === 0 ? (
-                <p className="mt-4 text-sm text-muted-foreground">No active project files.</p>
-              ) : (
-                <div className="mt-4 divide-y divide-border/60">
-                  {files.slice(0, 8).map((file) => (
-                    <div key={file.doc_id} className="py-3 first:pt-0 last:pb-0">
-                      <div className="truncate text-sm font-medium text-foreground">
-                        {file.title || file.doc_id}
-                      </div>
-                      <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                        <span>{file.artifact_type || "file"}</span>
-                        <span>{formatObservedAt(file.observed_at)}</span>
-                      </div>
-                    </div>
-                  ))}
-                  {files.length > 8 ? (
-                    <div className="pt-3 text-xs text-muted-foreground">
-                      {files.length - 8} more files in settings
-                    </div>
-                  ) : null}
-                </div>
-              )}
+              <Button size="xs" variant="outline" onClick={openRecordMemoryModal}>
+                <PlusIcon className="size-3.5" />
+                Add signal
+              </Button>
             </div>
-          </aside>
-        </div>
+            <div className="mt-4 border-l-2 border-primary/55 pl-4">
+              <p className="text-sm leading-6 text-foreground">
+                {memoryQuery.isPending && !memoryQuery.data
+                  ? "Loading project representation…"
+                  : memory?.representation ||
+                    "No synthesized representation yet. Add a source, finding or decision to begin."}
+              </p>
+            </div>
+            {memoryQuery.data?.ok === false || memoryQuery.error ? (
+              <Alert variant="error" className="mt-4">
+                <TriangleAlertIcon />
+                <AlertTitle>Memory unavailable</AlertTitle>
+                <AlertDescription>
+                  {memoryQuery.error ??
+                    memoryQuery.data?.error?.message ??
+                    "Jarvis did not return project memory."}
+                </AlertDescription>
+              </Alert>
+            ) : null}
+            {conclusions.length > 0 ? (
+              <div className="mt-5 grid gap-3 md:grid-cols-2">
+                {conclusions.map((conclusion) => (
+                  <article
+                    key={conclusion.id}
+                    className="rounded-lg border border-border/60 bg-muted/15 p-4"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <Badge variant="outline">{conclusion.artifact_type}</Badge>
+                      <span className="text-xs text-muted-foreground">
+                        {formatObservedAt(conclusion.observed_at)}
+                      </span>
+                    </div>
+                    <p className="mt-3 text-sm leading-6 text-foreground">{conclusion.content}</p>
+                  </article>
+                ))}
+              </div>
+            ) : null}
+          </section>
+
+          <section className="flex flex-col gap-4 rounded-xl border border-border/70 bg-muted/15 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
+              <span>
+                <span className="font-medium text-foreground">Files root</span> ·{" "}
+                {formatOptionalValue(project.files_root, "Not configured")}
+              </span>
+              <span>
+                <span className="font-medium text-foreground">Members</span> ·{" "}
+                {project.members.length > 0 ? project.members.join(", ") : "No members"}
+              </span>
+              <span>
+                <span className="font-medium text-foreground">Visibility</span> ·{" "}
+                {project.visibility ?? "Not reported"}
+              </span>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() =>
+                  setPendingAction({
+                    kind: "archive",
+                    project: { id: project.id, name: project.name },
+                  })
+                }
+                disabled={writingProject}
+              >
+                <ArchiveIcon className="size-3.5" />
+                Archive
+              </Button>
+              <Button
+                size="xs"
+                variant="destructive-outline"
+                onClick={() =>
+                  setPendingAction({
+                    kind: "delete",
+                    project: { id: project.id, name: project.name },
+                  })
+                }
+                disabled={writingProject}
+              >
+                <Trash2Icon className="size-3.5" />
+                Delete
+              </Button>
+            </div>
+          </section>
+        </main>
       </div>
 
       <Dialog

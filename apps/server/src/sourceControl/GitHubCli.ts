@@ -384,7 +384,7 @@ export const make = Effect.gen(function* () {
           "--limit",
           String(input.limit ?? 50),
           "--json",
-          "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,createdAt,isDraft,author",
+          "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,createdAt,isDraft,author,comments,reviews,reviewDecision,statusCheckRollup",
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),

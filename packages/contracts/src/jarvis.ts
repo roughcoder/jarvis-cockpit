@@ -429,6 +429,7 @@ export type JarvisProjectUpdateInput = typeof JarvisProjectUpdateInput.Type;
 
 export const JarvisArchiveInputBase = Schema.Struct({
   reason: Schema.optional(TrimmedNonEmptyString),
+  idempotency_key: Schema.optional(TrimmedNonEmptyString),
   metadata: Schema.optionalKey(JarvisWriteMetadata).pipe(
     Schema.withDecodingDefault(Effect.succeed({ surface: "jarvis-cockpit" })),
   ),
@@ -533,6 +534,7 @@ export const JarvisProjectFilesResponse = Schema.Struct({
 export type JarvisProjectFilesResponse = typeof JarvisProjectFilesResponse.Type;
 
 export const JarvisProjectFileUploadInput = Schema.Struct({
+  doc_id: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(96))),
   filename: TrimmedNonEmptyString,
   content_base64: TrimmedNonEmptyString,
   title: Schema.optional(TrimmedNonEmptyString),
@@ -544,6 +546,12 @@ export const JarvisProjectFileUploadInput = Schema.Struct({
   ),
 });
 export type JarvisProjectFileUploadInput = typeof JarvisProjectFileUploadInput.Type;
+
+export const JarvisProjectSourceImportInput = Schema.Struct({
+  url: TrimmedNonEmptyString.check(Schema.isMaxLength(2_048)),
+  title: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
+});
+export type JarvisProjectSourceImportInput = typeof JarvisProjectSourceImportInput.Type;
 
 export const JarvisProjectFileRetractInput = JarvisArchiveInputBase;
 export type JarvisProjectFileRetractInput = typeof JarvisProjectFileRetractInput.Type;

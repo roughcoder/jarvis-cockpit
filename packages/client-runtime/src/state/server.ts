@@ -389,6 +389,12 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    importJarvisProjectSource: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:import-jarvis-project-source",
+      tag: WS_METHODS.serverImportJarvisProjectSource,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     retractJarvisProjectFile: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:retract-jarvis-project-file",
       tag: WS_METHODS.serverRetractJarvisProjectFile,

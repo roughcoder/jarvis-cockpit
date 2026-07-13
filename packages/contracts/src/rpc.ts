@@ -155,6 +155,7 @@ import {
   JarvisProjectFilesResult,
   JarvisProjectFileUploadInput,
   JarvisProjectFileUploadResult,
+  JarvisProjectSourceImportInput,
   JarvisProjectMemoryCorrectInput,
   JarvisProjectMemoryForgetInput,
   JarvisProjectMemoryWriteResult,
@@ -283,6 +284,7 @@ export const WS_METHODS = {
   serverForgetJarvisProjectMemory: "server.forgetJarvisProjectMemory",
   serverCorrectJarvisProjectMemory: "server.correctJarvisProjectMemory",
   serverUploadJarvisProjectFile: "server.uploadJarvisProjectFile",
+  serverImportJarvisProjectSource: "server.importJarvisProjectSource",
   serverRetractJarvisProjectFile: "server.retractJarvisProjectFile",
   serverCreateJarvisProjectThread: "server.createJarvisProjectThread",
   serverArchiveJarvisProjectThread: "server.archiveJarvisProjectThread",
@@ -614,6 +616,18 @@ export const WsServerUploadJarvisProjectFileRpc = Rpc.make(
     payload: Schema.Struct({
       projectId: Schema.String,
       input: JarvisProjectFileUploadInput,
+    }),
+    success: JarvisProjectFileUploadResult,
+    error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerImportJarvisProjectSourceRpc = Rpc.make(
+  WS_METHODS.serverImportJarvisProjectSource,
+  {
+    payload: Schema.Struct({
+      projectId: Schema.String,
+      input: JarvisProjectSourceImportInput,
     }),
     success: JarvisProjectFileUploadResult,
     error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
@@ -1180,6 +1194,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerForgetJarvisProjectMemoryRpc,
   WsServerCorrectJarvisProjectMemoryRpc,
   WsServerUploadJarvisProjectFileRpc,
+  WsServerImportJarvisProjectSourceRpc,
   WsServerRetractJarvisProjectFileRpc,
   WsServerCreateJarvisProjectThreadRpc,
   WsServerArchiveJarvisProjectThreadRpc,

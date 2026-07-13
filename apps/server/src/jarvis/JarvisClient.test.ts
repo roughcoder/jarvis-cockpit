@@ -584,6 +584,7 @@ it.effect("cockpit client calls project memory and file endpoints", () =>
       url: string;
       method: string;
       contentType: string | null;
+      idempotencyKey: string | null;
       bodyKind: "json" | "form" | "none";
       body?: unknown;
     }> = [];
@@ -599,7 +600,6 @@ it.effect("cockpit client calls project memory and file endpoints", () =>
           body = {
             title: init.body.get("title"),
             artifact_type: init.body.get("artifact_type"),
-            idempotency_key: init.body.get("idempotency_key"),
             metadata: init.body.get("metadata"),
             file: await (init.body.get("file") as Blob).text(),
           };
@@ -611,6 +611,7 @@ it.effect("cockpit client calls project memory and file endpoints", () =>
           url: String(url),
           method: init?.method ?? "GET",
           contentType: headers.get("content-type"),
+          idempotencyKey: headers.get("x-idempotency-key"),
           bodyKind,
           body,
         });
@@ -669,10 +670,10 @@ it.effect("cockpit client calls project memory and file endpoints", () =>
     );
     assert.strictEqual(requests[5]?.bodyKind, "form");
     assert.strictEqual(requests[5]?.contentType, null);
+    assert.strictEqual(requests[5]?.idempotencyKey, "upload-spec-1");
     assert.deepStrictEqual(requests[5]?.body, {
       title: "Spec",
       artifact_type: "spec",
-      idempotency_key: "upload-spec-1",
       metadata: '{"surface":"jarvis-cockpit","source":"test"}',
       file: "# Spec",
     });
