@@ -295,6 +295,72 @@ it.effect("decodes additive project conversation execution state", () =>
   }),
 );
 
+it.effect("decodes the bounded public project conversation turn queue", () =>
+  Effect.gen(function* () {
+    const thread = {
+      thread_id: "thread_queued",
+      project_id: "jarvis",
+      session_id: "project:jarvis:orchestrator:thread_queued",
+      title: "Queued work",
+      created_at: generatedAt,
+      updated_at: generatedAt,
+      messages: [],
+    };
+    const parsed = yield* decodeProjectThreadDetail({
+      api_version: "v1",
+      schema_version: 1,
+      project_id: "jarvis",
+      thread: {
+        ...thread,
+        queued_turns: [
+          {
+            queue_id: "queuedturn_1",
+            text: "Run the focused tests.",
+            queued_at: generatedAt,
+            status: "queued",
+          },
+          {
+            queue_id: "queuedturn_2",
+            text: "Then summarize the result.",
+            queued_at: generatedAt,
+            status: "claimed",
+          },
+        ],
+      },
+    });
+
+    assert.deepStrictEqual(parsed.thread.queued_turns, [
+      {
+        queue_id: "queuedturn_1",
+        text: "Run the focused tests.",
+        queued_at: generatedAt,
+        status: "queued",
+      },
+      {
+        queue_id: "queuedturn_2",
+        text: "Then summarize the result.",
+        queued_at: generatedAt,
+        status: "claimed",
+      },
+    ]);
+
+    yield* decodeProjectThreadDetail({
+      api_version: "v1",
+      schema_version: 1,
+      project_id: "jarvis",
+      thread: {
+        ...thread,
+        queued_turns: Array.from({ length: 33 }, (_, index) => ({
+          queue_id: `queuedturn_${index}`,
+          text: `Queued turn ${index}`,
+          queued_at: generatedAt,
+          status: "queued",
+        })),
+      },
+    }).pipe(Effect.flip);
+  }),
+);
+
 it.effect("decodes and encodes escalated project conversation workspace projections", () =>
   Effect.gen(function* () {
     const payload = {

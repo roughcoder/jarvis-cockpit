@@ -70,6 +70,7 @@ describe("projectConversationComposerRuntime", () => {
       phase: "running",
       activeTurnId: "turn-1",
       canInterrupt: true,
+      canQueue: false,
       pendingApprovals: [
         {
           requestId: "approval-1",
@@ -101,6 +102,7 @@ describe("projectConversationComposerRuntime", () => {
       phase: "ready",
       activeTurnId: null,
       canInterrupt: false,
+      canQueue: false,
     });
     expect(
       projectConversationComposerRuntime(

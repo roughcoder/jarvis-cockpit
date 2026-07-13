@@ -105,6 +105,101 @@ describe("Jarvis universal conversation adapter", () => {
     expect(JSON.stringify(conversation.runtime)).not.toContain("session");
   });
 
+  it("projects queued turns as replay-safe user intent and semantic queue activity", () => {
+    const detail: JarvisConversationDetail = {
+      ...ENRICHED_JARVIS_CONVERSATION_GOLDEN,
+      messages: [],
+      queued_turns: [
+        {
+          queue_id: "queuedturn_waiting",
+          text: "Run the focused tests.",
+          queued_at: "2026-07-13T00:00:02.000Z",
+          status: "queued",
+        },
+        {
+          queue_id: "queuedturn_claimed",
+          text: "Summarize the result.",
+          queued_at: "2026-07-13T00:00:03.000Z",
+          status: "claimed",
+        },
+        {
+          queue_id: "queuedturn_waiting",
+          text: "Run the focused tests.",
+          queued_at: "2026-07-13T00:00:02.000Z",
+          status: "queued",
+        },
+      ],
+      execution: {
+        available: true,
+        status: "running",
+        active_turn: null,
+        pending_requests: [],
+        supported_controls: ["turn"],
+        supports: { steer: false, queue: false },
+        diagnostic: null,
+      },
+    };
+
+    const first = adaptJarvisProjectThread(detail);
+    const replayed = adaptJarvisProjectThread(detail);
+
+    expect(first.runtime.supportsQueue).toBe(true);
+    expect(first.messages).toEqual([
+      expect.objectContaining({
+        role: "user",
+        content: "Run the focused tests.",
+        observedAt: "2026-07-13T00:00:02.000Z",
+      }),
+      expect.objectContaining({
+        role: "user",
+        content: "Summarize the result.",
+        observedAt: "2026-07-13T00:00:03.000Z",
+      }),
+    ]);
+    expect(first.activities).toEqual([
+      expect.objectContaining({
+        kind: "turn.queued",
+        status: "waiting",
+        correlationId: "queuedturn_waiting",
+      }),
+      expect.objectContaining({
+        kind: "turn.queued",
+        status: "running",
+        correlationId: "queuedturn_claimed",
+      }),
+    ]);
+    expect(first.timeline.map((item) => item.kind)).toEqual([
+      "message",
+      "activity",
+      "message",
+      "activity",
+    ]);
+    expect(replayed.messages.map((message) => message.id)).toEqual(
+      first.messages.map((message) => message.id),
+    );
+    expect(replayed.activities.map((activity) => activity.id)).toEqual(
+      first.activities.map((activity) => activity.id),
+    );
+  });
+
+  it("advertises queue support when execution reports queue availability", () => {
+    const conversation = adaptJarvisProjectThread({
+      ...ENRICHED_JARVIS_CONVERSATION_GOLDEN,
+      queued_turns: [],
+      execution: {
+        available: true,
+        status: "idle",
+        active_turn: null,
+        pending_requests: [],
+        supported_controls: ["turn"],
+        supports: { steer: false, queue: true },
+        diagnostic: null,
+      },
+    });
+
+    expect(conversation.runtime.supportsQueue).toBe(true);
+  });
+
   it("normalizes independent prose and structured golden payloads to identical semantics", () => {
     expect(semanticSnapshot(adaptJarvisProjectThread(LEGACY_JARVIS_CONVERSATION_GOLDEN))).toEqual(
       semanticSnapshot(adaptJarvisProjectThread(ENRICHED_JARVIS_CONVERSATION_GOLDEN)),

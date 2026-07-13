@@ -772,8 +772,21 @@ export const JarvisProjectThreadMessage = Schema.Struct({
 });
 export type JarvisProjectThreadMessage = typeof JarvisProjectThreadMessage.Type;
 
+export const JarvisProjectThreadQueuedTurn = Schema.Struct({
+  queue_id: TrimmedNonEmptyString,
+  text: TrimmedNonEmptyString,
+  queued_at: IsoDateTime,
+  status: Schema.Literals(["queued", "claimed"]),
+});
+export type JarvisProjectThreadQueuedTurn = typeof JarvisProjectThreadQueuedTurn.Type;
+
 export const JarvisProjectThreadDetail = Schema.Struct({
   ...JarvisProjectThread.fields,
+  // The Jarvis queue is capped at 32 entries. Keep the same public bound at the
+  // trust boundary so a malformed detail response cannot expand client state.
+  queued_turns: Schema.optional(
+    Schema.Array(JarvisProjectThreadQueuedTurn).check(Schema.isMaxLength(32)),
+  ),
   messages: Schema.Array(JarvisProjectThreadMessage).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { formatPendingPrimaryActionLabel } from "./ComposerPrimaryActions";
+import {
+  formatPendingPrimaryActionLabel,
+  runningPrimaryActionMode,
+} from "./ComposerPrimaryActions";
 
 describe("formatPendingPrimaryActionLabel", () => {
   it("returns 'Submitting...' while responding", () => {
@@ -89,5 +92,19 @@ describe("formatPendingPrimaryActionLabel", () => {
         questionIndex: 5,
       }),
     ).toBe("Submit answers");
+  });
+});
+
+describe("runningPrimaryActionMode", () => {
+  it("offers queue and interrupt only when a running conversation can accept the draft", () => {
+    expect(
+      runningPrimaryActionMode({ allowSendWhileRunning: true, hasSendableContent: true }),
+    ).toBe("queue-and-stop");
+    expect(
+      runningPrimaryActionMode({ allowSendWhileRunning: true, hasSendableContent: false }),
+    ).toBe("stop");
+    expect(
+      runningPrimaryActionMode({ allowSendWhileRunning: false, hasSendableContent: true }),
+    ).toBe("stop");
   });
 });

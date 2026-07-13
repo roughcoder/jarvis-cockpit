@@ -4,6 +4,7 @@ import type {
   JarvisProjectFile,
   JarvisProjectMemoryResponse,
   JarvisProjectThreadDetail,
+  JarvisProjectThreadQueuedTurn,
 } from "@t3tools/contracts";
 
 import { projectThreadMessageKey, type JarvisConversationMessage } from "./jarvisMessageKey.ts";
@@ -73,7 +74,7 @@ export function adaptJarvisProjectThread(thread: JarvisConversationDetail): Agen
   const conversationId = String(thread.conversation_id ?? thread.thread_id);
   const lifecycle = projectLifecycle(thread);
   const operationalState = projectOperationalState(thread, lifecycle);
-  const projected = projectItems(conversationId, thread.messages);
+  const projected = projectItems(conversationId, thread.messages, thread.queued_turns ?? []);
   const messages = projected.flatMap((item) => (item.message ? [item.message] : []));
   const activities = projected.flatMap((item) => (item.activity ? [item.activity] : []));
   const timeline: ConversationTimelineItem[] = projected.map((item) =>
@@ -123,6 +124,7 @@ function projectConversationRuntime(
   operationalState: ConversationOperationalState,
 ): AgentConversation["runtime"] {
   const execution = thread.execution;
+  const hasQueuedTurns = (thread.queued_turns?.length ?? 0) > 0;
   if (!execution) {
     return {
       available: true,
@@ -131,7 +133,7 @@ function projectConversationRuntime(
       pendingRequests: [],
       supportedControls: lifecycle === "archived" ? [] : ["turn"],
       supportsSteer: false,
-      supportsQueue: false,
+      supportsQueue: hasQueuedTurns,
       diagnostic: null,
     };
   }
@@ -166,7 +168,7 @@ function projectConversationRuntime(
     })),
     supportedControls: [...execution.supported_controls],
     supportsSteer: execution.supports.steer,
-    supportsQueue: execution.supports.queue,
+    supportsQueue: execution.supports.queue || hasQueuedTurns,
     diagnostic: execution.diagnostic
       ? {
           code: execution.diagnostic.code,
@@ -237,6 +239,7 @@ export function enrichAgentConversationWithJarvisContext(
 function projectItems(
   conversationId: string,
   source: ReadonlyArray<JarvisConversationMessage>,
+  queuedTurns: ReadonlyArray<JarvisProjectThreadQueuedTurn>,
 ): ProjectedItem[] {
   const items: ProjectedItem[] = [];
   const activities = new Map<string, ActivityAccumulator>();
@@ -297,6 +300,46 @@ function projectItems(
     };
     items.push({ observedAt: frame.observedAt, sourceIndex: frame.sourceIndex, activity });
   }
+
+  const seenQueueIds = new Set<string>();
+  queuedTurns.forEach((turn, queueIndex) => {
+    if (seenQueueIds.has(turn.queue_id)) return;
+    seenQueueIds.add(turn.queue_id);
+    const sourceIndex = orderedSource.length + queueIndex * 2;
+    items.push({
+      observedAt: turn.queued_at,
+      sourceIndex,
+      message: {
+        id: stableId("queued-message", turn.queue_id),
+        conversationId,
+        role: "user",
+        content: turn.text,
+        authorId: null,
+        observedAt: turn.queued_at,
+      },
+    });
+    items.push({
+      observedAt: turn.queued_at,
+      sourceIndex: sourceIndex + 1,
+      activity: {
+        id: stableId("queued-activity", turn.queue_id),
+        conversationId,
+        kind: "turn.queued",
+        status: turn.status === "claimed" ? "running" : "waiting",
+        title: turn.status === "claimed" ? "Queued turn running" : "Turn queued",
+        summary:
+          turn.status === "claimed"
+            ? "Jarvis claimed this queued turn."
+            : "Waiting for the active turn to finish.",
+        toolName: null,
+        correlationId: turn.queue_id,
+        relatedConversationIds: [],
+        startedAt: turn.queued_at,
+        completedAt: null,
+        error: null,
+      },
+    });
+  });
 
   return items.sort(
     (left, right) =>

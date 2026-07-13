@@ -1478,6 +1478,7 @@ export function AgentConversationChatView({
                     isJarvisCockpitEnvironment={true}
                     showJarvisResumeSendHint={false}
                     phase={composerRuntime.phase}
+                    allowSendWhileRunning={composerRuntime.canQueue}
                     isConnecting={false}
                     isSendBusy={sendBusy}
                     isPreparingWorktree={false}

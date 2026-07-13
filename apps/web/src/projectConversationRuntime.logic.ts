@@ -8,6 +8,7 @@ export interface ProjectConversationComposerRuntime {
   readonly phase: SessionPhase;
   readonly activeTurnId: string | null;
   readonly canInterrupt: boolean;
+  readonly canQueue: boolean;
   readonly pendingApprovals: PendingApproval[];
   readonly pendingUserInputs: PendingUserInput[];
 }
@@ -37,6 +38,7 @@ export function projectConversationComposerRuntime(
       phase: "ready",
       activeTurnId: null,
       canInterrupt: false,
+      canQueue: false,
       pendingApprovals: [],
       pendingUserInputs: [],
     };
@@ -75,6 +77,7 @@ export function projectConversationComposerRuntime(
     phase: runtime.activeTurn || runtime.pendingRequests.length > 0 ? "running" : "ready",
     activeTurnId: runtime.activeTurn?.id ?? null,
     canInterrupt: runtime.activeTurn !== null && runtime.supportedControls.includes("interrupt"),
+    canQueue: runtime.supportsQueue,
     pendingApprovals,
     pendingUserInputs,
   };
