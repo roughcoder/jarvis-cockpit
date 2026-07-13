@@ -13,6 +13,7 @@ import {
   EnvironmentId,
   EventId,
   GitCommandError,
+  JarvisRequestId,
   KeybindingRule,
   MessageId,
   ExternalLauncherCommandNotFoundError,
@@ -5800,6 +5801,78 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
       assert.equal(snapshotEvent.snapshot.thread.activities[0]?.summary, "Session created");
       assert.equal(snapshotEvent.snapshot.thread.session?.status, "running");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc project conversation controls without session refs", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        config: {
+          jarvisFixtureMode: true,
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const projectId = "jarvis-cockpit";
+      const threadId = "thread_fixture_cockpit_plan";
+      const approvalRequestId = JarvisRequestId.make("approval-1");
+      const inputRequestId = JarvisRequestId.make("input-1");
+      const approval = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.serverRespondJarvisProjectThreadApproval]({
+            projectId,
+            threadId,
+            input: {
+              request_id: approvalRequestId,
+              decision: "approved",
+              idempotency_key: "approval-command",
+            },
+          }),
+        ),
+      );
+      const input = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.serverRespondJarvisProjectThreadInput]({
+            projectId,
+            threadId,
+            input: {
+              request_id: inputRequestId,
+              answers: { choice: ["continue"] },
+              text: "Continue",
+              idempotency_key: "input-command",
+            },
+          }),
+        ),
+      );
+      const interrupt = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.serverInterruptJarvisProjectThread]({
+            projectId,
+            threadId,
+            input: {
+              turn_id: "turn-1",
+              idempotency_key: "interrupt-command",
+            },
+          }),
+        ),
+      );
+
+      assert.deepEqual(approval.result?.control, {
+        action: "approval",
+        accepted: true,
+        request_id: approvalRequestId,
+      });
+      assert.deepEqual(input.result?.control, {
+        action: "input",
+        accepted: true,
+        request_id: inputRequestId,
+      });
+      assert.deepEqual(interrupt.result?.control, {
+        action: "interrupt",
+        accepted: true,
+        turn_id: "turn-1",
+      });
+      assert.notProperty(approval.result ?? {}, "session_ref");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

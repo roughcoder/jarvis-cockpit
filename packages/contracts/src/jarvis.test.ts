@@ -11,6 +11,7 @@ import {
   JarvisDeleteInput,
   JarvisLifecycleResult,
   JarvisProjectThreadDetailResponse,
+  JarvisProjectThreadControlResponse,
   JarvisProjectThreadsResponse,
   JarvisProjectThreadTurnInput,
   JarvisRestoreCheckpointInput,
@@ -51,6 +52,7 @@ const decodeSseEvent = Schema.decodeUnknownEffect(JarvisCockpitEvent);
 const decodeProjectThreadDetail = Schema.decodeUnknownEffect(JarvisProjectThreadDetailResponse);
 const decodeProjectThreads = Schema.decodeUnknownEffect(JarvisProjectThreadsResponse);
 const decodeProjectThreadTurn = Schema.decodeUnknownEffect(JarvisProjectThreadTurnInput);
+const decodeProjectThreadControl = Schema.decodeUnknownEffect(JarvisProjectThreadControlResponse);
 const encodeProjectThreadDetail = Schema.encodeEffect(JarvisProjectThreadDetailResponse);
 const encodeProjectThreadTurn = Schema.encodeEffect(JarvisProjectThreadTurnInput);
 
@@ -1319,5 +1321,39 @@ it.effect("preserves durable project-conversation message and activity identitie
       observed_at: generatedAt,
       type: "tool.result",
     });
+  }),
+);
+
+it.effect("decodes conversation-scoped project thread control results", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectThreadControl({
+      ok: true,
+      api_version: "v1",
+      schema_version: 1,
+      project_id: "jarvis",
+      thread_id: "thread_durable",
+      control: {
+        action: "interrupt",
+        accepted: true,
+        turn_id: "turn-42",
+      },
+      execution: {
+        available: true,
+        status: "running",
+        active_turn: null,
+        pending_requests: [],
+        supported_controls: ["turn", "input", "approval", "interrupt", "stop"],
+        supports: { steer: false, queue: false },
+        diagnostic: null,
+      },
+    });
+
+    assert.deepStrictEqual(parsed.control, {
+      action: "interrupt",
+      accepted: true,
+      turn_id: "turn-42",
+    });
+    assert.strictEqual(parsed.execution.available, true);
+    assert.ok(!("session_ref" in parsed));
   }),
 );

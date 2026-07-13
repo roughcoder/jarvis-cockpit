@@ -431,6 +431,24 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    respondJarvisProjectThreadApproval: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:respond-jarvis-project-thread-approval",
+      tag: WS_METHODS.serverRespondJarvisProjectThreadApproval,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    respondJarvisProjectThreadInput: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:respond-jarvis-project-thread-input",
+      tag: WS_METHODS.serverRespondJarvisProjectThreadInput,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    interruptJarvisProjectThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:interrupt-jarvis-project-thread",
+      tag: WS_METHODS.serverInterruptJarvisProjectThread,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,

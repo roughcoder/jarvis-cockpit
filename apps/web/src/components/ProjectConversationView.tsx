@@ -1,8 +1,10 @@
-import { ProjectId } from "@t3tools/contracts";
+import { ApprovalRequestId, JarvisRequestId, ProjectId } from "@t3tools/contracts";
 import type {
   EnvironmentId,
+  JarvisApprovalDecision,
   JarvisTurnAttachment,
   JarvisTurnWorkspaceInput,
+  ProviderApprovalDecision,
   ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
@@ -16,7 +18,7 @@ import {
   enrichAgentConversationWithJarvisContext,
 } from "@t3tools/client-runtime/conversation";
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
@@ -123,6 +125,17 @@ import { cloneComposerImageForRetry } from "./ChatView.logic";
 import { ConversationContextPanel } from "./ConversationContextPanel";
 import { RightPanelTabs } from "./RightPanelTabs";
 import { RightPanelSheet } from "./RightPanelSheet";
+import {
+  cachedProjectConversationControlKey,
+  projectConversationComposerRuntime,
+} from "../projectConversationRuntime.logic";
+import {
+  buildPendingUserInputAnswers,
+  derivePendingUserInputProgress,
+  setPendingUserInputCustomAnswer,
+  togglePendingUserInputOptionSelection,
+  type PendingUserInputDraftAnswer,
+} from "../pendingUserInput";
 
 interface ProjectConversationViewProps {
   readonly environmentId: EnvironmentId;
@@ -147,6 +160,19 @@ const PROJECT_CONVERSATION_FILE_DATA_URL_READ_MESSAGES = {
 const EMPTY_RIGHT_PANEL_PENDING_IDS = new Set<string>();
 const EMPTY_RIGHT_PANEL_PREVIEW_SESSIONS = {};
 const EMPTY_RIGHT_PANEL_TERMINAL_LABELS = new Map<string, string>();
+
+const PROJECT_APPROVAL_DECISIONS: Record<ProviderApprovalDecision, JarvisApprovalDecision> = {
+  accept: "approved",
+  acceptForSession: "approved_for_session",
+  decline: "declined",
+  cancel: "cancelled",
+};
+
+function showControlFailure(title: string, fallback: string, error: unknown): void {
+  const description =
+    error instanceof Error && error.message.trim().length > 0 ? error.message : fallback;
+  toastManager.add({ type: "error", title, description });
+}
 
 export function ProjectConversationView({
   environmentId,
@@ -184,6 +210,15 @@ export function ProjectConversationView({
     }),
   );
   const sendTurn = useAtomCommand(serverEnvironment.sendJarvisProjectThreadTurn, {
+    reportFailure: false,
+  });
+  const respondToApproval = useAtomCommand(serverEnvironment.respondJarvisProjectThreadApproval, {
+    reportFailure: false,
+  });
+  const respondToUserInput = useAtomCommand(serverEnvironment.respondJarvisProjectThreadInput, {
+    reportFailure: false,
+  });
+  const interruptTurn = useAtomCommand(serverEnvironment.interruptJarvisProjectThread, {
     reportFailure: false,
   });
   const archiveThread = useAtomCommand(serverEnvironment.archiveJarvisProjectThread, {
@@ -245,11 +280,21 @@ export function ProjectConversationView({
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const composerElementContextsRef = useRef<ElementContextDraft[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
+  const controlIdempotencyKeysRef = useRef(new Map<string, string>());
   const composerRef = useComposerHandleContext() ?? localComposerRef;
   const clearComposerContent = useComposerDraftStore((store) => store.clearComposerContent);
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const [turns, setTurns] = useState<LocalTurn[]>([]);
+  const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
+  const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
+    ApprovalRequestId[]
+  >([]);
+  const [pendingUserInputAnswersByRequestId, setPendingUserInputAnswersByRequestId] = useState<
+    Record<string, Record<string, PendingUserInputDraftAnswer>>
+  >({});
+  const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
+    useState<Record<string, number>>({});
   const projectedConversationDetail = useMemo(
     () =>
       threadDetailStream.data ?? (conversation === null ? null : { ...conversation, messages: [] }),
@@ -269,6 +314,43 @@ export function ProjectConversationView({
           ),
     [files, memoryQuery.data, project, projectedConversationDetail],
   );
+  const composerRuntime = useMemo(
+    () => projectConversationComposerRuntime(agentConversation),
+    [agentConversation],
+  );
+  const activePendingApproval = composerRuntime.pendingApprovals[0] ?? null;
+  const activePendingUserInput = composerRuntime.pendingUserInputs[0] ?? null;
+  const activePendingDraftAnswers = useMemo(
+    () =>
+      activePendingUserInput
+        ? (pendingUserInputAnswersByRequestId[activePendingUserInput.requestId] ?? {})
+        : {},
+    [activePendingUserInput, pendingUserInputAnswersByRequestId],
+  );
+  const activePendingQuestionIndex = activePendingUserInput
+    ? (pendingUserInputQuestionIndexByRequestId[activePendingUserInput.requestId] ?? 0)
+    : 0;
+  const activePendingProgress = useMemo(
+    () =>
+      activePendingUserInput
+        ? derivePendingUserInputProgress(
+            activePendingUserInput.questions,
+            activePendingDraftAnswers,
+            activePendingQuestionIndex,
+          )
+        : null,
+    [activePendingDraftAnswers, activePendingQuestionIndex, activePendingUserInput],
+  );
+  const activePendingResolvedAnswers = useMemo(
+    () =>
+      activePendingUserInput
+        ? buildPendingUserInputAnswers(activePendingUserInput.questions, activePendingDraftAnswers)
+        : null,
+    [activePendingDraftAnswers, activePendingUserInput],
+  );
+  const activePendingIsResponding = activePendingUserInput
+    ? respondingUserInputRequestIds.includes(activePendingUserInput.requestId)
+    : false;
   const timelineOverlayTurns = useMemo(
     () => projectConversationTimelineOverlayTurns(turns),
     [turns],
@@ -366,6 +448,11 @@ export function ProjectConversationView({
     setRenamingConversation(false);
     setRenameDraft("");
     setTurns([]);
+    setRespondingRequestIds([]);
+    setRespondingUserInputRequestIds([]);
+    setPendingUserInputAnswersByRequestId({});
+    setPendingUserInputQuestionIndexByRequestId({});
+    controlIdempotencyKeysRef.current.clear();
     turnCounter.current = 0;
   }, [threadId]);
 
@@ -810,6 +897,239 @@ export function ProjectConversationView({
     );
   };
 
+  const onRespondToApproval = useCallback(
+    async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
+      setRespondingRequestIds((existing) =>
+        existing.includes(requestId) ? existing : [...existing, requestId],
+      );
+      const result = await respondToApproval({
+        environmentId,
+        input: {
+          projectId,
+          threadId: String(threadId),
+          input: {
+            request_id: JarvisRequestId.make(String(requestId)),
+            decision: PROJECT_APPROVAL_DECISIONS[decision],
+            idempotency_key: cachedProjectConversationControlKey(
+              controlIdempotencyKeysRef.current,
+              `approval:${String(requestId)}`,
+              decision,
+              () => `project-thread-approval-${String(requestId)}-${randomUUID()}`,
+            ),
+          },
+        },
+      });
+      setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          showControlFailure(
+            "Could not submit approval",
+            "Jarvis rejected the approval decision.",
+            squashAtomCommandFailure(result),
+          );
+        }
+        return result;
+      }
+      if (!result.value.ok || !result.value.result) {
+        showControlFailure(
+          "Could not submit approval",
+          result.value.error?.message ?? "Jarvis rejected the approval decision.",
+          result.value.error?.message,
+        );
+        return result;
+      }
+      threadDetailStream.refresh();
+      return result;
+    },
+    [environmentId, projectId, respondToApproval, threadDetailStream, threadId],
+  );
+
+  const onRespondToUserInput = useCallback(
+    async (requestId: ApprovalRequestId, answers: Record<string, unknown>) => {
+      setRespondingUserInputRequestIds((existing) =>
+        existing.includes(requestId) ? existing : [...existing, requestId],
+      );
+      const result = await respondToUserInput({
+        environmentId,
+        input: {
+          projectId,
+          threadId: String(threadId),
+          input: {
+            request_id: JarvisRequestId.make(String(requestId)),
+            answers,
+            idempotency_key: cachedProjectConversationControlKey(
+              controlIdempotencyKeysRef.current,
+              `input:${String(requestId)}`,
+              JSON.stringify(answers),
+              () => `project-thread-input-${String(requestId)}-${randomUUID()}`,
+            ),
+          },
+        },
+      });
+      setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          showControlFailure(
+            "Could not submit input",
+            "Jarvis rejected the conversation input.",
+            squashAtomCommandFailure(result),
+          );
+        }
+        return result;
+      }
+      if (!result.value.ok || !result.value.result) {
+        showControlFailure(
+          "Could not submit input",
+          result.value.error?.message ?? "Jarvis rejected the conversation input.",
+          result.value.error?.message,
+        );
+        return result;
+      }
+      setPendingUserInputAnswersByRequestId((existing) => {
+        const next = { ...existing };
+        delete next[String(requestId)];
+        return next;
+      });
+      threadDetailStream.refresh();
+      return result;
+    },
+    [environmentId, projectId, respondToUserInput, threadDetailStream, threadId],
+  );
+
+  const setActivePendingUserInputQuestionIndex = useCallback(
+    (nextQuestionIndex: number) => {
+      if (!activePendingUserInput) return;
+      setPendingUserInputQuestionIndexByRequestId((existing) => ({
+        ...existing,
+        [activePendingUserInput.requestId]: nextQuestionIndex,
+      }));
+    },
+    [activePendingUserInput],
+  );
+
+  const onSelectActivePendingUserInputOption = useCallback(
+    (questionId: string, optionLabel: string) => {
+      if (!activePendingUserInput) return;
+      setPendingUserInputAnswersByRequestId((existing) => {
+        const question =
+          (activePendingProgress?.activeQuestion?.id === questionId
+            ? activePendingProgress.activeQuestion
+            : undefined) ??
+          activePendingUserInput.questions.find((entry) => entry.id === questionId);
+        if (!question) return existing;
+        return {
+          ...existing,
+          [activePendingUserInput.requestId]: {
+            ...existing[activePendingUserInput.requestId],
+            [questionId]: togglePendingUserInputOptionSelection(
+              question,
+              existing[activePendingUserInput.requestId]?.[questionId],
+              optionLabel,
+            ),
+          },
+        };
+      });
+      promptRef.current = "";
+      composerRef.current?.resetCursorState({ cursor: 0 });
+    },
+    [activePendingProgress?.activeQuestion, activePendingUserInput, composerRef],
+  );
+
+  const onChangeActivePendingUserInputCustomAnswer = useCallback(
+    (questionId: string, value: string, nextCursor: number, expandedCursor: number) => {
+      if (!activePendingUserInput) return;
+      promptRef.current = value;
+      setPendingUserInputAnswersByRequestId((existing) => ({
+        ...existing,
+        [activePendingUserInput.requestId]: {
+          ...existing[activePendingUserInput.requestId],
+          [questionId]: setPendingUserInputCustomAnswer(
+            existing[activePendingUserInput.requestId]?.[questionId],
+            value,
+          ),
+        },
+      }));
+      const snapshot = composerRef.current?.readSnapshot();
+      if (
+        snapshot?.value !== value ||
+        snapshot.cursor !== nextCursor ||
+        snapshot.expandedCursor !== expandedCursor
+      ) {
+        composerRef.current?.focusAt(nextCursor);
+      }
+    },
+    [activePendingUserInput, composerRef],
+  );
+
+  const onAdvanceActivePendingUserInput = useCallback(() => {
+    if (!activePendingUserInput || !activePendingProgress) return;
+    if (activePendingProgress.isLastQuestion) {
+      if (activePendingResolvedAnswers) {
+        void onRespondToUserInput(activePendingUserInput.requestId, activePendingResolvedAnswers);
+      }
+      return;
+    }
+    setActivePendingUserInputQuestionIndex(activePendingProgress.questionIndex + 1);
+  }, [
+    activePendingProgress,
+    activePendingResolvedAnswers,
+    activePendingUserInput,
+    onRespondToUserInput,
+    setActivePendingUserInputQuestionIndex,
+  ]);
+
+  const onPreviousActivePendingUserInputQuestion = useCallback(() => {
+    if (!activePendingProgress) return;
+    setActivePendingUserInputQuestionIndex(Math.max(activePendingProgress.questionIndex - 1, 0));
+  }, [activePendingProgress, setActivePendingUserInputQuestionIndex]);
+
+  const onInterrupt = useCallback(async () => {
+    if (!composerRuntime.activeTurnId || !composerRuntime.canInterrupt) return;
+    const result = await interruptTurn({
+      environmentId,
+      input: {
+        projectId,
+        threadId: String(threadId),
+        input: {
+          turn_id: composerRuntime.activeTurnId,
+          idempotency_key: cachedProjectConversationControlKey(
+            controlIdempotencyKeysRef.current,
+            `interrupt:${composerRuntime.activeTurnId}`,
+            "interrupt",
+            () => `project-thread-interrupt-${composerRuntime.activeTurnId}-${randomUUID()}`,
+          ),
+        },
+      },
+    });
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        showControlFailure(
+          "Could not stop turn",
+          "Jarvis could not interrupt the active turn.",
+          squashAtomCommandFailure(result),
+        );
+      }
+      return;
+    }
+    if (!result.value.ok || !result.value.result) {
+      showControlFailure(
+        "Could not stop turn",
+        result.value.error?.message ?? "Jarvis could not interrupt the active turn.",
+        result.value.error?.message,
+      );
+      return;
+    }
+    threadDetailStream.refresh();
+  }, [
+    composerRuntime.activeTurnId,
+    composerRuntime.canInterrupt,
+    environmentId,
+    interruptTurn,
+    projectId,
+    threadDetailStream,
+    threadId,
+  ]);
+
   const writeArchiveState = async (action: "archive" | "unarchive") => {
     if (conversation === null) {
       return;
@@ -1146,31 +1466,31 @@ export function ProjectConversationView({
                     composerRef={composerRef}
                     composerDraftTarget={composerDraftTarget}
                     environmentId={environmentId}
-                    routeKind="draft"
+                    routeKind="agent"
                     routeThreadRef={routeThreadRef}
-                    draftId={composerDraftTarget}
+                    draftId={null}
                     activeThreadId={conversation === null ? null : threadId}
                     activeThreadEnvironmentId={environmentId}
                     activeThread={undefined}
-                    isServerThread={false}
+                    isServerThread={true}
                     isLocalDraftThread={false}
                     isJarvisCockpitEnvironment={true}
                     showJarvisResumeSendHint={false}
-                    phase="ready"
+                    phase={composerRuntime.phase}
                     isConnecting={false}
                     isSendBusy={sendBusy}
                     isPreparingWorktree={false}
                     composerDisabledReason={composerDisabledReason}
                     environmentUnavailable={null}
-                    activePendingApproval={null}
-                    pendingApprovals={[]}
-                    pendingUserInputs={[]}
-                    activePendingProgress={null}
-                    activePendingResolvedAnswers={null}
-                    activePendingIsResponding={false}
-                    activePendingDraftAnswers={{}}
-                    activePendingQuestionIndex={0}
-                    respondingRequestIds={[]}
+                    activePendingApproval={activePendingApproval}
+                    pendingApprovals={composerRuntime.pendingApprovals}
+                    pendingUserInputs={composerRuntime.pendingUserInputs}
+                    activePendingProgress={activePendingProgress}
+                    activePendingResolvedAnswers={activePendingResolvedAnswers}
+                    activePendingIsResponding={activePendingIsResponding}
+                    activePendingDraftAnswers={activePendingDraftAnswers}
+                    activePendingQuestionIndex={activePendingQuestionIndex}
+                    respondingRequestIds={respondingRequestIds}
                     showPlanFollowUpPrompt={false}
                     activeProposedPlan={null}
                     activePlan={null}
@@ -1205,13 +1525,17 @@ export function ProjectConversationView({
                     composerTerminalContextsRef={composerTerminalContextsRef}
                     composerElementContextsRef={composerElementContextsRef}
                     onSend={(event) => void handleComposerSend(event)}
-                    onInterrupt={() => {}}
+                    onInterrupt={() => void onInterrupt()}
                     onImplementPlanInNewThread={() => {}}
-                    onRespondToApproval={async () => undefined}
-                    onSelectActivePendingUserInputOption={() => {}}
-                    onAdvanceActivePendingUserInput={() => {}}
-                    onPreviousActivePendingUserInputQuestion={() => {}}
-                    onChangeActivePendingUserInputCustomAnswer={() => {}}
+                    onRespondToApproval={onRespondToApproval}
+                    onSelectActivePendingUserInputOption={onSelectActivePendingUserInputOption}
+                    onAdvanceActivePendingUserInput={onAdvanceActivePendingUserInput}
+                    onPreviousActivePendingUserInputQuestion={
+                      onPreviousActivePendingUserInputQuestion
+                    }
+                    onChangeActivePendingUserInputCustomAnswer={
+                      onChangeActivePendingUserInputCustomAnswer
+                    }
                     onProviderModelSelect={() => {}}
                     getModelDisabledReason={() => null}
                     toggleInteractionMode={() => {}}

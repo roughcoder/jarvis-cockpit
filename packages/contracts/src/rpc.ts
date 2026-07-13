@@ -164,10 +164,14 @@ import {
   JarvisProjectsResult,
   JarvisProjectThreadsResult,
   JarvisProjectThreadArchiveInput,
+  JarvisProjectThreadApprovalInput,
+  JarvisProjectThreadControlRpcResult,
   JarvisProjectThreadDetailResult,
+  JarvisProjectThreadInterruptInput,
   JarvisProjectThreadResult,
   JarvisProjectThreadTurnInput,
   JarvisProjectThreadTurnRpcResult,
+  JarvisProjectThreadUserInputInput,
   JarvisProjectUpdateInput,
   JarvisMcpStatusResult,
   JarvisCapabilitiesResult,
@@ -286,6 +290,9 @@ export const WS_METHODS = {
   serverGenerateThreadTitle: "server.generateThreadTitle",
   serverUnarchiveJarvisProjectThread: "server.unarchiveJarvisProjectThread",
   serverSendJarvisProjectThreadTurn: "server.sendJarvisProjectThreadTurn",
+  serverRespondJarvisProjectThreadApproval: "server.respondJarvisProjectThreadApproval",
+  serverRespondJarvisProjectThreadInput: "server.respondJarvisProjectThreadInput",
+  serverInterruptJarvisProjectThread: "server.interruptJarvisProjectThread",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
@@ -696,6 +703,45 @@ export const WsServerSendJarvisProjectThreadTurnRpc = Rpc.make(
       input: JarvisProjectThreadTurnInput,
     }),
     success: JarvisProjectThreadTurnRpcResult,
+    error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerRespondJarvisProjectThreadApprovalRpc = Rpc.make(
+  WS_METHODS.serverRespondJarvisProjectThreadApproval,
+  {
+    payload: Schema.Struct({
+      projectId: Schema.String,
+      threadId: Schema.String,
+      input: JarvisProjectThreadApprovalInput,
+    }),
+    success: JarvisProjectThreadControlRpcResult,
+    error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerRespondJarvisProjectThreadInputRpc = Rpc.make(
+  WS_METHODS.serverRespondJarvisProjectThreadInput,
+  {
+    payload: Schema.Struct({
+      projectId: Schema.String,
+      threadId: Schema.String,
+      input: JarvisProjectThreadUserInputInput,
+    }),
+    success: JarvisProjectThreadControlRpcResult,
+    error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerInterruptJarvisProjectThreadRpc = Rpc.make(
+  WS_METHODS.serverInterruptJarvisProjectThread,
+  {
+    payload: Schema.Struct({
+      projectId: Schema.String,
+      threadId: Schema.String,
+      input: JarvisProjectThreadInterruptInput,
+    }),
+    success: JarvisProjectThreadControlRpcResult,
     error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
   },
 );
@@ -1139,6 +1185,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGenerateThreadTitleRpc,
   WsServerUnarchiveJarvisProjectThreadRpc,
   WsServerSendJarvisProjectThreadTurnRpc,
+  WsServerRespondJarvisProjectThreadApprovalRpc,
+  WsServerRespondJarvisProjectThreadInputRpc,
+  WsServerInterruptJarvisProjectThreadRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,

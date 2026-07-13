@@ -503,7 +503,7 @@ export interface ChatComposerProps {
   capabilities: ComposerCapabilities;
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
-  routeKind: "server" | "draft";
+  routeKind: "server" | "draft" | "agent";
   routeThreadRef: ScopedThreadRef;
   draftId: DraftId | null;
 

@@ -867,6 +867,52 @@ export const JarvisProjectThreadTurnResult = Schema.Struct({
 });
 export type JarvisProjectThreadTurnResult = typeof JarvisProjectThreadTurnResult.Type;
 
+export const JarvisProjectThreadApprovalInput = Schema.Struct({
+  request_id: JarvisRequestId,
+  decision: JarvisApprovalDecision,
+  idempotency_key: Schema.optional(TrimmedNonEmptyString),
+});
+export type JarvisProjectThreadApprovalInput = typeof JarvisProjectThreadApprovalInput.Type;
+
+export const JarvisProjectThreadUserInputInput = Schema.Struct({
+  request_id: JarvisRequestId,
+  answers: Schema.optional(JsonObject),
+  text: Schema.optional(TrimmedNonEmptyString),
+  idempotency_key: Schema.optional(TrimmedNonEmptyString),
+});
+export type JarvisProjectThreadUserInputInput = typeof JarvisProjectThreadUserInputInput.Type;
+
+export const JarvisProjectThreadInterruptInput = Schema.Struct({
+  turn_id: TrimmedNonEmptyString,
+  idempotency_key: Schema.optional(TrimmedNonEmptyString),
+});
+export type JarvisProjectThreadInterruptInput = typeof JarvisProjectThreadInterruptInput.Type;
+
+export const JarvisProjectThreadControl = Schema.Union([
+  Schema.Struct({
+    action: Schema.Literals(["approval", "input"]),
+    accepted: Schema.Literal(true),
+    request_id: JarvisRequestId,
+  }),
+  Schema.Struct({
+    action: Schema.Literal("interrupt"),
+    accepted: Schema.Literal(true),
+    turn_id: TrimmedNonEmptyString,
+  }),
+]);
+export type JarvisProjectThreadControl = typeof JarvisProjectThreadControl.Type;
+
+export const JarvisProjectThreadControlResponse = Schema.Struct({
+  ok: Schema.Literal(true),
+  api_version: Schema.Literal("v1"),
+  schema_version: Schema.Number,
+  project_id: JarvisProjectId,
+  thread_id: JarvisProjectThreadId,
+  control: JarvisProjectThreadControl,
+  execution: JarvisConversationExecution,
+});
+export type JarvisProjectThreadControlResponse = typeof JarvisProjectThreadControlResponse.Type;
+
 export const JarvisWorkerEngine = Schema.Struct({
   engine: JarvisEngineId,
   display_name: TrimmedNonEmptyString,
@@ -1238,6 +1284,13 @@ export const JarvisProjectThreadTurnRpcResult = Schema.Struct({
   error: Schema.optionalKey(JarvisReadError),
 });
 export type JarvisProjectThreadTurnRpcResult = typeof JarvisProjectThreadTurnRpcResult.Type;
+
+export const JarvisProjectThreadControlRpcResult = Schema.Struct({
+  ok: Schema.Boolean,
+  result: Schema.optionalKey(JarvisProjectThreadControlResponse),
+  error: Schema.optionalKey(JarvisReadError),
+});
+export type JarvisProjectThreadControlRpcResult = typeof JarvisProjectThreadControlRpcResult.Type;
 
 export const JarvisWorkerWorktreePruneInput = Schema.Struct({
   workerId: JarvisWorkerId,

@@ -1,6 +1,11 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeBuffer from "node:buffer";
-import { DEFAULT_SERVER_SETTINGS, JarvisProjectId, JarvisWorkerId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  JarvisProjectId,
+  JarvisRequestId,
+  JarvisWorkerId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
@@ -715,6 +720,115 @@ it.effect("cockpit client decodes JSON project thread turn responses", () =>
       },
       metadata: { surface: "jarvis-cockpit" },
     });
+  }),
+);
+
+it.effect("cockpit client calls conversation-scoped project thread control endpoints", () =>
+  Effect.gen(function* () {
+    const requests: Array<{ url: string; method: string; body: unknown }> = [];
+    const execution = {
+      available: true,
+      status: "running",
+      active_turn: null,
+      pending_requests: [],
+      supported_controls: ["turn", "input", "approval", "interrupt", "stop"],
+      supports: { steer: false, queue: false },
+      diagnostic: null,
+    };
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async (url, init) => {
+        requests.push({
+          url: String(url),
+          method: init?.method ?? "GET",
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        });
+        const action = new URL(String(url)).pathname.split("/").at(-1);
+        return jsonResponse({
+          ok: true,
+          api_version: "v1",
+          schema_version: 1,
+          project_id: "dogfood/review",
+          thread_id: "thread #1",
+          control:
+            action === "interrupt"
+              ? { action, accepted: true, turn_id: "turn-1" }
+              : { action, accepted: true, request_id: `request-${action}` },
+          execution,
+        });
+      },
+    });
+
+    yield* client.respondProjectThreadApproval("dogfood/review", "thread #1", {
+      request_id: JarvisRequestId.make("request-approval"),
+      decision: "approved",
+      idempotency_key: "approval-command",
+    });
+    yield* client.respondProjectThreadInput("dogfood/review", "thread #1", {
+      request_id: JarvisRequestId.make("request-input"),
+      answers: { choice: ["ship"] },
+      text: "Ship it",
+      idempotency_key: "input-command",
+    });
+    yield* client.interruptProjectThread("dogfood/review", "thread #1", {
+      turn_id: "turn-1",
+      idempotency_key: "interrupt-command",
+    });
+
+    assert.deepStrictEqual(requests, [
+      {
+        url: "http://jarvis.local:8787/v1/projects/dogfood%2Freview/threads/thread%20%231/approval",
+        method: "POST",
+        body: {
+          request_id: "request-approval",
+          decision: "approved",
+          idempotency_key: "approval-command",
+        },
+      },
+      {
+        url: "http://jarvis.local:8787/v1/projects/dogfood%2Freview/threads/thread%20%231/input",
+        method: "POST",
+        body: {
+          request_id: "request-input",
+          answers: { choice: ["ship"] },
+          text: "Ship it",
+          idempotency_key: "input-command",
+        },
+      },
+      {
+        url: "http://jarvis.local:8787/v1/projects/dogfood%2Freview/threads/thread%20%231/interrupt",
+        method: "POST",
+        body: {
+          turn_id: "turn-1",
+          idempotency_key: "interrupt-command",
+        },
+      },
+    ]);
+  }),
+);
+
+it.effect("cockpit client preserves project thread control HTTP errors", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async () =>
+        jsonResponse(
+          { error: { code: "request_not_pending", message: "Approval is no longer pending" } },
+          { status: 409 },
+        ),
+    });
+
+    const error = yield* client
+      .respondProjectThreadApproval("dogfood", "thread-1", {
+        request_id: JarvisRequestId.make("request-approval"),
+        decision: "approved",
+        idempotency_key: "approval-command",
+      })
+      .pipe(Effect.flip);
+
+    assert.strictEqual(error.operation, "projects.threads.approval");
+    assert.strictEqual(error.status, 409);
+    assert.match(error.message, /409/u);
   }),
 );
 

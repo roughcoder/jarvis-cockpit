@@ -692,6 +692,9 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverGenerateThreadTitle, AuthOrchestrationOperateScope],
   [WS_METHODS.serverUnarchiveJarvisProjectThread, AuthOrchestrationOperateScope],
   [WS_METHODS.serverSendJarvisProjectThreadTurn, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverRespondJarvisProjectThreadApproval, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverRespondJarvisProjectThreadInput, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverInterruptJarvisProjectThread, AuthOrchestrationOperateScope],
   [WS_METHODS.serverDiscoverSourceControl, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetTraceDiagnostics, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetProcessDiagnostics, AuthOrchestrationReadScope],
@@ -2542,6 +2545,63 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "server",
             },
+          ),
+        [WS_METHODS.serverRespondJarvisProjectThreadApproval]: ({ projectId, threadId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverRespondJarvisProjectThreadApproval,
+            jarvisClient.respondProjectThreadApproval(projectId, threadId, input).pipe(
+              Effect.map((result) => ({ ok: true, result })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project conversation approval failed.",
+                  },
+                }),
+              ),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverRespondJarvisProjectThreadInput]: ({ projectId, threadId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverRespondJarvisProjectThreadInput,
+            jarvisClient.respondProjectThreadInput(projectId, threadId, input).pipe(
+              Effect.map((result) => ({ ok: true, result })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project conversation input failed.",
+                  },
+                }),
+              ),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverInterruptJarvisProjectThread]: ({ projectId, threadId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverInterruptJarvisProjectThread,
+            jarvisClient.interruptProjectThread(projectId, threadId, input).pipe(
+              Effect.map((result) => ({ ok: true, result })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project conversation interrupt failed.",
+                  },
+                }),
+              ),
+            ),
+            { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
           observeRpcEffect(

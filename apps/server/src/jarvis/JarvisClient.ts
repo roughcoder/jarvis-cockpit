@@ -31,13 +31,17 @@ import {
   JarvisProjectMemoryForgetInput,
   JarvisProjectMemoryResponse,
   JarvisProjectThread,
+  type JarvisProjectThreadApprovalInput,
   JarvisProjectThreadArchiveInput,
+  JarvisProjectThreadControlResponse,
   JarvisProjectThreadDetail,
   JarvisProjectThreadDetailResponse,
   JarvisProjectThreadId,
+  type JarvisProjectThreadInterruptInput,
   JarvisProjectThreadsResponse,
   JarvisProjectThreadTurnInput,
   JarvisProjectThreadTurnResult,
+  type JarvisProjectThreadUserInputInput,
   JarvisProjectUpdateInput,
   JarvisDeleteInput,
   JarvisLifecycleResult,
@@ -203,6 +207,21 @@ export interface JarvisClient {
     threadId: string,
     input: JarvisProjectThreadTurnInput,
   ) => Effect.Effect<JarvisProjectThreadTurnResult, JarvisClientError>;
+  readonly respondProjectThreadApproval: (
+    projectId: string,
+    threadId: string,
+    input: JarvisProjectThreadApprovalInput,
+  ) => Effect.Effect<JarvisProjectThreadControlResponse, JarvisClientError>;
+  readonly respondProjectThreadInput: (
+    projectId: string,
+    threadId: string,
+    input: JarvisProjectThreadUserInputInput,
+  ) => Effect.Effect<JarvisProjectThreadControlResponse, JarvisClientError>;
+  readonly interruptProjectThread: (
+    projectId: string,
+    threadId: string,
+    input: JarvisProjectThreadInterruptInput,
+  ) => Effect.Effect<JarvisProjectThreadControlResponse, JarvisClientError>;
   readonly getSession: (
     sessionRef: string,
   ) => Effect.Effect<JarvisWorkerSession, JarvisClientError>;
@@ -414,6 +433,9 @@ const decodeProjectThreadDetailResponse = Schema.decodeUnknownEffect(
 );
 const decodeProjectThread = Schema.decodeUnknownEffect(JarvisProjectThread);
 const decodeProjectThreadTurnResult = Schema.decodeUnknownEffect(JarvisProjectThreadTurnResult);
+const decodeProjectThreadControlResponse = Schema.decodeUnknownEffect(
+  JarvisProjectThreadControlResponse,
+);
 const decodeProjectThreadResponse = (operation: string, body: unknown) =>
   Effect.gen(function* () {
     const candidate = projectThreadPayloadFromResponse(operation, body);
@@ -1280,6 +1302,30 @@ export function makeJarvisCockpitClient(input: {
       ).pipe(
         Effect.flatMap((text) => parseProjectThreadTurnResponse("projects.threads.turn", text)),
       ),
+    respondProjectThreadApproval: (projectId, threadId, input) =>
+      postJson(
+        "projects.threads.approval",
+        `/v1/projects/${encodeURIComponent(projectId)}/threads/${encodeURIComponent(threadId)}/approval`,
+        input,
+      ).pipe(
+        Effect.flatMap(decodeFor("projects.threads.approval", decodeProjectThreadControlResponse)),
+      ),
+    respondProjectThreadInput: (projectId, threadId, input) =>
+      postJson(
+        "projects.threads.input",
+        `/v1/projects/${encodeURIComponent(projectId)}/threads/${encodeURIComponent(threadId)}/input`,
+        input,
+      ).pipe(
+        Effect.flatMap(decodeFor("projects.threads.input", decodeProjectThreadControlResponse)),
+      ),
+    interruptProjectThread: (projectId, threadId, input) =>
+      postJson(
+        "projects.threads.interrupt",
+        `/v1/projects/${encodeURIComponent(projectId)}/threads/${encodeURIComponent(threadId)}/interrupt`,
+        input,
+      ).pipe(
+        Effect.flatMap(decodeFor("projects.threads.interrupt", decodeProjectThreadControlResponse)),
+      ),
     getSession: (sessionRef) =>
       requestJson("sessions.get", `/v1/sessions/${encodeURIComponent(sessionRef)}`).pipe(
         Effect.flatMap(decodeFor("sessions.get", decodeSessionDetail)),
@@ -1605,6 +1651,18 @@ export function makeJarvisClient(config: {
         withClient("projects.threads.turn", (client) =>
           client.sendProjectThreadTurn(projectId, threadId, input),
         ),
+      respondProjectThreadApproval: (projectId, threadId, input) =>
+        withClient("projects.threads.approval", (client) =>
+          client.respondProjectThreadApproval(projectId, threadId, input),
+        ),
+      respondProjectThreadInput: (projectId, threadId, input) =>
+        withClient("projects.threads.input", (client) =>
+          client.respondProjectThreadInput(projectId, threadId, input),
+        ),
+      interruptProjectThread: (projectId, threadId, input) =>
+        withClient("projects.threads.interrupt", (client) =>
+          client.interruptProjectThread(projectId, threadId, input),
+        ),
       getSession: (sessionRef) =>
         withClient("sessions.get", (client) => client.getSession(sessionRef)),
       getSessionEvents: (sessionRef, options) =>
@@ -1809,6 +1867,9 @@ function makeMissingConfigurationClient(message: string): JarvisClient {
     renameProjectThread: () => fail("jarvis.client.configure"),
     unarchiveProjectThread: () => fail("jarvis.client.configure"),
     sendProjectThreadTurn: () => fail("jarvis.client.configure"),
+    respondProjectThreadApproval: () => fail("jarvis.client.configure"),
+    respondProjectThreadInput: () => fail("jarvis.client.configure"),
+    interruptProjectThread: () => fail("jarvis.client.configure"),
     getSession: () => fail("jarvis.client.configure"),
     getSessionEvents: () => fail("jarvis.client.configure"),
     getRequests: () => fail("jarvis.client.configure"),
@@ -1833,6 +1894,30 @@ function makeMissingConfigurationClient(message: string): JarvisClient {
 
 export interface JarvisFixtureClientOptions {
   readonly emptyProjects?: boolean;
+}
+
+function fixtureProjectThreadControlResponse(
+  projectId: string,
+  threadId: string,
+  control: JarvisProjectThreadControlResponse["control"],
+): JarvisProjectThreadControlResponse {
+  return {
+    ok: true,
+    api_version: "v1",
+    schema_version: 1,
+    project_id: JarvisProjectId.make(projectId),
+    thread_id: JarvisProjectThreadId.make(threadId),
+    control,
+    execution: {
+      available: true,
+      status: "running",
+      active_turn: null,
+      pending_requests: [],
+      supported_controls: ["turn", "input", "approval", "interrupt", "stop"],
+      supports: { steer: false, queue: false },
+      diagnostic: null,
+    },
+  };
 }
 
 export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): JarvisClient {
@@ -3302,6 +3387,30 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
         ],
       });
     },
+    respondProjectThreadApproval: (candidateProjectId, threadId, input) =>
+      Effect.succeed(
+        fixtureProjectThreadControlResponse(candidateProjectId, threadId, {
+          action: "approval",
+          accepted: true,
+          request_id: input.request_id,
+        }),
+      ),
+    respondProjectThreadInput: (candidateProjectId, threadId, input) =>
+      Effect.succeed(
+        fixtureProjectThreadControlResponse(candidateProjectId, threadId, {
+          action: "input",
+          accepted: true,
+          request_id: input.request_id,
+        }),
+      ),
+    interruptProjectThread: (candidateProjectId, threadId, input) =>
+      Effect.succeed(
+        fixtureProjectThreadControlResponse(candidateProjectId, threadId, {
+          action: "interrupt",
+          accepted: true,
+          turn_id: input.turn_id,
+        }),
+      ),
     getSession: (candidateSessionRef) =>
       findSession(candidateSessionRef)
         ? Effect.succeed(findSession(candidateSessionRef)!)
