@@ -387,6 +387,7 @@ it.effect("fixture client records project conversation workspace escalation", ()
 
     yield* client.sendProjectThreadTurn("jarvis-cockpit", thread.thread_id, {
       text: "Inspect runtime.",
+      idempotency_key: "fixture-workspace-escalation",
       workspace: {
         repos: [{ name: "runtime", base_ref: "origin/main" }],
         engine: "codex",
@@ -848,7 +849,10 @@ it.effect("cockpit client fails project turns when SSE reports a turn error", ()
     });
 
     const error = yield* client
-      .sendProjectThreadTurn("dogfood", "thread-1", { text: "Continue" })
+      .sendProjectThreadTurn("dogfood", "thread-1", {
+        text: "Continue",
+        idempotency_key: "turn-error-redaction",
+      })
       .pipe(Effect.flip);
 
     assert.ok(error instanceof JarvisClientError);

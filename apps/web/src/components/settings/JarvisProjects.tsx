@@ -30,7 +30,7 @@ import { serverEnvironment } from "../../state/server";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useDefaultOrchestratorTarget } from "../../hooks/useDefaultOrchestrator";
-import { cn } from "../../lib/utils";
+import { cn, randomUUID } from "../../lib/utils";
 import { textToBase64 } from "../../lib/fileAttachments";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -908,7 +908,7 @@ export function JarvisProjectsPanel() {
       input: {
         projectId: selectedId,
         threadId: selectedThread.thread_id,
-        input: { text },
+        input: { text, idempotency_key: `settings-project-turn-${randomUUID()}` },
       },
     });
     if (result._tag === "Failure") {

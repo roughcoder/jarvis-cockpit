@@ -245,7 +245,11 @@ export function PrReviewDialog({
     });
     void sendTurn({
       environmentId,
-      input: { projectId, threadId: String(threadId), input: { text: prompt } },
+      input: {
+        projectId,
+        threadId: String(threadId),
+        input: { text: prompt, idempotency_key: `pr-review-${String(threadId)}` },
+      },
     }).then((sent) => {
       if (sent._tag === "Failure" && !isAtomCommandInterrupted(sent)) {
         const failure = squashAtomCommandFailure(sent);

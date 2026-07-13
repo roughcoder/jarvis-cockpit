@@ -1081,10 +1081,12 @@ it.effect("decodes project thread turns with optional image attachments", () =>
   Effect.gen(function* () {
     const textOnly = yield* decodeProjectThreadTurn({
       text: "Continue the project conversation.",
+      idempotency_key: "turn-text-only",
     });
     const encodedTextOnly = yield* encodeProjectThreadTurn(textOnly);
     const withAttachment = yield* decodeProjectThreadTurn({
       text: "Use this screenshot.",
+      idempotency_key: "turn-with-attachment",
       attachments: [
         {
           kind: "image",
@@ -1096,18 +1098,23 @@ it.effect("decodes project thread turns with optional image attachments", () =>
     });
     const withWorkspace = yield* decodeProjectThreadTurn({
       text: "Inspect the runtime repo and summarize the failing tests.",
+      idempotency_key: "turn-with-workspace",
       workspace: {
         repos: [{ name: "runtime", base_ref: "origin/main" }],
         engine: "codex",
       },
     });
     const encodedWithWorkspace = yield* encodeProjectThreadTurn(withWorkspace);
+    const missingIdempotencyKey = yield* decodeProjectThreadTurn({
+      text: "This must not dispatch twice.",
+    }).pipe(Effect.flip);
 
     assert.strictEqual(textOnly.attachments, undefined);
     assert.strictEqual("workspace" in encodedTextOnly, false);
     assert.strictEqual(withAttachment.attachments?.[0]?.kind, "image");
     assert.strictEqual(withAttachment.attachments?.[0]?.mime_type, "image/png");
     assert.strictEqual(withAttachment.metadata?.surface, "jarvis-cockpit");
+    assert.match(String(missingIdempotencyKey), /idempotency_key/u);
     assert.deepStrictEqual(encodedWithWorkspace.workspace, {
       repos: [{ name: "runtime", base_ref: "origin/main" }],
       engine: "codex",

@@ -866,7 +866,7 @@ export const JarvisProjectThreadTurnInput = Schema.Struct({
   text: TrimmedNonEmptyString,
   attachments: Schema.optionalKey(Schema.Array(JarvisTurnAttachment)),
   workspace: Schema.optionalKey(JarvisTurnWorkspaceInput),
-  idempotency_key: Schema.optional(TrimmedNonEmptyString),
+  idempotency_key: TrimmedNonEmptyString,
   metadata: Schema.optionalKey(JarvisWriteMetadata).pipe(
     Schema.withDecodingDefault(Effect.succeed({ surface: "jarvis-cockpit" })),
   ),
