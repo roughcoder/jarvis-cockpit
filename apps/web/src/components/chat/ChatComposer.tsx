@@ -1281,6 +1281,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       prompt,
     ],
   );
+  // Durable project queues currently accept text/context only; raw image payloads
+  // remain local to the live gateway request until a blob-reference spool exists.
+  const canQueueCurrentDraft = allowSendWhileRunning && composerImages.length === 0;
 
   // ------------------------------------------------------------------
   // Derived: composer trigger / menu
@@ -1538,13 +1541,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [activePendingIsResponding, activePendingProgress, activePendingResolvedAnswers],
   );
   const collapsedComposerPrimaryActionDisabled =
-    (phase === "running" && !allowSendWhileRunning) ||
+    (phase === "running" && !canQueueCurrentDraft) ||
     isSendBusy ||
     isConnecting ||
     composerDisabled ||
     !composerSendState.hasSendableContent;
   const collapsedComposerPrimaryActionLabel =
-    phase === "running" && allowSendWhileRunning ? "Queue message" : "Send message";
+    phase === "running" && canQueueCurrentDraft ? "Queue message" : "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -3034,7 +3037,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     activeThreadProviderDisplayName={activeThreadProviderDisplayName}
                     pendingAction={pendingPrimaryAction}
                     isRunning={phase === "running"}
-                    allowSendWhileRunning={allowSendWhileRunning}
+                    allowSendWhileRunning={canQueueCurrentDraft}
                     showPlanFollowUpPrompt={
                       pendingUserInputs.length === 0 && showPlanFollowUpPrompt
                     }
