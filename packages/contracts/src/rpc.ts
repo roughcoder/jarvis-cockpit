@@ -93,7 +93,7 @@ import {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal.ts";
-import { JarvisProjectThreadStreamItem } from "./jarvis.ts";
+import { JarvisProjectThreadStreamItem, JarvisSyncMode } from "./jarvis.ts";
 import {
   DiscoveredLocalServerList,
   PreviewCloseInput,
@@ -383,7 +383,9 @@ export const WsServerGetJarvisCapabilitiesRpc = Rpc.make(WS_METHODS.serverGetJar
 });
 
 export const WsServerGetJarvisSnapshotRpc = Rpc.make(WS_METHODS.serverGetJarvisSnapshot, {
-  payload: Schema.Struct({}),
+  payload: Schema.Struct({
+    sync: Schema.optional(JarvisSyncMode),
+  }),
   success: JarvisCockpitSnapshotResult,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });

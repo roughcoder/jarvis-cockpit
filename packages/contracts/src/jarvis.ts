@@ -6,6 +6,8 @@ import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchema
 const JsonObject = Schema.Record(Schema.String, Schema.Json);
 export type JsonObject = typeof JsonObject.Type;
 
+const JarvisSyncDiagnostic = Schema.Union([Schema.String, JsonObject]);
+
 export const JarvisWriteMetadata = JsonObject;
 export type JarvisWriteMetadata = typeof JarvisWriteMetadata.Type;
 
@@ -1188,7 +1190,7 @@ export const JarvisCockpitSnapshot = Schema.Struct({
     mode: JarvisSyncMode,
     status: JarvisSyncStatus,
     synced_at: Schema.optional(Schema.NullOr(IsoDateTime)),
-    errors: Schema.Array(JsonObject),
+    errors: Schema.Array(JarvisSyncDiagnostic),
   }),
   runs: Schema.Array(JarvisRun),
   sessions: Schema.Array(JarvisWorkerSession),

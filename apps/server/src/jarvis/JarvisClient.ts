@@ -61,6 +61,7 @@ import {
   JarvisSessionRequestsPage,
   JarvisStartWorkInput,
   JarvisStartWorkValidationResult,
+  type JarvisSyncMode,
   JarvisTurnInput,
   JarvisUserInputInput,
   JarvisWorkerSession,
@@ -127,7 +128,9 @@ export interface JarvisClient {
   readonly getCatalog: () => Effect.Effect<JarvisCockpitCatalog, JarvisClientError>;
   readonly getCapabilities: () => Effect.Effect<JarvisCapabilitiesResult, JarvisClientError>;
   readonly getMcpStatus: () => Effect.Effect<JarvisMcpStatus, JarvisClientError>;
-  readonly getSnapshot: () => Effect.Effect<JarvisRunsSnapshot, JarvisClientError>;
+  readonly getSnapshot: (options?: {
+    readonly sync?: JarvisSyncMode;
+  }) => Effect.Effect<JarvisRunsSnapshot, JarvisClientError>;
   readonly getProjects: (options?: {
     readonly includeArchived?: boolean;
   }) => Effect.Effect<ReadonlyArray<JarvisProject>, JarvisClientError>;
@@ -674,6 +677,7 @@ function canUseJarvisOAuthForUrl(
 }
 
 const JARVIS_SSE_IDLE_TIMEOUT_MS = 45_000;
+const JARVIS_JSON_REQUEST_TIMEOUT_MS = 30_000;
 
 /**
  * Incrementally parses SSE frames. Jarvis sends JSON envelopes, but this is
@@ -849,54 +853,118 @@ function streamJarvisCockpitSse(
   );
 }
 
+async function runBoundedJarvisJsonRequest<T>(input: {
+  readonly operation: string;
+  readonly timeoutMs: number;
+  readonly callerSignal?: AbortSignal | null | undefined;
+  readonly execute: (signal: AbortSignal) => Promise<T>;
+}): Promise<T> {
+  const requestController = new AbortController();
+  const timeoutSignal = AbortSignal.timeout(input.timeoutMs);
+  const timeoutError = new JarvisClientError({
+    operation: input.operation,
+    message: `Jarvis request ${input.operation} timed out after ${input.timeoutMs} ms.`,
+  });
+  const relayCallerAbort = () => requestController.abort(input.callerSignal?.reason);
+  const relayTimeoutAbort = () => requestController.abort(timeoutError);
+
+  if (input.callerSignal?.aborted) {
+    relayCallerAbort();
+  } else {
+    input.callerSignal?.addEventListener("abort", relayCallerAbort, { once: true });
+  }
+  if (!requestController.signal.aborted) {
+    timeoutSignal.addEventListener("abort", relayTimeoutAbort, { once: true });
+  }
+
+  let rejectOnAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectOnAbort = () =>
+      reject(
+        requestController.signal.reason ??
+          new Error(`Jarvis request ${input.operation} was aborted.`),
+      );
+    if (requestController.signal.aborted) {
+      rejectOnAbort();
+    } else {
+      requestController.signal.addEventListener("abort", rejectOnAbort, { once: true });
+    }
+  });
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => input.execute(requestController.signal)),
+      aborted,
+    ]);
+  } finally {
+    input.callerSignal?.removeEventListener("abort", relayCallerAbort);
+    timeoutSignal.removeEventListener("abort", relayTimeoutAbort);
+    if (rejectOnAbort !== undefined) {
+      requestController.signal.removeEventListener("abort", rejectOnAbort);
+    }
+  }
+}
+
 export function makeJarvisCockpitClient(input: {
   readonly baseUrl: URL;
   readonly token?: string;
   readonly tokenProvider?: JarvisAccessTokenProvider;
   readonly fetch?: FetchLike;
+  readonly requestTimeoutMs?: number;
 }): JarvisClient {
   const fetchImpl = input.fetch ?? fetch;
+  const requestTimeoutMs =
+    input.requestTimeoutMs !== undefined &&
+    Number.isFinite(input.requestTimeoutMs) &&
+    input.requestTimeoutMs > 0
+      ? Math.max(1, Math.floor(input.requestTimeoutMs))
+      : JARVIS_JSON_REQUEST_TIMEOUT_MS;
   const requestJson = (operation: string, path: string, init?: RequestInit) =>
     resolveRequestAuth(input, operation).pipe(
       Effect.flatMap((auth) =>
         Effect.tryPromise({
-          try: async () => {
-            const requestUrl = new URL(path, input.baseUrl);
-            const send = async (token: string | undefined) => {
-              const response = await fetchImpl(requestUrl, {
-                ...init,
-                headers: {
-                  accept: "application/json",
-                  ...(init?.body != null && !isFormDataBody(init.body)
-                    ? { "content-type": "application/json" }
-                    : {}),
-                  ...(token ? { authorization: `Bearer ${token}` } : {}),
-                  ...init?.headers,
-                },
-              });
-              const text = await response.text();
-              return { response, text };
-            };
-            const first = await send(auth.token);
-            const result =
-              !first.response.ok &&
-              isAuthRejectedStatus(first.response.status) &&
-              auth.recoveryToken !== undefined
-                ? await send(auth.recoveryToken)
-                : first;
-            if (!result.response.ok) {
-              const responseBody = truncateResponseBody(result.text);
-              throw new JarvisClientError({
-                operation,
-                status: result.response.status,
-                responseBody,
-                message: summarizeHttpError(operation, result.response.status, responseBody),
-              });
-            }
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
-            const body = result.text.trim().length > 0 ? JSON.parse(result.text) : {};
-            return body as unknown;
-          },
+          try: () =>
+            runBoundedJarvisJsonRequest({
+              operation,
+              timeoutMs: requestTimeoutMs,
+              callerSignal: init?.signal,
+              execute: async (signal) => {
+                const requestUrl = new URL(path, input.baseUrl);
+                const send = async (token: string | undefined) => {
+                  const response = await fetchImpl(requestUrl, {
+                    ...init,
+                    signal,
+                    headers: {
+                      accept: "application/json",
+                      ...(init?.body != null && !isFormDataBody(init.body)
+                        ? { "content-type": "application/json" }
+                        : {}),
+                      ...(token ? { authorization: `Bearer ${token}` } : {}),
+                      ...init?.headers,
+                    },
+                  });
+                  const text = await response.text();
+                  return { response, text };
+                };
+                const first = await send(auth.token);
+                const result =
+                  !first.response.ok &&
+                  isAuthRejectedStatus(first.response.status) &&
+                  auth.recoveryToken !== undefined
+                    ? await send(auth.recoveryToken)
+                    : first;
+                if (!result.response.ok) {
+                  const responseBody = truncateResponseBody(result.text);
+                  throw new JarvisClientError({
+                    operation,
+                    status: result.response.status,
+                    responseBody,
+                    message: summarizeHttpError(operation, result.response.status, responseBody),
+                  });
+                }
+                const body = result.text.trim().length > 0 ? JSON.parse(result.text) : {};
+                return body as unknown;
+              },
+            }),
           catch: (cause) =>
             cause instanceof JarvisClientError
               ? cause
@@ -1139,8 +1207,11 @@ export function makeJarvisCockpitClient(input: {
       requestJson("mcp.status", "/v1/mcp/status").pipe(
         Effect.flatMap(decodeFor("mcp.status", decodeMcpStatus)),
       ),
-    getSnapshot: () =>
-      requestJson("cockpit.snapshot", "/v1/cockpit/snapshot?sync=fast").pipe(
+    getSnapshot: (options) =>
+      requestJson(
+        "cockpit.snapshot",
+        `/v1/cockpit/snapshot?sync=${encodeURIComponent(options?.sync ?? "fast")}`,
+      ).pipe(
         Effect.flatMap(
           decodeSnapshotDroppingMalformedSessions(decodeFor("cockpit.snapshot", decodeSnapshot)),
         ),
@@ -1586,7 +1657,8 @@ export function makeJarvisClient(config: {
       getCatalog: () => withClient("cockpit.catalog", (client) => client.getCatalog()),
       getCapabilities: () => withClient("capabilities.get", (client) => client.getCapabilities()),
       getMcpStatus: () => withClient("mcp.status", (client) => client.getMcpStatus()),
-      getSnapshot: () => withClient("cockpit.snapshot", (client) => client.getSnapshot()),
+      getSnapshot: (options) =>
+        withClient("cockpit.snapshot", (client) => client.getSnapshot(options)),
       getProjects: (options) =>
         withClient("projects.list", (client) => client.getProjects(options)),
       getProject: (projectId) =>

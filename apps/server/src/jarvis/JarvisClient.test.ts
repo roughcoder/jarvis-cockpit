@@ -920,7 +920,7 @@ it.effect("cockpit client renames project threads with a PATCH request", () =>
   }),
 );
 
-it.effect("cockpit client attaches bearer token and reads the v1 snapshot endpoint", () =>
+it.effect("cockpit client attaches bearer token and selects the snapshot sync mode", () =>
   Effect.gen(function* () {
     const requests: Array<{ url: string; authorization: string | null }> = [];
     const client = makeJarvisCockpitClient({
@@ -936,7 +936,9 @@ it.effect("cockpit client attaches bearer token and reads the v1 snapshot endpoi
     });
 
     const parsedSnapshot = yield* client.getSnapshot();
+    yield* client.getSnapshot({ sync: "probe" });
     assert.strictEqual(requests[0]?.url, "http://jarvis.local:8787/v1/cockpit/snapshot?sync=fast");
+    assert.strictEqual(requests[1]?.url, "http://jarvis.local:8787/v1/cockpit/snapshot?sync=probe");
     assert.strictEqual(requests[0]?.authorization, "Bearer worker-token");
     assert.strictEqual(parsedSnapshot.runs[0]?.run_id, "run_1");
     assert.strictEqual(parsedSnapshot.runs[0]?.objective, "Do the work");
@@ -1084,6 +1086,62 @@ it.effect("cockpit client retries the legacy bearer token when OAuth is rejected
     assert.strictEqual(requests[0]?.authorization, "Bearer oauth-token");
     assert.strictEqual(requests[1]?.authorization, "Bearer legacy-token");
     assert.strictEqual(parsedSnapshot.runs[0]?.run_id, "run_1");
+  }),
+);
+
+it.effect("cockpit client times out JSON requests that never settle", () =>
+  Effect.gen(function* () {
+    let requestSignal: AbortSignal | null | undefined;
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      requestTimeoutMs: 10,
+      fetch: async (_url, init) => {
+        requestSignal = init?.signal;
+        return await new Promise<Response>(() => undefined);
+      },
+    });
+
+    const error = yield* client.getSnapshot().pipe(Effect.flip);
+
+    assert.ok(error instanceof JarvisClientError);
+    assert.strictEqual(error.operation, "cockpit.snapshot");
+    assert.strictEqual(error.status, null);
+    assert.strictEqual(error.responseBody, null);
+    assert.match(error.message, /timed out after 10 ms/u);
+    assert.strictEqual(requestSignal?.aborted, true);
+  }),
+);
+
+it.effect("cockpit client gives an auth retry one shared JSON request timeout", () =>
+  Effect.gen(function* () {
+    const requestSignals: AbortSignal[] = [];
+    const authorizations: Array<string | null> = [];
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      token: "legacy-token",
+      tokenProvider: () => Effect.succeed("oauth-token"),
+      requestTimeoutMs: 10,
+      fetch: async (_url, init) => {
+        const signal = init?.signal;
+        if (signal !== undefined && signal !== null) {
+          requestSignals.push(signal);
+        }
+        const authorization = new Headers(init?.headers).get("authorization");
+        authorizations.push(authorization);
+        if (authorization === "Bearer oauth-token") {
+          return jsonResponse({ error: "bad token" }, { status: 401 });
+        }
+        return await new Promise<Response>(() => undefined);
+      },
+    });
+
+    const error = yield* client.getSnapshot().pipe(Effect.flip);
+
+    assert.match(error.message, /timed out after 10 ms/u);
+    assert.deepStrictEqual(authorizations, ["Bearer oauth-token", "Bearer legacy-token"]);
+    assert.strictEqual(requestSignals.length, 2);
+    assert.strictEqual(requestSignals[0], requestSignals[1]);
+    assert.strictEqual(requestSignals[1]?.aborted, true);
   }),
 );
 

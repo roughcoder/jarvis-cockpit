@@ -1793,26 +1793,28 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
-        [WS_METHODS.serverGetJarvisSnapshot]: (_input) =>
+        [WS_METHODS.serverGetJarvisSnapshot]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverGetJarvisSnapshot,
-            jarvisClient.getSnapshot().pipe(
-              Effect.map((snapshot) => ({
-                ok: true,
-                snapshot,
-              })),
-              Effect.catch((error) =>
-                Effect.succeed({
-                  ok: false,
-                  error: {
-                    message:
-                      error instanceof Error && error.message.trim().length > 0
-                        ? error.message
-                        : "Jarvis cockpit snapshot request failed.",
-                  },
-                }),
+            jarvisClient
+              .getSnapshot(input.sync === undefined ? undefined : { sync: input.sync })
+              .pipe(
+                Effect.map((snapshot) => ({
+                  ok: true,
+                  snapshot,
+                })),
+                Effect.catch((error) =>
+                  Effect.succeed({
+                    ok: false,
+                    error: {
+                      message:
+                        error instanceof Error && error.message.trim().length > 0
+                          ? error.message
+                          : "Jarvis cockpit snapshot request failed.",
+                    },
+                  }),
+                ),
               ),
-            ),
             {
               "rpc.aggregate": "server",
             },
