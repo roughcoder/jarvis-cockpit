@@ -98,6 +98,24 @@ export function buildTurnWorkspaceInput(
   };
 }
 
+export function projectConversationWorkspaceMatchesSubmission(
+  current: JarvisTurnWorkspaceInput | null | undefined,
+  submitted: JarvisTurnWorkspaceInput | null | undefined,
+): boolean {
+  if (!current || !submitted) return !current && !submitted;
+  if (current.engine !== submitted.engine) return false;
+  const currentRepos = current.repos ?? [];
+  const submittedRepos = submitted.repos ?? [];
+  return (
+    currentRepos.length === submittedRepos.length &&
+    currentRepos.every(
+      (repo, index) =>
+        repo.name === submittedRepos[index]?.name &&
+        repo.base_ref === submittedRepos[index]?.base_ref,
+    )
+  );
+}
+
 export function shouldPollProjectConversationWorkspace(input: {
   readonly turnInFlight: boolean;
   /**

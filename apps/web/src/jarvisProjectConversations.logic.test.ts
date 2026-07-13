@@ -446,6 +446,42 @@ describe("project conversation history", () => {
     );
   });
 
+  it("retains the immutable attachment and workspace snapshot for retry", () => {
+    const attachment = {
+      kind: "image" as const,
+      mime_type: "image/png" as const,
+      name: "failure.png",
+      data_url: "data:image/png;base64,aGVsbG8=",
+    };
+    const workspace = {
+      engine: "codex" as const,
+      repos: [{ name: "jarvis", base_ref: "origin/main" }],
+    };
+    const messages = projectConversationMergedMessages({
+      historyMessages: [],
+      localTurns: [
+        {
+          id: "turn-failed",
+          prompt: "Inspect this failure",
+          response: "",
+          attachments: [attachment],
+          workspaceInput: workspace,
+          status: "failed",
+          error: "provider unavailable",
+          createdAt: "2026-07-07T10:00:00.000Z",
+        },
+      ],
+    });
+
+    const retryMessage = messages.find((message) => message.role === "assistant");
+    expect(retryMessage).toMatchObject({
+      localTurnId: "turn-failed",
+      retryPrompt: "Inspect this failure",
+      retryAttachments: [attachment],
+      retryWorkspace: workspace,
+    });
+  });
+
   it("preserves multi-turn user-assistant ordering while merging history and local state", () => {
     const historyMessages = projectConversationHistoryMessages({
       messages: [

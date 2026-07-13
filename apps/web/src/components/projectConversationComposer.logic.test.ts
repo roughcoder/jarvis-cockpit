@@ -4,14 +4,73 @@ import {
   buildProjectConversationTurnAttachments,
   buildProjectTurnImageAttachmentDataUrl,
   decodedBytesFromProjectTurnAttachmentDataUrl,
+  isProjectConversationComposerDraftEmpty,
   PROJECT_TURN_ATTACHMENT_MAX_COUNT,
   PROJECT_TURN_ATTACHMENT_MAX_DECODED_BYTES,
+  projectConversationComposerMatchesSubmission,
   projectConversationSupportsImageAttachments,
   validateProjectTurnAttachmentCount,
   validateProjectTurnImageAttachment,
 } from "./projectConversationComposer.logic";
 
 describe("project conversation image attachments", () => {
+  it("restores a failed submission only when the replacement draft is still empty", () => {
+    expect(
+      isProjectConversationComposerDraftEmpty({
+        prompt: "",
+        imageCount: 0,
+        terminalContextCount: 0,
+        elementContextCount: 0,
+      }),
+    ).toBe(true);
+    expect(
+      isProjectConversationComposerDraftEmpty({
+        prompt: "new draft",
+        imageCount: 0,
+        terminalContextCount: 0,
+        elementContextCount: 0,
+      }),
+    ).toBe(false);
+    expect(
+      isProjectConversationComposerDraftEmpty({
+        prompt: "",
+        imageCount: 1,
+        terminalContextCount: 0,
+        elementContextCount: 0,
+      }),
+    ).toBe(false);
+  });
+
+  it("clears a retried draft only when prompt, images, and contexts still match", () => {
+    const matching = {
+      draftPrompt: "Retry this",
+      draftImageIds: ["image-1"],
+      terminalContextCount: 0,
+      elementContextCount: 0,
+      submissionPrompt: "Retry this",
+      submissionImageIds: ["image-1"],
+    };
+    expect(projectConversationComposerMatchesSubmission(matching)).toBe(true);
+    expect(
+      projectConversationComposerMatchesSubmission({
+        ...matching,
+        draftPrompt: "Replacement draft",
+      }),
+    ).toBe(false);
+    expect(
+      projectConversationComposerMatchesSubmission({
+        ...matching,
+        draftImageIds: ["image-2"],
+      }),
+    ).toBe(false);
+    expect(
+      projectConversationComposerMatchesSubmission({
+        ...matching,
+        terminalContextCount: 1,
+      }),
+    ).toBe(false);
+  });
+
   it("accepts only the deployed image mime allow-list", () => {
     for (const mimeType of ["image/png", "image/jpeg", "image/webp", "image/gif"]) {
       expect(

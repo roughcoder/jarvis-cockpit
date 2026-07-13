@@ -5,6 +5,7 @@ import {
   clearProjectConversationWorkspaceRepos,
   createProjectConversationWorkspaceStaging,
   deriveWorkspaceProvisionSteps,
+  projectConversationWorkspaceMatchesSubmission,
   setProjectConversationWorkspaceEngine,
   setProjectConversationWorkspaceRepoBaseRef,
   shouldPollProjectConversationWorkspace,
@@ -47,6 +48,25 @@ describe("project conversation workspace staging", () => {
       engine: "claude",
       repos: [],
     });
+  });
+
+  it("clears staged workspace only when it still matches the submitted snapshot", () => {
+    const submitted = {
+      engine: "codex" as const,
+      repos: [{ name: "runtime", base_ref: "origin/main" }],
+    };
+    expect(projectConversationWorkspaceMatchesSubmission(submitted, submitted)).toBe(true);
+    expect(projectConversationWorkspaceMatchesSubmission(undefined, null)).toBe(true);
+    expect(projectConversationWorkspaceMatchesSubmission(submitted, null)).toBe(false);
+    expect(
+      projectConversationWorkspaceMatchesSubmission(
+        { ...submitted, repos: [{ name: "cockpit", base_ref: "origin/main" }] },
+        submitted,
+      ),
+    ).toBe(false);
+    expect(
+      projectConversationWorkspaceMatchesSubmission({ ...submitted, engine: "claude" }, submitted),
+    ).toBe(false);
   });
 });
 

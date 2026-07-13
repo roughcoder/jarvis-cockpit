@@ -6,10 +6,12 @@ import type {
   JarvisProjectThreadMessage,
   JarvisProjectThread,
   JarvisProjectThreadTurnResult,
+  JarvisTurnAttachment,
   JarvisTurnWorkspaceInput,
   ThreadId,
 } from "@t3tools/contracts";
 import { projectJarvisMessagePresentation } from "@t3tools/client-runtime/conversation";
+import type { ComposerImageAttachment } from "./composerDraftStore";
 import type { JarvisThreadTurnMergedItem } from "./jarvisThreadToolEvents.logic";
 
 export type ProjectConversationSendStatus =
@@ -42,6 +44,8 @@ export interface ProjectConversationLocalTurnView {
   readonly response: string;
   readonly toolItems?: ReadonlyArray<JarvisThreadTurnMergedItem>;
   readonly workspaceInput?: JarvisTurnWorkspaceInput | null;
+  readonly attachments?: ReadonlyArray<JarvisTurnAttachment>;
+  readonly composerImages?: ReadonlyArray<ComposerImageAttachment>;
   readonly status: ProjectConversationSendStatus;
   readonly error: string | null;
   readonly createdAt: string;
@@ -62,6 +66,8 @@ export interface ProjectConversationMessageView {
   readonly localTurnId: string | null;
   readonly retryPrompt: string | null;
   readonly retryWorkspace: JarvisTurnWorkspaceInput | null;
+  readonly retryAttachments?: ReadonlyArray<JarvisTurnAttachment>;
+  readonly retryComposerImages?: ReadonlyArray<ComposerImageAttachment>;
   readonly orchestrationLifecycle: OrchestrationLifecycleView | null;
 }
 
@@ -293,6 +299,7 @@ function orchestrationLifecycleMessages(
       localTurnId: null,
       retryPrompt: null,
       retryWorkspace: null,
+      retryAttachments: [],
       orchestrationLifecycle: {
         watchId: watch.watch_id ?? "",
         phase: watchPhase,
@@ -360,6 +367,7 @@ function legacyOrchestrationLifecycleMessages(
       localTurnId: null,
       retryPrompt: null,
       retryWorkspace: null,
+      retryAttachments: [],
       orchestrationLifecycle: {
         watchId: "legacy transcript",
         phase: complete ? "completed" : "waiting",
@@ -472,6 +480,7 @@ function historyMessageView(
     localTurnId: null,
     retryPrompt: null,
     retryWorkspace: null,
+    retryAttachments: [],
     orchestrationLifecycle: null,
   };
 }
@@ -497,6 +506,7 @@ function localTurnMessages(
       localTurnId: turn.id,
       retryPrompt: null,
       retryWorkspace: null,
+      retryAttachments: [],
       orchestrationLifecycle: null,
     });
   }
@@ -533,6 +543,8 @@ function localAssistantMessage(
     localTurnId: turn.id,
     retryPrompt: turn.prompt,
     retryWorkspace: turn.workspaceInput ?? null,
+    retryAttachments: turn.attachments ?? [],
+    retryComposerImages: turn.composerImages ?? [],
     orchestrationLifecycle: null,
   };
 }

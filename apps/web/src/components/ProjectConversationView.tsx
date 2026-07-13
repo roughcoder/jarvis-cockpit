@@ -56,6 +56,7 @@ import { readFileAsDataUrl } from "../lib/fileAttachments";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useEnvironmentSettings } from "../hooks/useSettings";
 import { useTheme } from "../hooks/useTheme";
+import { useComposerHandleContext } from "../composerHandleContext";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import {
   type ComposerImageAttachment,
@@ -91,11 +92,16 @@ import {
   type ProjectConversationMessageView,
   type OrchestrationLifecycleView,
 } from "../jarvisProjectConversations.logic";
-import { buildProjectConversationTurnAttachments } from "./projectConversationComposer.logic";
+import {
+  buildProjectConversationTurnAttachments,
+  isProjectConversationComposerDraftEmpty,
+  projectConversationComposerMatchesSubmission,
+} from "./projectConversationComposer.logic";
 import {
   buildTurnWorkspaceInput,
   clearProjectConversationWorkspaceRepos,
   createProjectConversationWorkspaceStaging,
+  projectConversationWorkspaceMatchesSubmission,
   setProjectConversationWorkspaceEngine,
   type ProjectConversationWorkspaceStaging,
 } from "./projectConversationWorkspace.logic";
@@ -123,6 +129,7 @@ import { agentConversationTimelineRenderMode } from "../agentConversationTimelin
 import { ProjectConversationMessage } from "./ProjectConversationMessage";
 import { ChatHeaderTitle } from "./chat/ChatHeaderTitle";
 import { AgentConversationTimeline } from "./chat/AgentConversationTimeline";
+import { cloneComposerImageForRetry } from "./ChatView.logic";
 
 interface ProjectConversationViewProps {
   readonly environmentId: EnvironmentId;
@@ -131,6 +138,13 @@ interface ProjectConversationViewProps {
 }
 
 type LocalTurn = ProjectConversationLocalTurnView;
+
+interface ProjectConversationSubmissionSnapshot {
+  readonly prompt: string;
+  readonly attachments: ReadonlyArray<JarvisTurnAttachment>;
+  readonly composerImages: ReadonlyArray<ComposerImageAttachment>;
+  readonly workspace: JarvisTurnWorkspaceInput | null;
+}
 
 const PROJECT_CONVERSATION_FILE_DATA_URL_READ_MESSAGES = {
   nonStringResult: "File reader returned a non-string data URL.",
@@ -232,9 +246,11 @@ export function ProjectConversationView({
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const composerElementContextsRef = useRef<ElementContextDraft[]>([]);
-  const composerRef = useRef<ChatComposerHandle | null>(null);
+  const localComposerRef = useRef<ChatComposerHandle | null>(null);
+  const composerRef = useComposerHandleContext() ?? localComposerRef;
   const clearComposerContent = useComposerDraftStore((store) => store.clearComposerContent);
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
+  const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const [turns, setTurns] = useState<LocalTurn[]>([]);
   const messages = useMemo(
     () => projectConversationMergedMessages({ historyMessages, localTurns: turns }),
@@ -541,19 +557,53 @@ export function ProjectConversationView({
     return result.attachments;
   };
 
+  const restoreFailedSubmission = (submission: ProjectConversationSubmissionSnapshot) => {
+    if (
+      !isProjectConversationComposerDraftEmpty({
+        prompt: promptRef.current,
+        imageCount: composerImagesRef.current.length,
+        terminalContextCount: composerTerminalContextsRef.current.length,
+        elementContextCount: composerElementContextsRef.current.length,
+      })
+    ) {
+      return;
+    }
+    const retryImages = submission.composerImages.map(cloneComposerImageForRetry);
+    promptRef.current = submission.prompt;
+    composerImagesRef.current = retryImages;
+    setComposerDraftPrompt(composerDraftTarget, submission.prompt);
+    addComposerDraftImages(composerDraftTarget, retryImages);
+    composerRef.current?.resetCursorState({
+      cursor: submission.prompt.length,
+      prompt: submission.prompt,
+      detectTrigger: true,
+    });
+  };
+
   const sendPrompt = async (
-    prompt: string,
-    options: {
-      readonly attachments?: ReadonlyArray<JarvisTurnAttachment>;
-      readonly existingTurnId?: string;
-      readonly workspace?: JarvisTurnWorkspaceInput;
-    } = {},
+    submission: ProjectConversationSubmissionSnapshot,
+    options: { readonly existingTurnId?: string } = {},
   ) => {
-    const text = prompt.trim();
+    const text = submission.prompt.trim();
     if (text.length === 0 || sendBusy || archived) return;
     const existingTurnId = options.existingTurnId;
-    const turnAttachments = existingTurnId ? [] : (options.attachments ?? []);
-    const turnWorkspace = options.workspace;
+    const turnAttachments = submission.attachments;
+    const turnWorkspace = submission.workspace;
+    const workspaceMatchesSubmission = projectConversationWorkspaceMatchesSubmission(
+      buildTurnWorkspaceInput(workspaceStaging),
+      turnWorkspace,
+    );
+    const clearMatchingRetryDraft =
+      existingTurnId !== undefined &&
+      workspaceMatchesSubmission &&
+      projectConversationComposerMatchesSubmission({
+        draftPrompt: promptRef.current,
+        draftImageIds: composerImagesRef.current.map((image) => image.id),
+        terminalContextCount: composerTerminalContextsRef.current.length,
+        elementContextCount: composerElementContextsRef.current.length,
+        submissionPrompt: submission.prompt,
+        submissionImageIds: submission.composerImages.map((image) => image.id),
+      });
 
     const turnId = existingTurnId ?? `project-turn-${Date.now()}-${turnCounter.current++}`;
     if (existingTurnId) {
@@ -566,15 +616,19 @@ export function ProjectConversationView({
           prompt: text,
           response: "",
           toolItems: [],
-          workspaceInput: turnWorkspace ?? null,
+          workspaceInput: turnWorkspace,
+          attachments: turnAttachments,
+          composerImages: submission.composerImages,
           status: "pending",
           error: null,
           createdAt: new Date().toISOString(),
         },
       ]);
     }
-    if (!existingTurnId) {
-      setComposerDraftPrompt(composerDraftTarget, "");
+    if (!existingTurnId || clearMatchingRetryDraft) {
+      promptRef.current = "";
+      composerImagesRef.current = [];
+      clearComposerContent(composerDraftTarget);
       composerRef.current?.resetCursorState({ cursor: 0, prompt: "" });
     }
 
@@ -586,18 +640,18 @@ export function ProjectConversationView({
         input: {
           text,
           ...(turnAttachments.length > 0 ? { attachments: turnAttachments } : {}),
-          ...(turnWorkspace !== undefined ? { workspace: turnWorkspace } : {}),
+          ...(turnWorkspace !== null ? { workspace: turnWorkspace } : {}),
         },
       },
     });
     if (result._tag === "Failure") {
-      if (!isAtomCommandInterrupted(result)) {
-        const message = formatProjectConversationSendFailure(squashAtomCommandFailure(result));
-        markTurn(turnId, { status: "failed", error: message });
-        if (!existingTurnId) {
-          setComposerDraftPrompt(composerDraftTarget, text);
-          composerRef.current?.resetCursorState({ cursor: text.length, prompt: text });
-        }
+      const interrupted = isAtomCommandInterrupted(result);
+      const message = interrupted
+        ? "Project conversation send interrupted."
+        : formatProjectConversationSendFailure(squashAtomCommandFailure(result));
+      markTurn(turnId, { status: "failed", error: message });
+      if (!existingTurnId || clearMatchingRetryDraft) restoreFailedSubmission(submission);
+      if (!interrupted) {
         toastManager.add({
           type: "error",
           title: "Could not send project turn",
@@ -611,10 +665,7 @@ export function ProjectConversationView({
         result.value.error?.message ?? "Jarvis did not return a project conversation turn result.",
       );
       markTurn(turnId, { status: "failed", error: message });
-      if (!existingTurnId) {
-        setComposerDraftPrompt(composerDraftTarget, text);
-        composerRef.current?.resetCursorState({ cursor: text.length, prompt: text });
-      }
+      if (!existingTurnId || clearMatchingRetryDraft) restoreFailedSubmission(submission);
       toastManager.add({
         type: "error",
         title: "Could not send project turn",
@@ -631,14 +682,9 @@ export function ProjectConversationView({
       .trim();
     const reply = mergedReply || extractProjectConversationReply(result.value.result);
     markTurn(turnId, { status: "completed", response: reply, toolItems, error: null });
-    if (!existingTurnId) {
-      clearComposerContent(composerDraftTarget);
-      composerRef.current?.resetCursorState({ cursor: 0, prompt: "" });
-    }
-    // Clear staged repos on ANY successful turn that carried a workspace —
-    // including retries via `existingTurnId` — so the strip stops showing the
-    // repo as staged and the next follow-up doesn't re-send it.
-    if (turnWorkspace !== undefined) {
+    // Clear only the workspace snapshot that actually succeeded. A replacement
+    // staged while this request was in flight remains available for the next turn.
+    if (turnWorkspace !== null && workspaceMatchesSubmission) {
       clearWorkspaceRepoStaging();
     }
     refreshConversationData();
@@ -657,9 +703,11 @@ export function ProjectConversationView({
     if (attachments === null) {
       return;
     }
-    await sendPrompt(sendContext.prompt, {
+    await sendPrompt({
+      prompt: sendContext.prompt,
       attachments,
-      ...(workspace !== undefined ? { workspace } : {}),
+      composerImages: [...sendContext.images],
+      workspace: workspace ?? null,
     });
   };
 
@@ -670,10 +718,15 @@ export function ProjectConversationView({
       return undefined;
     }
     return () =>
-      void sendPrompt(retryPrompt, {
-        existingTurnId: localTurnId,
-        ...(message.retryWorkspace !== null ? { workspace: message.retryWorkspace } : {}),
-      });
+      void sendPrompt(
+        {
+          prompt: retryPrompt,
+          attachments: message.retryAttachments ?? [],
+          composerImages: message.retryComposerImages ?? [],
+          workspace: message.retryWorkspace,
+        },
+        { existingTurnId: localTurnId },
+      );
   };
 
   const writeArchiveState = async (action: "archive" | "unarchive") => {
