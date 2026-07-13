@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { ProjectConversationView } from "../components/ProjectConversationView";
+import ChatView from "../components/ChatView";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { SidebarInset } from "../components/ui/sidebar";
 import {
@@ -18,10 +18,11 @@ function ProjectConversationRouteView() {
   return (
     <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
       {renderState.status === "ready" ? (
-        <ProjectConversationView
+        <ChatView
           environmentId={renderState.params.environmentId}
           projectId={renderState.params.projectId}
           threadId={renderState.params.threadId}
+          routeKind="agent"
         />
       ) : (
         <ProjectConversationRouteFallback />

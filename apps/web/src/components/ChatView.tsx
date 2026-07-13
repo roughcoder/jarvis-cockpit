@@ -147,6 +147,7 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
+import { ProjectConversationView } from "./ProjectConversationView";
 import {
   commandForProjectScript,
   nextProjectScriptId,
@@ -343,7 +344,7 @@ function formatOutgoingPrompt(params: {
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 
-type ChatViewProps =
+type StandardChatViewProps =
   | {
       environmentId: EnvironmentId;
       threadId: ThreadId;
@@ -359,6 +360,15 @@ type ChatViewProps =
       reserveTitleBarControlInset?: boolean;
       routeKind: "draft";
       draftId: DraftId;
+    };
+
+type ChatViewProps =
+  | StandardChatViewProps
+  | {
+      environmentId: EnvironmentId;
+      projectId: string;
+      threadId: ThreadId;
+      routeKind: "agent";
     };
 
 interface TerminalLaunchContext {
@@ -995,7 +1005,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
   );
 });
 
-function ChatViewContent(props: ChatViewProps) {
+function ChatViewContent(props: StandardChatViewProps) {
   const {
     environmentId,
     threadId,
@@ -5537,6 +5547,15 @@ function ChatViewContent(props: ChatViewProps) {
 }
 
 export default function ChatView(props: ChatViewProps) {
+  if (props.routeKind === "agent") {
+    return (
+      <ProjectConversationView
+        environmentId={props.environmentId}
+        projectId={props.projectId}
+        threadId={props.threadId}
+      />
+    );
+  }
   return (
     <DiffWorkerPoolProvider>
       <ChatViewContent {...props} />
