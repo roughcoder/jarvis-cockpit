@@ -811,6 +811,7 @@ export function AgentConversationChatView({
         threadId: String(threadId),
         input: {
           text,
+          idempotency_key: `project-thread-turn-${turnId}`,
           ...(turnAttachments.length > 0 ? { attachments: turnAttachments } : {}),
           ...(turnWorkspace !== null ? { workspace: turnWorkspace } : {}),
         },
