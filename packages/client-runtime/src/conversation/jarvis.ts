@@ -72,6 +72,7 @@ interface ActivityAccumulator extends ActivityFrame {
 export function adaptJarvisProjectThread(thread: JarvisConversationDetail): AgentConversation {
   const conversationId = String(thread.conversation_id ?? thread.thread_id);
   const lifecycle = projectLifecycle(thread);
+  const operationalState = projectOperationalState(thread, lifecycle);
   const projected = projectItems(conversationId, thread.messages);
   const messages = projected.flatMap((item) => (item.message ? [item.message] : []));
   const activities = projected.flatMap((item) => (item.activity ? [item.activity] : []));
@@ -85,7 +86,7 @@ export function adaptJarvisProjectThread(thread: JarvisConversationDetail): Agen
     id: conversationId,
     title: thread.title,
     lifecycle,
-    operationalState: projectOperationalState(thread, lifecycle),
+    operationalState,
     createdAt: thread.created_at,
     updatedAt: thread.updated_at,
     lastTurnAt: clean(thread.last_turn_at),
@@ -103,6 +104,7 @@ export function adaptJarvisProjectThread(thread: JarvisConversationDetail): Agen
       reason: clean(thread.diagnostic_reason),
       execution: projectExecutionDiagnostics(thread.workspace),
     },
+    runtime: projectConversationRuntime(thread, lifecycle, operationalState),
     context: {
       workspace: projectWorkspace(thread.workspace),
       project: null,
@@ -112,6 +114,65 @@ export function adaptJarvisProjectThread(thread: JarvisConversationDetail): Agen
       archivedBy: clean(thread.archived_by),
       archiveReason: clean(thread.archive_reason),
     },
+  };
+}
+
+function projectConversationRuntime(
+  thread: JarvisConversationDetail,
+  lifecycle: ConversationLifecycle,
+  operationalState: ConversationOperationalState,
+): AgentConversation["runtime"] {
+  const execution = thread.execution;
+  if (!execution) {
+    return {
+      available: true,
+      status: operationalState,
+      activeTurn: null,
+      pendingRequests: [],
+      supportedControls: lifecycle === "archived" ? [] : ["turn"],
+      supportsSteer: false,
+      supportsQueue: false,
+      diagnostic: null,
+    };
+  }
+  return {
+    available: execution.available,
+    status: execution.status,
+    activeTurn: execution.active_turn
+      ? {
+          id: execution.active_turn.turn_id,
+          status: execution.active_turn.status,
+          startedAt: clean(execution.active_turn.started_at),
+        }
+      : null,
+    pendingRequests: execution.pending_requests.map((request) => ({
+      id: request.request_id,
+      kind: request.kind,
+      status: request.status,
+      title: request.title ?? "",
+      detail: clean(request.detail),
+      createdAt: clean(request.created_at),
+      requestKind: request.request_kind ?? null,
+      questions: (request.questions ?? []).map((question) => ({
+        id: question.id,
+        header: clean(question.header),
+        question: question.question,
+        multiSelect: question.multi_select,
+        options: question.options.map((option) => ({
+          label: option.label,
+          description: clean(option.description),
+        })),
+      })),
+    })),
+    supportedControls: [...execution.supported_controls],
+    supportsSteer: execution.supports.steer,
+    supportsQueue: execution.supports.queue,
+    diagnostic: execution.diagnostic
+      ? {
+          code: execution.diagnostic.code,
+          message: clean(execution.diagnostic.message),
+        }
+      : null,
   };
 }
 

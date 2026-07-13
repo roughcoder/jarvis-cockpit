@@ -21,6 +21,88 @@ describe("Jarvis universal conversation adapter", () => {
     expect(conversation.id).toBe(String(LEGACY_JARVIS_CONVERSATION_GOLDEN.thread_id));
     expect(conversation.lifecycle).toBe("open");
     expect(conversation.operationalState).toBe("idle");
+    expect(conversation.runtime).toEqual({
+      available: true,
+      status: "idle",
+      activeTurn: null,
+      pendingRequests: [],
+      supportedControls: ["turn"],
+      supportsSteer: false,
+      supportsQueue: false,
+      diagnostic: null,
+    });
+  });
+
+  it("maps active execution and pending requests without exposing session identity", () => {
+    const conversation = adaptJarvisProjectThread({
+      ...ENRICHED_JARVIS_CONVERSATION_GOLDEN,
+      execution: {
+        available: true,
+        status: "waiting_input",
+        active_turn: {
+          turn_id: "turn_active",
+          status: "waiting_input",
+          started_at: "2026-07-13T00:00:00.000Z",
+        },
+        pending_requests: [
+          {
+            request_id: "input_turn_active",
+            kind: "input",
+            status: "pending",
+            title: "Input needed",
+            detail: "Choose a target.",
+            created_at: "2026-07-13T00:00:01.000Z",
+            questions: [
+              {
+                id: "target",
+                header: "Target",
+                question: "Which target?",
+                multi_select: true,
+                options: [{ label: "Web", description: "Use the web app" }],
+              },
+            ],
+          },
+        ],
+        supported_controls: ["turn", "input", "interrupt"],
+        supports: { steer: false, queue: false },
+        diagnostic: null,
+      },
+    });
+
+    expect(conversation.runtime).toEqual({
+      available: true,
+      status: "waiting_input",
+      activeTurn: {
+        id: "turn_active",
+        status: "waiting_input",
+        startedAt: "2026-07-13T00:00:00.000Z",
+      },
+      pendingRequests: [
+        {
+          id: "input_turn_active",
+          kind: "input",
+          status: "pending",
+          title: "Input needed",
+          detail: "Choose a target.",
+          createdAt: "2026-07-13T00:00:01.000Z",
+          requestKind: null,
+          questions: [
+            {
+              id: "target",
+              header: "Target",
+              question: "Which target?",
+              multiSelect: true,
+              options: [{ label: "Web", description: "Use the web app" }],
+            },
+          ],
+        },
+      ],
+      supportedControls: ["turn", "input", "interrupt"],
+      supportsSteer: false,
+      supportsQueue: false,
+      diagnostic: null,
+    });
+    expect(JSON.stringify(conversation.runtime)).not.toContain("session");
   });
 
   it("normalizes independent prose and structured golden payloads to identical semantics", () => {

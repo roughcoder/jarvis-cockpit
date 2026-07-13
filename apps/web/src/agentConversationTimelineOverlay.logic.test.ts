@@ -283,6 +283,7 @@ function turn(overrides: Partial<AgentConversationOverlayTurn> = {}): AgentConve
 
 function conversation(overrides: Partial<AgentConversation> = {}): AgentConversation {
   return {
+    runtime: idleConversationRuntime(),
     id: "conversation-1",
     title: "Conversation",
     lifecycle: "open",
@@ -328,6 +329,19 @@ function conversation(overrides: Partial<AgentConversation> = {}): AgentConversa
       archiveReason: null,
     },
     ...overrides,
+  };
+}
+
+function idleConversationRuntime(): AgentConversation["runtime"] {
+  return {
+    available: true,
+    status: "idle",
+    activeTurn: null,
+    pendingRequests: [],
+    supportedControls: ["turn"],
+    supportsSteer: false,
+    supportsQueue: false,
+    diagnostic: null,
   };
 }
 

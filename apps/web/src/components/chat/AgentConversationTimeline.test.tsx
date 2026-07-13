@@ -67,6 +67,16 @@ describe("AgentConversationTimeline", () => {
 function conversation(): AgentConversation {
   const at = "2026-07-13T00:00:00.000Z";
   return {
+    runtime: {
+      available: true,
+      status: "idle",
+      activeTurn: null,
+      pendingRequests: [],
+      supportedControls: ["turn"],
+      supportsSteer: false,
+      supportsQueue: false,
+      diagnostic: null,
+    },
     id: "conversation-1",
     title: "Conversation",
     lifecycle: "open",

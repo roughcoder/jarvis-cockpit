@@ -237,6 +237,62 @@ it.effect("decodes project conversation detail with archived state and history",
   }),
 );
 
+it.effect("decodes additive project conversation execution state", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectThreadDetail({
+      api_version: "v1",
+      schema_version: 1,
+      project_id: "jarvis",
+      thread: {
+        thread_id: "thread_active",
+        project_id: "jarvis",
+        session_id: "project:jarvis:orchestrator:thread_active",
+        title: "Active review",
+        created_at: generatedAt,
+        updated_at: generatedAt,
+        execution: {
+          available: true,
+          status: "waiting_approval",
+          active_turn: {
+            turn_id: "turn_active",
+            status: "waiting_approval",
+            started_at: generatedAt,
+          },
+          pending_requests: [
+            {
+              request_id: "approval_turn_active",
+              kind: "approval",
+              status: "pending",
+              title: "Approve action",
+              detail: "Run verification",
+              created_at: generatedAt,
+              request_kind: "command",
+              questions: [],
+            },
+          ],
+          supported_controls: ["turn", "approval", "interrupt"],
+          supports: { steer: false, queue: false },
+          diagnostic: null,
+        },
+        messages: [],
+      },
+    });
+
+    assert.deepStrictEqual(parsed.thread.execution?.active_turn, {
+      turn_id: "turn_active",
+      status: "waiting_approval",
+      started_at: generatedAt,
+    });
+    assert.strictEqual(parsed.thread.execution?.pending_requests[0]?.kind, "approval");
+    assert.deepStrictEqual(parsed.thread.execution?.supported_controls, [
+      "turn",
+      "approval",
+      "interrupt",
+    ]);
+    assert.deepStrictEqual(parsed.thread.execution?.supports, { steer: false, queue: false });
+  }),
+);
+
 it.effect("decodes and encodes escalated project conversation workspace projections", () =>
   Effect.gen(function* () {
     const payload = {

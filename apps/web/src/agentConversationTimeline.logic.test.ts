@@ -176,6 +176,7 @@ const AT = "2026-07-13T00:00:00.000Z";
 
 function buildConversation(overrides: Partial<AgentConversation> = {}): AgentConversation {
   return {
+    runtime: idleConversationRuntime(),
     id: "conversation-1",
     title: "Conversation",
     lifecycle: "open",
@@ -215,6 +216,19 @@ function buildConversation(overrides: Partial<AgentConversation> = {}): AgentCon
     diagnostics: { reason: null, execution: null },
     context: { workspace: null, archivedAt: null, archivedBy: null, archiveReason: null },
     ...overrides,
+  };
+}
+
+function idleConversationRuntime(): AgentConversation["runtime"] {
+  return {
+    available: true,
+    status: "idle",
+    activeTurn: null,
+    pendingRequests: [],
+    supportedControls: ["turn"],
+    supportsSteer: false,
+    supportsQueue: false,
+    diagnostic: null,
   };
 }
 

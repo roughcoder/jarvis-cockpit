@@ -203,6 +203,48 @@ export interface ConversationDiagnostics {
   readonly execution: ConversationExecutionDiagnostics | null;
 }
 
+export type ConversationExecutionControl = "turn" | "input" | "approval" | "interrupt" | "stop";
+
+export interface ConversationActiveTurn {
+  readonly id: string;
+  readonly status: string;
+  readonly startedAt: string | null;
+}
+
+export interface ConversationPendingRequest {
+  readonly id: string;
+  readonly kind: "approval" | "input";
+  readonly status: string;
+  readonly title: string;
+  readonly detail: string | null;
+  readonly createdAt: string | null;
+  readonly requestKind: "command" | "file-read" | "file-change" | null;
+  readonly questions: ReadonlyArray<{
+    readonly id: string;
+    readonly header: string | null;
+    readonly question: string;
+    readonly multiSelect: boolean;
+    readonly options: ReadonlyArray<{
+      readonly label: string;
+      readonly description: string | null;
+    }>;
+  }>;
+}
+
+export interface ConversationRuntime {
+  readonly available: boolean;
+  readonly status: string;
+  readonly activeTurn: ConversationActiveTurn | null;
+  readonly pendingRequests: ReadonlyArray<ConversationPendingRequest>;
+  readonly supportedControls: ReadonlyArray<ConversationExecutionControl>;
+  readonly supportsSteer: boolean;
+  readonly supportsQueue: boolean;
+  readonly diagnostic: {
+    readonly code: string;
+    readonly message: string | null;
+  } | null;
+}
+
 /** Provider-neutral, replay-safe conversation projection consumed by client presentation code. */
 export interface AgentConversation {
   readonly id: string;
@@ -218,5 +260,6 @@ export interface AgentConversation {
   readonly routing: ConversationRouting;
   readonly ownership: ConversationOwnership;
   readonly diagnostics: ConversationDiagnostics;
+  readonly runtime: ConversationRuntime;
   readonly context: ConversationContext;
 }

@@ -636,6 +636,77 @@ export const JarvisConversationWorkspace = Schema.Struct({
 });
 export type JarvisConversationWorkspace = typeof JarvisConversationWorkspace.Type;
 
+export const JarvisConversationExecutionControl = Schema.Literals([
+  "turn",
+  "input",
+  "approval",
+  "interrupt",
+  "stop",
+]);
+export type JarvisConversationExecutionControl = typeof JarvisConversationExecutionControl.Type;
+
+export const JarvisConversationActiveTurn = Schema.Struct({
+  turn_id: TrimmedNonEmptyString,
+  status: TrimmedNonEmptyString,
+  started_at: OptionalPossiblyEmptyPublicString,
+});
+export type JarvisConversationActiveTurn = typeof JarvisConversationActiveTurn.Type;
+
+export const JarvisConversationPendingQuestion = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  header: OptionalPossiblyEmptyPublicString,
+  question: TrimmedNonEmptyString,
+  options: Schema.Array(
+    Schema.Struct({
+      label: TrimmedNonEmptyString,
+      description: OptionalPossiblyEmptyPublicString,
+    }),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  multi_select: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
+export type JarvisConversationPendingQuestion = typeof JarvisConversationPendingQuestion.Type;
+
+export const JarvisConversationPendingRequest = Schema.Struct({
+  request_id: TrimmedNonEmptyString,
+  kind: Schema.Literals(["approval", "input"]),
+  status: TrimmedNonEmptyString,
+  title: OptionalPossiblyEmptyPublicString,
+  detail: OptionalPossiblyEmptyPublicString,
+  created_at: OptionalPossiblyEmptyPublicString,
+  request_kind: Schema.optional(Schema.Literals(["command", "file-read", "file-change"])),
+  questions: Schema.optional(
+    Schema.Array(JarvisConversationPendingQuestion).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+    ),
+  ),
+});
+export type JarvisConversationPendingRequest = typeof JarvisConversationPendingRequest.Type;
+
+export const JarvisConversationExecutionDiagnostic = Schema.Struct({
+  code: TrimmedNonEmptyString,
+  message: OptionalPossiblyEmptyPublicString,
+});
+export type JarvisConversationExecutionDiagnostic =
+  typeof JarvisConversationExecutionDiagnostic.Type;
+
+export const JarvisConversationExecution = Schema.Struct({
+  available: Schema.Boolean,
+  status: TrimmedNonEmptyString,
+  active_turn: Schema.NullOr(JarvisConversationActiveTurn),
+  pending_requests: Schema.Array(JarvisConversationPendingRequest).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  supported_controls: Schema.Array(JarvisConversationExecutionControl).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  supports: Schema.Struct({
+    steer: Schema.Boolean,
+    queue: Schema.Boolean,
+  }),
+  diagnostic: Schema.NullOr(JarvisConversationExecutionDiagnostic),
+});
+export type JarvisConversationExecution = typeof JarvisConversationExecution.Type;
+
 export const JarvisProjectThread = Schema.Struct({
   // Stable universal-conversation identity. Optional during the v1 compatibility
   // window; when absent it is identical to thread_id.
@@ -670,6 +741,7 @@ export const JarvisProjectThread = Schema.Struct({
   archived_by: OptionalPossiblyEmptyPublicString,
   archive_reason: OptionalPossiblyEmptyPublicString,
   workspace: Schema.optional(Schema.NullOr(JarvisConversationWorkspace)),
+  execution: Schema.optional(JarvisConversationExecution),
 });
 export type JarvisProjectThread = typeof JarvisProjectThread.Type;
 

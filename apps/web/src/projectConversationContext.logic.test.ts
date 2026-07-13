@@ -7,6 +7,16 @@ import {
 } from "./projectConversationContext.logic";
 
 const conversation: AgentConversation = {
+  runtime: {
+    available: true,
+    status: "idle",
+    activeTurn: null,
+    pendingRequests: [],
+    supportedControls: ["turn"],
+    supportsSteer: false,
+    supportsQueue: false,
+    diagnostic: null,
+  },
   id: "conversation-1",
   title: "Review",
   lifecycle: "open",
