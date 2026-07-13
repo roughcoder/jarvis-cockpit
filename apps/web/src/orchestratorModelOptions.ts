@@ -100,3 +100,38 @@ export function selectOrchestratorWorker(input: {
   });
   return eligible[0]?.worker_id;
 }
+
+export interface OrchestratorTarget {
+  readonly chat_type: "orchestrator";
+  readonly engine: string;
+  readonly model: string;
+  readonly worker_id?: string;
+}
+
+/**
+ * Build the create-conversation target. The worker is a preference: Jarvis binds
+ * one when a turn needs it, so a degraded or empty fleet snapshot must still
+ * yield a target. Returning null here disables conversation creation entirely,
+ * so it means only one thing: no orchestrator model is configured.
+ */
+export function buildOrchestratorTarget(input: {
+  readonly options: ReadonlyArray<CodeAgentModelOption>;
+  readonly instanceId: ProviderInstanceId;
+  readonly model: string;
+  readonly workers: ReadonlyArray<JarvisWorkerProfile>;
+}): OrchestratorTarget | null {
+  const key = resolveOrchestratorKey({
+    options: input.options,
+    instanceId: input.instanceId,
+    model: input.model,
+  });
+  const option = input.options.find((candidate) => candidate.key === key);
+  if (!option) return null;
+  const workerId = selectOrchestratorWorker({ workers: input.workers, engine: option.engine });
+  return {
+    chat_type: "orchestrator",
+    engine: option.engine,
+    model: option.model,
+    ...(workerId ? { worker_id: workerId } : {}),
+  };
+}

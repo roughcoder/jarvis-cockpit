@@ -48,12 +48,14 @@ function worker(input: {
   readonly max: number;
   readonly active?: number;
   readonly authenticated?: boolean;
+  readonly status?: JarvisWorkerProfile["status"];
+  readonly health?: JarvisWorkerProfile["health"];
 }): JarvisWorkerProfile {
   return {
     worker_id: JarvisWorkerId.make(input.id),
     display_name: input.id,
-    status: "online",
-    health: "healthy",
+    status: input.status ?? "online",
+    health: input.health ?? "healthy",
     capabilities: [],
     engines: input.engines.map((engine) => ({
       engine,
@@ -223,6 +225,25 @@ describe("selectCommonReviewWorker", () => {
 
     expect(selected).toBeUndefined();
   });
+
+  it("does not route reviewers to a worker whose health has not been confirmed", () => {
+    const selected = selectCommonReviewWorker({
+      workers: [
+        worker({
+          id: "laptop",
+          engines: ["codex", "claude"],
+          max: 2,
+          authenticated: true,
+          status: "unknown",
+          health: "unknown",
+        }),
+      ],
+      reviewers: [{ engine: "claude" }, { engine: "codex" }],
+      repo: "roughcoder/jarvis",
+    });
+
+    expect(selected).toBeUndefined();
+  });
 });
 
 describe("selectReviewOrchestratorWorker", () => {
@@ -242,6 +263,23 @@ describe("selectReviewOrchestratorWorker", () => {
   it("returns no route when every Codex worker is full", () => {
     const selected = selectReviewOrchestratorWorker({
       workers: [worker({ id: "brain", engines: ["codex"], max: 1, active: 1 })],
+      engine: "codex",
+    });
+
+    expect(selected).toBeUndefined();
+  });
+
+  it("does not route the orchestrator to a worker whose health has not been confirmed", () => {
+    const selected = selectReviewOrchestratorWorker({
+      workers: [
+        worker({
+          id: "brain",
+          engines: ["codex"],
+          max: 1,
+          status: "unknown",
+          health: "unknown",
+        }),
+      ],
       engine: "codex",
     });
 

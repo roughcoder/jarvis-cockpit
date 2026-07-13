@@ -631,6 +631,41 @@ it.effect("retains worker-local sessions that are not linked to a run", () =>
   }),
 );
 
+it.effect("decodes string and object snapshot sync diagnostics", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeSnapshot({
+      api_version: "v1",
+      schema_version: 1,
+      cursor: "evt_sync_error",
+      generated_at: generatedAt,
+      sync: {
+        mode: "probe",
+        status: "stale",
+        synced_at: null,
+        errors: [
+          "worker probe failed: connection refused",
+          {
+            worker_id: "macbook-worker",
+            message: "worker probe timed out",
+          },
+        ],
+      },
+      runs: [],
+      sessions: [],
+      workers: [],
+      artifacts: [],
+    });
+
+    assert.deepStrictEqual(parsed.sync.errors, [
+      "worker probe failed: connection refused",
+      {
+        worker_id: "macbook-worker",
+        message: "worker probe timed out",
+      },
+    ]);
+  }),
+);
+
 it.effect("accepts live Jarvis terminal run snapshots with absent repo and branch labels", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeSnapshot({

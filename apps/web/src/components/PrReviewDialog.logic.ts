@@ -19,6 +19,13 @@ const DEFAULT_REVIEWER_MODELS = [
   { engine: "codex", model: "gpt-5.5" },
 ] as const;
 
+function workerHasConfirmedAvailability(worker: JarvisWorkerProfile): boolean {
+  return (
+    (worker.status === "online" || worker.status === "degraded") &&
+    (worker.health === "healthy" || worker.health === "degraded")
+  );
+}
+
 /**
  * PR reviewers can use every code-agent provider route exposed by the fleet.
  */
@@ -52,6 +59,7 @@ export function selectCommonReviewWorker(input: {
   const eligible = input.workers.filter((worker) => {
     const used = worker.capacity.active_sessions + worker.capacity.queued_sessions;
     return (
+      workerHasConfirmedAvailability(worker) &&
       workerIsHealthyEnough(worker) &&
       workerCanStartRepo(worker, input.repo) &&
       used + input.reviewers.length <= worker.capacity.max_sessions &&
@@ -78,14 +86,15 @@ export function selectReviewOrchestratorWorker(input: {
   readonly childWorkerId?: string;
   readonly engine: string;
 }): string | undefined {
+  const confirmedWorkers = input.workers.filter(workerHasConfirmedAvailability);
   const selected = selectOrchestratorWorker({
-    workers: input.workers,
+    workers: confirmedWorkers,
     engine: input.engine,
     ...(input.childWorkerId ? { avoidWorkerId: input.childWorkerId } : {}),
   });
   if (selected !== input.childWorkerId) return selected;
   return selectOrchestratorWorker({
-    workers: input.workers,
+    workers: confirmedWorkers,
     engine: input.engine,
     ...(input.childWorkerId ? { avoidWorkerId: input.childWorkerId } : {}),
     requiredSlots: 3,

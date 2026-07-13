@@ -163,7 +163,7 @@ export function NoActiveThreadState() {
             toastManager.add({
               type: "error",
               title: "Could not create orchestrator",
-              description: "No healthy fleet worker supports the configured orchestrator model.",
+              description: "No orchestrator model is configured for this environment.",
             });
           }
           return;

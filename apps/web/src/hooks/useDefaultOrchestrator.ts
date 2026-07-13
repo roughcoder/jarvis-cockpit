@@ -2,11 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, JarvisWorkerProfile, ServerProvider } from "@t3tools/contracts";
 import { useMemo } from "react";
 
-import {
-  deriveOrchestratorOptions,
-  resolveOrchestratorKey,
-  selectOrchestratorWorker,
-} from "../orchestratorModelOptions";
+import { buildOrchestratorTarget, deriveOrchestratorOptions } from "../orchestratorModelOptions";
 import { serverEnvironment } from "../state/server";
 import { useEnvironmentSettings } from "./useSettings";
 
@@ -14,7 +10,12 @@ export interface DefaultOrchestratorTarget {
   readonly chat_type: "orchestrator";
   readonly engine: string;
   readonly model: string;
-  readonly worker_id: string;
+  /**
+   * A preference, not a requirement. Jarvis binds a worker when a turn actually
+   * needs one, so opening a conversation must not wait on the fleet snapshot —
+   * a degraded or slow snapshot would otherwise make the project unusable.
+   */
+  readonly worker_id?: string;
 }
 
 export function useDefaultOrchestratorTarget(
@@ -31,21 +32,12 @@ export function useDefaultOrchestratorTarget(
     (settings) => settings.orchestratorModelSelection,
   );
   return useMemo(() => {
-    const options = deriveOrchestratorOptions(providers);
-    const key = resolveOrchestratorKey({
-      options,
+    if (!environmentId) return null;
+    return buildOrchestratorTarget({
+      options: deriveOrchestratorOptions(providers),
       instanceId: selection.instanceId,
       model: selection.model,
+      workers,
     });
-    const option = options.find((candidate) => candidate.key === key);
-    if (!environmentId || !option) return null;
-    const workerId = selectOrchestratorWorker({ workers, engine: option.engine });
-    if (!workerId) return null;
-    return {
-      chat_type: "orchestrator",
-      engine: option.engine,
-      model: option.model,
-      worker_id: workerId,
-    };
   }, [environmentId, providers, selection.instanceId, selection.model, workers]);
 }
