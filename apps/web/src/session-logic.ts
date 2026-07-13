@@ -81,6 +81,11 @@ export interface WorkLogEntry {
   sourceActivityKind?: OrchestrationThreadActivity["kind"];
   /** Explicit universal semantic activity marker; these rows remain visible while in flight. */
   semanticActivityStatus?: ConversationActivityStatus;
+  /** Optional provider-neutral recovery command surfaced beside a failed activity. */
+  recoveryAction?: {
+    readonly id: string;
+    readonly label: string;
+  };
 }
 
 export function workLogEntryIsSemanticActivity(entry: WorkLogEntry): boolean {

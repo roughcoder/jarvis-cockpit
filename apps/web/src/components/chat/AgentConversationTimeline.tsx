@@ -5,10 +5,11 @@ import type { LegendListRef } from "@legendapp/list/react";
 import { useMemo, useRef } from "react";
 import { MessageSquareIcon } from "lucide-react";
 
+import { agentConversationOperationalFlags } from "../../agentConversationTimeline.logic";
 import {
-  agentConversationOperationalFlags,
-  agentConversationTimelineEntries,
-} from "../../agentConversationTimeline.logic";
+  mergeAgentConversationTimelineOverlay,
+  type AgentConversationOverlayTurn,
+} from "../../agentConversationTimelineOverlay.logic";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 
@@ -21,6 +22,9 @@ interface AgentConversationTimelineProps {
   readonly showEmptyState?: boolean;
   readonly markdownCwd?: string;
   readonly workspaceRoot?: string;
+  readonly overlayTurns?: ReadonlyArray<AgentConversationOverlayTurn>;
+  readonly onRecoveryAction?: (actionId: string) => void;
+  readonly recoveryActionsDisabled?: boolean;
 }
 
 const NOOP = () => {};
@@ -34,15 +38,18 @@ export function AgentConversationTimeline({
   showEmptyState = true,
   markdownCwd,
   workspaceRoot,
+  overlayTurns = EMPTY_OVERLAY_TURNS,
+  onRecoveryAction,
+  recoveryActionsDisabled = false,
 }: AgentConversationTimelineProps) {
   const listRef = useRef<LegendListRef | null>(null);
-  const timelineEntries = useMemo(
-    () => agentConversationTimelineEntries(conversation),
-    [conversation],
+  const timeline = useMemo(
+    () => mergeAgentConversationTimelineOverlay(conversation, overlayTurns),
+    [conversation, overlayTurns],
   );
   const flags = agentConversationOperationalFlags(conversation.operationalState);
 
-  if (timelineEntries.length === 0 && !flags.isWorking) {
+  if (timeline.timelineEntries.length === 0 && !timeline.isWorking) {
     if (!showEmptyState) return null;
     return (
       <Empty className="min-h-80">
@@ -61,11 +68,11 @@ export function AgentConversationTimeline({
 
   return (
     <MessagesTimeline
-      isWorking={flags.isWorking}
-      activeTurnInProgress={flags.activeTurnInProgress}
+      isWorking={timeline.isWorking}
+      activeTurnInProgress={flags.activeTurnInProgress || timeline.isWorking}
       activeTurnStartedAt={null}
       listRef={listRef}
-      timelineEntries={timelineEntries}
+      timelineEntries={timeline.timelineEntries}
       latestTurn={null}
       runningTurnId={null}
       turnDiffSummaryByAssistantMessageId={new Map()}
@@ -86,6 +93,10 @@ export function AgentConversationTimeline({
       contentInsetEndAdjustment={0}
       onIsAtEndChange={NOOP}
       onManualNavigation={NOOP}
+      onRecoveryAction={onRecoveryAction ?? NOOP}
+      recoveryActionsDisabled={recoveryActionsDisabled}
     />
   );
 }
+
+const EMPTY_OVERLAY_TURNS: ReadonlyArray<AgentConversationOverlayTurn> = [];

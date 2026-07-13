@@ -219,6 +219,36 @@ function buildUserTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("renders a provider-neutral recovery action for a failed timeline entry", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        onRecoveryAction={() => {}}
+        timelineEntries={[
+          {
+            id: "failed-turn",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "failed-turn",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Turn failed",
+              detail: "Provider quota exhausted.",
+              tone: "error",
+              semanticActivityStatus: "failed",
+              recoveryAction: { id: "turn-1", label: "Retry" },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Turn failed");
+    expect(markup).toContain("Provider quota exhausted.");
+    expect(markup).toContain('aria-label="Retry"');
+  });
+
   it("renders universal in-flight and cancelled activity rows independently of turn state", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const runningMarkup = renderToStaticMarkup(

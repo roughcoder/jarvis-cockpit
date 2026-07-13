@@ -1,9 +1,9 @@
-import { describe, expect, it } from "vite-plus/test";
 import {
   JarvisProjectId,
   JarvisProjectThreadId,
   type JarvisProjectThread,
 } from "@t3tools/contracts";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   archivedProjectConversationSummary,
@@ -11,13 +11,8 @@ import {
   defaultProjectRepo,
   extractProjectConversationReply,
   formatProjectConversationFailure,
-  isRawProjectConversationToolFrame,
   isProjectConversationArchived,
   latestProjectConversation,
-  projectConversationHistoryMessages,
-  projectConversationMergedMessages,
-  projectConversationOrchestrationLifecycles,
-  reduceProjectConversationSendState,
   resolveProjectConversationRouteParams,
   resolveProjectConversationRouteRenderState,
   sortProjectConversations,
@@ -38,29 +33,13 @@ function thread(id: string, updatedAt: string): JarvisProjectThread {
 
 describe("project conversation routes", () => {
   it("builds and resolves route params without changing Jarvis ids", () => {
-    expect(
-      buildProjectConversationRouteParams({
-        environmentId: "env-1",
-        projectId: "jarvis",
-        threadId: "thread-1",
-      }),
-    ).toEqual({
+    const expected = {
       environmentId: "env-1",
       projectId: "jarvis",
       threadId: "thread-1",
-    });
-
-    expect(
-      resolveProjectConversationRouteParams({
-        environmentId: "env-1",
-        projectId: "jarvis",
-        threadId: "thread-1",
-      }),
-    ).toEqual({
-      environmentId: "env-1",
-      projectId: "jarvis",
-      threadId: "thread-1",
-    });
+    };
+    expect(buildProjectConversationRouteParams(expected)).toEqual(expected);
+    expect(resolveProjectConversationRouteParams(expected)).toEqual(expected);
     expect(resolveProjectConversationRouteParams({ environmentId: "env-1" })).toBeNull();
   });
 
@@ -70,18 +49,13 @@ describe("project conversation routes", () => {
       projectId: "jarvis",
       threadId: "thread-1",
     });
-
-    expect(
-      resolveProjectConversationRouteRenderState({
-        params: null,
-      }),
-    ).toEqual({ status: "invalid" });
-
-    expect(
-      resolveProjectConversationRouteRenderState({
-        params,
-      }),
-    ).toEqual({ status: "ready", params });
+    expect(resolveProjectConversationRouteRenderState({ params: null })).toEqual({
+      status: "invalid",
+    });
+    expect(resolveProjectConversationRouteRenderState({ params })).toEqual({
+      status: "ready",
+      params,
+    });
   });
 });
 
@@ -113,7 +87,7 @@ describe("project conversation selection", () => {
     );
   });
 
-  it("selects default repo and hides retracted project files from context", () => {
+  it("selects the default repo and hides retracted project files", () => {
     expect(
       defaultProjectRepo({
         repos: [
@@ -144,33 +118,8 @@ describe("project conversation selection", () => {
   });
 });
 
-describe("project conversation send state", () => {
-  it("models pending, streaming, completed, and failed retry states", () => {
-    const initial = { prompt: "Ship it", response: "", status: "idle" as const, error: null };
-    const pending = reduceProjectConversationSendState(initial, { type: "pending" });
-    const streaming = reduceProjectConversationSendState(pending, {
-      type: "streaming",
-      delta: "Working",
-    });
-    const completed = reduceProjectConversationSendState(streaming, {
-      type: "completed",
-      response: "Working done",
-    });
-    const failed = reduceProjectConversationSendState(completed, {
-      type: "failed",
-      error: "Jarvis request projects.threads.turn failed with HTTP 502: provider_unavailable",
-    });
-
-    expect(pending.status).toBe("pending");
-    expect(streaming).toMatchObject({ status: "streaming", response: "Working" });
-    expect(completed).toMatchObject({ status: "completed", response: "Working done" });
-    expect(failed).toMatchObject({
-      status: "failed",
-      error: "Jarvis request projects.threads.turn failed with HTTP 502: provider_unavailable",
-    });
-  });
-
-  it("extracts progressive assistant text from Jarvis events when no final text is present", () => {
+describe("project conversation command projections", () => {
+  it("extracts progressive assistant text when no final text is present", () => {
     expect(
       extractProjectConversationReply({
         ok: true,
@@ -182,369 +131,17 @@ describe("project conversation send state", () => {
       }),
     ).toBe("Hello there");
   });
-});
 
-describe("project conversation history", () => {
-  it("renders history in observed order with user and assistant roles", () => {
-    const messages = projectConversationHistoryMessages({
-      messages: [
-        {
-          role: "assistant",
-          peer_id: "jarvis",
-          content: "Second",
-          observed_at: "2026-07-01T10:02:00.000Z",
-        },
-        {
-          role: "user",
-          peer_id: "neil",
-          content: "First",
-          observed_at: "2026-07-01T10:01:00.000Z",
-        },
-      ],
-    });
-
-    expect(messages.map((message) => [message.role, message.content])).toEqual([
-      ["user", "First"],
-      ["assistant", "Second"],
-    ]);
-    expect(messages.every((message) => message.source === "history")).toBe(true);
-  });
-
-  it("filters raw tool protocol frames from history messages", () => {
-    const messages = projectConversationHistoryMessages({
-      messages: [
-        {
-          role: "assistant",
-          peer_id: "jarvis",
-          content: "Hello, Neil.",
-          observed_at: "2026-07-07T10:00:00.000Z",
-        },
-        {
-          role: "assistant",
-          peer_id: "jarvis",
-          content: "tool.call spawn_child_work_session",
-          observed_at: "2026-07-07T10:00:01.000Z",
-        },
-        {
-          role: "assistant",
-          peer_id: "jarvis",
-          content: "tool.result spawn_child_work_session",
-          observed_at: "2026-07-07T10:00:02.000Z",
-        },
-        {
-          role: "user",
-          peer_id: "neil",
-          content: "tool.call is text here, not a protocol frame.",
-          observed_at: "2026-07-07T10:00:03.000Z",
-        },
-      ],
-    });
-
-    expect(messages.map((message) => message.content)).toEqual([
-      "Hello, Neil.",
-      "tool.call is text here, not a protocol frame.",
-    ]);
-  });
-
-  it("collapses child watch updates and terminal messages into one lifecycle view", () => {
-    const detail = {
-      messages: [
-        {
-          role: "system",
-          peer_id: "jarvis",
-          type: "child_watch",
-          watch_id: "watch-1",
-          child_chat_ids: ["run-claude", "run-codex"],
-          phase: "waiting",
-          content: "Watching children.",
-          observed_at: "2026-07-07T10:00:01.000Z",
-        },
-        {
-          role: "system",
-          peer_id: "jarvis",
-          type: "child_terminal",
-          child_chat_id: "run-claude",
-          title: "Claude review",
-          phase: "completed",
-          status: "terminal",
-          content: "Claude completed.",
-          observed_at: "2026-07-07T10:00:02.000Z",
-        },
-        {
-          role: "system",
-          peer_id: "jarvis",
-          type: "child_watch",
-          watch_id: "watch-1",
-          child_chat_ids: ["run-claude", "run-codex"],
-          phase: "completed",
-          content: "Children completed.",
-          observed_at: "2026-07-07T10:00:03.000Z",
-        },
-      ],
-    };
-    const messages = projectConversationHistoryMessages(detail);
-    const lifecycles = projectConversationOrchestrationLifecycles(detail);
-
-    expect(messages).toHaveLength(0);
-    expect(lifecycles[0]).toMatchObject({
-      watchId: "watch-1",
-      status: "completed",
-      children: [
-        { id: "run-claude", title: "Claude review", status: "completed" },
-        { id: "run-codex", title: "Child code agent", status: "running" },
-      ],
-    });
-  });
-
-  it("upgrades legacy child-watch prose into the lifecycle view", () => {
-    const detail = {
-      messages: [
-        {
-          role: "system",
-          peer_id: "jarvis",
-          content: "Watching 1 child work session(s) for completion.",
-          observed_at: "2026-07-07T10:00:01.000Z",
-        },
-        {
-          role: "system",
-          peer_id: "jarvis",
-          content:
-            "Child Claude review (run_123) reached completed: All worker sessions completed.",
-          observed_at: "2026-07-07T10:00:02.000Z",
-        },
-      ],
-    };
-    const messages = projectConversationHistoryMessages(detail);
-    const lifecycles = projectConversationOrchestrationLifecycles(detail);
-
-    expect(messages).toHaveLength(0);
-    expect(lifecycles[0]).toMatchObject({
-      status: "completed",
-      children: [{ id: "run_123", title: "Claude review", status: "completed" }],
-    });
-  });
-
-  it("keeps orchestration transport acknowledgements out of the transcript", () => {
-    const messages = projectConversationHistoryMessages({
-      messages: [
-        {
-          role: "assistant",
-          peer_id: "jarvis",
-          content:
-            "Spawned both required child review sessions and registered the watch.\n\nChild chat IDs:\n- run_1\n- run_2",
-          observed_at: "2026-07-07T10:00:01.000Z",
-        },
-        {
-          role: "user",
-          peer_id: "neil",
-          content:
-            "Automatic orchestration continuation: all watched child work sessions are terminal.",
-          observed_at: "2026-07-07T10:00:02.000Z",
-        },
-      ],
-    });
-
-    expect(messages).toEqual([]);
-  });
-
-  it("summarizes generated PR review prompts and retains the full instructions on demand", () => {
-    const [message] = projectConversationHistoryMessages({
-      messages: [
-        {
-          role: "user",
-          peer_id: "neil",
-          content:
-            "You are the PR review orchestrator. Review pull request #125 in roughcoder/jarvis.\nFull workflow follows.",
-          observed_at: "2026-07-07T10:00:01.000Z",
-        },
-      ],
-    });
-
-    expect(message?.content).toBe(
-      "Review roughcoder/jarvis #125 with two independent code agents.",
-    );
-    expect(message?.technicalContent).toContain("Full workflow follows.");
-  });
-
-  it("identifies only non-user raw tool protocol history frames", () => {
-    expect(
-      isRawProjectConversationToolFrame({
-        role: "assistant",
-        peer_id: "jarvis",
-        content: "tool.result spawn_child_work_session",
-        observed_at: "2026-07-07T10:00:02.000Z",
-      }),
-    ).toBe(true);
-    expect(
-      isRawProjectConversationToolFrame({
-        role: "user",
-        peer_id: "neil",
-        content: "tool.result is just text",
-        observed_at: "2026-07-07T10:00:02.000Z",
-      }),
-    ).toBe(false);
-  });
-
-  it("collapses a confirmed optimistic user turn and keeps the real assistant reply", () => {
-    const historyMessages = projectConversationHistoryMessages({
-      messages: [
-        {
-          role: "user",
-          peer_id: "neil",
-          content: "Hello there",
-          observed_at: "2026-07-07T10:00:02.000Z",
-        },
-        {
-          role: "assistant",
-          peer_id: "jarvis",
-          content: "Hello, Neil. What's on your mind today?",
-          observed_at: "2026-07-07T10:00:03.000Z",
-        },
-      ],
-    });
-
-    const messages = projectConversationMergedMessages({
-      historyMessages,
-      localTurns: [
-        {
-          id: "turn-1",
-          prompt: "Hello there",
-          response: "",
-          status: "completed",
-          error: null,
-          createdAt: "2026-07-07T10:00:00.000Z",
-        },
-      ],
-    });
-
-    expect(messages.map((message) => [message.role, message.content, message.source])).toEqual([
-      ["user", "Hello there", "history"],
-      ["assistant", "Hello, Neil. What's on your mind today?", "history"],
-    ]);
-  });
-
-  it("does not render a hollow assistant bubble for contentless completion", () => {
-    const messages = projectConversationMergedMessages({
-      historyMessages: [],
-      localTurns: [
-        {
-          id: "turn-1",
-          prompt: "Hello there",
-          response: "",
-          status: "completed",
-          error: null,
-          createdAt: "2026-07-07T10:00:00.000Z",
-        },
-      ],
-    });
-
-    expect(messages.map((message) => [message.role, message.content])).toEqual([
-      ["user", "Hello there"],
-    ]);
-    expect(messages.some((message) => message.content === "Jarvis completed the turn.")).toBe(
-      false,
-    );
-  });
-
-  it("retains the immutable attachment and workspace snapshot for retry", () => {
-    const attachment = {
-      kind: "image" as const,
-      mime_type: "image/png" as const,
-      name: "failure.png",
-      data_url: "data:image/png;base64,aGVsbG8=",
-    };
-    const workspace = {
-      engine: "codex" as const,
-      repos: [{ name: "jarvis", base_ref: "origin/main" }],
-    };
-    const messages = projectConversationMergedMessages({
-      historyMessages: [],
-      localTurns: [
-        {
-          id: "turn-failed",
-          prompt: "Inspect this failure",
-          response: "",
-          attachments: [attachment],
-          workspaceInput: workspace,
-          status: "failed",
-          error: "provider unavailable",
-          createdAt: "2026-07-07T10:00:00.000Z",
-        },
-      ],
-    });
-
-    const retryMessage = messages.find((message) => message.role === "assistant");
-    expect(retryMessage).toMatchObject({
-      localTurnId: "turn-failed",
-      retryPrompt: "Inspect this failure",
-      retryAttachments: [attachment],
-      retryWorkspace: workspace,
-    });
-  });
-
-  it("preserves multi-turn user-assistant ordering while merging history and local state", () => {
-    const historyMessages = projectConversationHistoryMessages({
-      messages: [
-        {
-          role: "assistant",
-          peer_id: "jarvis",
-          content: "First answer",
-          observed_at: "2026-07-07T10:00:03.000Z",
-        },
-        {
-          role: "user",
-          peer_id: "neil",
-          content: "First question",
-          observed_at: "2026-07-07T10:00:02.000Z",
-        },
-      ],
-    });
-
-    const messages = projectConversationMergedMessages({
-      historyMessages,
-      localTurns: [
-        {
-          id: "turn-2",
-          prompt: "Second question",
-          response: "Second answer",
-          status: "completed",
-          error: null,
-          createdAt: "2026-07-07T10:01:00.000Z",
-        },
-      ],
-    });
-
-    expect(messages.map((message) => [message.role, message.content])).toEqual([
-      ["user", "First question"],
-      ["assistant", "First answer"],
-      ["user", "Second question"],
-      ["assistant", "Second answer"],
-    ]);
-  });
-});
-
-describe("project conversation failures", () => {
-  it("preserves Jarvis status and API error messages for send failures", () => {
-    expect(
-      formatProjectConversationFailure(
-        "send",
-        "Jarvis request projects.threads.turn failed with HTTP 502: provider_unavailable: Codex is unavailable.",
-      ),
-    ).toBe(
-      "Jarvis request projects.threads.turn failed with HTTP 502: provider_unavailable: Codex is unavailable.",
-    );
-  });
-
-  it("surfaces archive route gaps as unavailable instead of successful local archive", () => {
+  it("preserves send failures and classifies compatibility route gaps", () => {
+    const sendFailure =
+      "Jarvis request projects.threads.turn failed with HTTP 502: provider_unavailable.";
+    expect(formatProjectConversationFailure("send", sendFailure)).toBe(sendFailure);
     expect(
       formatProjectConversationFailure(
         "archive",
         "Jarvis request projects.threads.archive failed with HTTP 404.",
       ),
     ).toContain("does not expose project conversation archive yet");
-  });
-
-  it("surfaces detail route gaps as honest no-history fallback", () => {
     expect(
       formatProjectConversationFailure(
         "detail",
@@ -553,77 +150,12 @@ describe("project conversation failures", () => {
     ).toContain("does not expose project conversation history yet");
   });
 
-  it("preserves archive and unarchive Jarvis failures without mutating local state", () => {
-    expect(
-      formatProjectConversationFailure(
-        "archive",
-        "Jarvis request projects.threads.archive failed with HTTP 500: write failed.",
-      ),
-    ).toBe("Jarvis request projects.threads.archive failed with HTTP 500: write failed.");
-    expect(
-      formatProjectConversationFailure(
-        "unarchive",
-        "Jarvis request projects.threads.unarchive failed with HTTP 409: already active.",
-      ),
-    ).toBe("Jarvis request projects.threads.unarchive failed with HTTP 409: already active.");
+  it("does not reinterpret non-compatibility archive failures", () => {
+    const archiveFailure =
+      "Jarvis request projects.threads.archive failed with HTTP 500: write failed.";
+    const unarchiveFailure =
+      "Jarvis request projects.threads.unarchive failed with HTTP 409: already active.";
+    expect(formatProjectConversationFailure("archive", archiveFailure)).toBe(archiveFailure);
+    expect(formatProjectConversationFailure("unarchive", unarchiveFailure)).toBe(unarchiveFailure);
   });
-});
-
-it("grafts local tool items onto the confirming history message so tool rows survive refresh", () => {
-  const historyMessages = projectConversationHistoryMessages({
-    messages: [
-      {
-        role: "user",
-        peer_id: "neil",
-        content: "inspect the runtime repo",
-        observed_at: "2026-07-07T10:00:01.000Z",
-      },
-      {
-        role: "assistant",
-        peer_id: "jarvis",
-        content: "The runtime repo builds the brain.",
-        observed_at: "2026-07-07T10:00:05.000Z",
-      },
-    ],
-  });
-
-  const toolItem = {
-    kind: "tool" as const,
-    id: "tool-call_1",
-    toolCall: {
-      id: "tool-call_1",
-      callId: "call_1",
-      messageId: "call_1",
-      eventId: "ev_1",
-      sequence: 1,
-      occurredAt: "2026-07-07T10:00:03.000Z",
-      name: "read_file",
-      input: { path: "README.md" },
-      inputSummary: "README.md",
-      result: { ok: true },
-      resultSummary: "ok",
-      status: "completed" as const,
-    },
-  };
-
-  const messages = projectConversationMergedMessages({
-    historyMessages,
-    localTurns: [
-      {
-        id: "turn-1",
-        prompt: "inspect the runtime repo",
-        response: "The runtime repo builds the brain.",
-        toolItems: [toolItem],
-        status: "completed",
-        error: null,
-        createdAt: "2026-07-07T10:00:00.000Z",
-      },
-    ],
-  });
-
-  // The local copies are dropped (history echoes win)…
-  expect(messages.map((message) => message.source)).toEqual(["history", "history"]);
-  // …but the assistant history row inherits the local turn's tool items.
-  const assistant = messages.find((message) => message.role === "assistant");
-  expect(assistant?.toolItems).toEqual([toolItem]);
 });

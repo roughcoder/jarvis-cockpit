@@ -51,6 +51,7 @@ import {
   ChevronRightIcon,
   MousePointerClickIcon,
   PaintbrushIcon,
+  RotateCcwIcon,
   Undo2Icon,
 } from "lucide-react";
 import { Button } from "../ui/button";
@@ -134,6 +135,8 @@ interface TimelineRowSharedState {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorElement?: HTMLElement) => void;
+  onRecoveryAction: (actionId: string) => void;
+  recoveryActionsDisabled: boolean;
 }
 
 interface TimelineRowActivityState {
@@ -179,6 +182,8 @@ interface MessagesTimelineProps {
   contentInsetEndAdjustment: number;
   onIsAtEndChange: (isAtEnd: boolean) => void;
   onManualNavigation: () => void;
+  onRecoveryAction?: (actionId: string) => void;
+  recoveryActionsDisabled?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +217,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   contentInsetEndAdjustment,
   onIsAtEndChange,
   onManualNavigation,
+  onRecoveryAction = NOOP_RECOVERY_ACTION,
+  recoveryActionsDisabled = false,
 }: MessagesTimelineProps) {
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
@@ -421,6 +428,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
+      onRecoveryAction,
+      recoveryActionsDisabled,
     }),
     [
       timestampFormat,
@@ -435,6 +444,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
+      onRecoveryAction,
+      recoveryActionsDisabled,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -1863,6 +1874,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workspaceRoot: string | undefined;
 }) {
   const { workEntry, workspaceRoot } = props;
+  const timeline = use(TimelineRowCtx);
   const activity = use(TimelineRowActivityCtx);
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
@@ -1911,23 +1923,41 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           : null;
 
   return (
-    <ToolCallTimelineRow
-      heading={heading}
-      preview={preview}
-      expandedBody={
-        expandedBody ? (
-          <pre className="max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground select-text">
-            {expandedBody}
-          </pre>
-        ) : null
-      }
-      iconName={entryIconName}
-      iconClassName={iconWrapperClass}
-      headingClassName={headingClass}
-      status={status}
-    />
+    <div>
+      <ToolCallTimelineRow
+        heading={heading}
+        preview={preview}
+        expandedBody={
+          expandedBody ? (
+            <pre className="max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground select-text">
+              {expandedBody}
+            </pre>
+          ) : null
+        }
+        iconName={entryIconName}
+        iconClassName={iconWrapperClass}
+        headingClassName={headingClass}
+        status={status}
+      />
+      {workEntry.recoveryAction ? (
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          className="ms-6 mt-1"
+          aria-label={workEntry.recoveryAction.label}
+          disabled={timeline.recoveryActionsDisabled}
+          onClick={() => timeline.onRecoveryAction(workEntry.recoveryAction!.id)}
+        >
+          <RotateCcwIcon className="size-3.5" />
+          {workEntry.recoveryAction.label}
+        </Button>
+      ) : null}
+    </div>
   );
 });
+
+const NOOP_RECOVERY_ACTION = () => {};
 
 function semanticActivityRowStatus(
   status: NonNullable<WorkLogEntry["semanticActivityStatus"]>,

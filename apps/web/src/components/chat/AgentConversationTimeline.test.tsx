@@ -36,7 +36,7 @@ describe("AgentConversationTimeline", () => {
     expect(markup).toContain('data-entry-count="1"');
   });
 
-  it("suppresses the durable empty state while optimistic local rows are present", () => {
+  it("renders optimistic local rows through the native timeline on the first turn", () => {
     const markup = renderToStaticMarkup(
       <AgentConversationTimeline
         conversation={{ ...conversation(), messages: [], timeline: [] }}
@@ -44,11 +44,23 @@ describe("AgentConversationTimeline", () => {
         routeThreadKey="environment-1:thread-1"
         resolvedTheme="light"
         timestampFormat="locale"
-        showEmptyState={false}
+        overlayTurns={[
+          {
+            id: "local-turn",
+            prompt: "First prompt",
+            response: "",
+            status: "pending",
+            error: null,
+            createdAt: "2026-07-13T00:00:01.000Z",
+            activities: [],
+          },
+        ]}
       />,
     );
 
-    expect(markup).toBe("");
+    expect(markup).toContain('data-working="true"');
+    expect(markup).toContain('data-active="true"');
+    expect(markup).toContain('data-entry-count="1"');
   });
 });
 

@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   agentConversationOperationalFlags,
-  agentConversationTimelineRenderMode,
   agentConversationTimelineEntries,
 } from "./agentConversationTimeline.logic";
 import { deriveMessagesTimelineRows } from "./components/chat/MessagesTimeline.logic";
@@ -171,39 +170,6 @@ describe("agentConversationOperationalFlags", () => {
       });
     },
   );
-});
-
-describe("agentConversationTimelineRenderMode", () => {
-  it("selects exactly one history surface while optimistic local rows own the first turn", () => {
-    expect(
-      agentConversationTimelineRenderMode({
-        hasAgentConversation: true,
-        timelineEntryCount: 0,
-        localMessageCount: 2,
-      }),
-    ).toBe("local-only");
-    expect(
-      agentConversationTimelineRenderMode({
-        hasAgentConversation: true,
-        timelineEntryCount: 0,
-        localMessageCount: 0,
-      }),
-    ).toBe("native");
-    expect(
-      agentConversationTimelineRenderMode({
-        hasAgentConversation: true,
-        timelineEntryCount: 1,
-        localMessageCount: 2,
-      }),
-    ).toBe("native");
-    expect(
-      agentConversationTimelineRenderMode({
-        hasAgentConversation: false,
-        timelineEntryCount: 0,
-        localMessageCount: 2,
-      }),
-    ).toBe("legacy");
-  });
 });
 
 const AT = "2026-07-13T00:00:00.000Z";

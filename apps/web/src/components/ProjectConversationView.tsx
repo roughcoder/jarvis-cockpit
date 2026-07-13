@@ -46,7 +46,6 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useEnvironmentSettings } from "../hooks/useSettings";
 import { useTheme } from "../hooks/useTheme";
 import { useComposerHandleContext } from "../composerHandleContext";
-import { formatRelativeTimeLabel } from "../timestampFormat";
 import {
   type ComposerImageAttachment,
   type PersistedComposerImageAttachment,
@@ -71,12 +70,9 @@ import {
   formatProjectConversationFailure,
   isProjectConversationArchived,
   isProjectConversationDetailRouteGap,
-  projectConversationHistoryMessages,
-  projectConversationMergedMessages,
   sortProjectConversations,
   visibleProjectFiles,
   type ProjectConversationLocalTurnView,
-  type ProjectConversationMessageView,
 } from "../jarvisProjectConversations.logic";
 import {
   LEGACY_PROJECT_CONVERSATION_CONTEXT_PANEL_COLLAPSED_KEY,
@@ -120,8 +116,7 @@ import { toastManager } from "./ui/toast";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { mergeJarvisThreadToolEventsWithReply } from "../jarvisThreadToolEvents.logic";
-import { agentConversationTimelineRenderMode } from "../agentConversationTimeline.logic";
-import { ProjectConversationMessage } from "./ProjectConversationMessage";
+import { projectConversationTimelineOverlayTurns } from "../projectConversationTimelineOverlay.logic";
 import { ChatHeaderTitle } from "./chat/ChatHeaderTitle";
 import { AgentConversationTimeline } from "./chat/AgentConversationTimeline";
 import { cloneComposerImageForRetry } from "./ChatView.logic";
@@ -219,10 +214,6 @@ export function ProjectConversationView({
     threadDetailStream.data !== null && threadDetailStream.data !== undefined
       ? threadDetailStream.data
       : (conversations.find((candidate) => candidate.thread_id === String(threadId)) ?? null);
-  const historyMessages = useMemo(
-    () => projectConversationHistoryMessages(threadDetailStream.data ?? null),
-    [threadDetailStream.data],
-  );
   const files = useMemo(
     () => visibleProjectFiles(filesQuery.data?.ok === true ? (filesQuery.data.files ?? []) : []),
     [filesQuery.data],
@@ -259,33 +250,43 @@ export function ProjectConversationView({
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const [turns, setTurns] = useState<LocalTurn[]>([]);
-  const messages = useMemo(
-    () => projectConversationMergedMessages({ historyMessages, localTurns: turns }),
-    [historyMessages, turns],
+  const projectedConversationDetail = useMemo(
+    () =>
+      threadDetailStream.data ?? (conversation === null ? null : { ...conversation, messages: [] }),
+    [conversation, threadDetailStream.data],
   );
   const agentConversation = useMemo(
     () =>
-      threadDetailStream.data === null || threadDetailStream.data === undefined
+      projectedConversationDetail === null
         ? null
         : enrichAgentConversationWithJarvisContext(
-            adaptJarvisProjectThread(threadDetailStream.data),
+            adaptJarvisProjectThread(projectedConversationDetail),
             {
               project,
               memory: memoryQuery.data?.ok === true ? (memoryQuery.data.memory ?? null) : null,
               files,
             },
           ),
-    [files, memoryQuery.data, project, threadDetailStream.data],
+    [files, memoryQuery.data, project, projectedConversationDetail],
   );
-  const localMessages = useMemo(
-    () => messages.filter((message) => message.source === "local"),
-    [messages],
+  const timelineOverlayTurns = useMemo(
+    () => projectConversationTimelineOverlayTurns(turns),
+    [turns],
   );
-  const agentTimelineRenderMode = agentConversationTimelineRenderMode({
-    hasAgentConversation: agentConversation !== null,
-    timelineEntryCount: agentConversation?.timeline.length ?? 0,
-    localMessageCount: localMessages.length,
-  });
+  const titleContextMessages = useMemo(
+    () => [
+      ...(agentConversation?.messages.flatMap((message) =>
+        message.role === "user" || message.role === "assistant"
+          ? [{ role: message.role, content: message.content }]
+          : [],
+      ) ?? []),
+      ...turns.flatMap((turn) => [
+        { role: "user" as const, content: turn.prompt },
+        ...(turn.response.trim() ? [{ role: "assistant" as const, content: turn.response }] : []),
+      ]),
+    ],
+    [agentConversation?.messages, turns],
+  );
   const [pendingArchiveConfirmation, setPendingArchiveConfirmation] = useState(false);
   const [renamingConversation, setRenamingConversation] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
@@ -548,7 +549,7 @@ export function ProjectConversationView({
       input: {
         message: buildProjectConversationTitleGenerationContext({
           currentTitle: conversation.title,
-          messages,
+          messages: titleContextMessages,
         }),
       },
     });
@@ -795,22 +796,18 @@ export function ProjectConversationView({
     });
   };
 
-  const retryMessage = (message: ProjectConversationMessageView): (() => void) | undefined => {
-    const retryPrompt = message.retryPrompt;
-    const localTurnId = message.localTurnId;
-    if (!retryPrompt || !localTurnId) {
-      return undefined;
-    }
-    return () =>
-      void sendPrompt(
-        {
-          prompt: retryPrompt,
-          attachments: message.retryAttachments ?? [],
-          composerImages: message.retryComposerImages ?? [],
-          workspace: message.retryWorkspace,
-        },
-        { existingTurnId: localTurnId },
-      );
+  const retryTurn = (localTurnId: string) => {
+    const turn = turns.find((candidate) => candidate.id === localTurnId);
+    if (!turn) return;
+    void sendPrompt(
+      {
+        prompt: turn.prompt,
+        attachments: turn.attachments ?? [],
+        composerImages: turn.composerImages ?? [],
+        workspace: turn.workspaceInput ?? null,
+      },
+      { existingTurnId: localTurnId },
+    );
   };
 
   const writeArchiveState = async (action: "archive" | "unarchive") => {
@@ -1107,7 +1104,7 @@ export function ProjectConversationView({
                   : "overflow-y-auto px-3 py-4 sm:px-5",
               )}
             >
-              {agentTimelineRenderMode === "native" && agentConversation ? (
+              {agentConversation ? (
                 <div className="min-h-0 flex-1">
                   <AgentConversationTimeline
                     conversation={agentConversation}
@@ -1115,10 +1112,12 @@ export function ProjectConversationView({
                     routeThreadKey={`${environmentId}:${String(threadId)}`}
                     resolvedTheme={resolvedTheme}
                     timestampFormat={settings.timestampFormat}
-                    showEmptyState={localMessages.length === 0}
+                    overlayTurns={timelineOverlayTurns}
+                    onRecoveryAction={retryTurn}
+                    recoveryActionsDisabled={sendBusy}
                   />
                 </div>
-              ) : agentTimelineRenderMode === "legacy" ? (
+              ) : (
                 <div className="mx-auto flex w-full max-w-3xl flex-col pb-4">
                   {loadingProject ? (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -1136,52 +1135,8 @@ export function ProjectConversationView({
                       </EmptyHeader>
                     </Empty>
                   ) : null}
-                  {conversation !== null && messages.length === 0 ? (
-                    <Empty className="min-h-80">
-                      <EmptyHeader>
-                        <MessageSquareIcon className="mb-4 size-7 text-muted-foreground" />
-                        <EmptyTitle>{conversation.title}</EmptyTitle>
-                        <EmptyDescription>
-                          {conversation.workspace
-                            ? `Updated ${formatRelativeTimeLabel(conversation.updated_at)}. Continue the workspace conversation from this surface.`
-                            : "Planning conversation - no repo access. Attach a repo to let it inspect code."}
-                        </EmptyDescription>
-                      </EmptyHeader>
-                    </Empty>
-                  ) : null}
-                  {messages.map((message) => (
-                    <ProjectConversationMessage
-                      key={message.id}
-                      message={message}
-                      workspaceProvisionPhase={conversationWorkspace?.provision_phase ?? null}
-                      onRetry={retryMessage(message)}
-                      retryDisabled={sendBusy}
-                    />
-                  ))}
                 </div>
-              ) : null}
-              {agentConversation && localMessages.length > 0 ? (
-                <div
-                  className={cn(
-                    "overflow-y-auto px-3 pt-2 sm:px-5",
-                    agentConversation.timeline.length === 0
-                      ? "min-h-0 flex-1"
-                      : "max-h-[40%] shrink-0 border-t border-border/40",
-                  )}
-                >
-                  <div className="mx-auto flex w-full max-w-3xl flex-col">
-                    {localMessages.map((message) => (
-                      <ProjectConversationMessage
-                        key={message.id}
-                        message={message}
-                        workspaceProvisionPhase={conversationWorkspace?.provision_phase ?? null}
-                        onRetry={retryMessage(message)}
-                        retryDisabled={sendBusy}
-                      />
-                    ))}
-                  </div>
-                </div>
-              ) : null}
+              )}
             </div>
             <div className="border-t border-border/40 bg-background pt-2">
               <div className="mx-auto w-full max-w-3xl px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:px-5">

@@ -71,16 +71,6 @@ export function agentConversationOperationalFlags(state: ConversationOperational
   return { isWorking, activeTurnInProgress };
 }
 
-export function agentConversationTimelineRenderMode(input: {
-  readonly hasAgentConversation: boolean;
-  readonly timelineEntryCount: number;
-  readonly localMessageCount: number;
-}): "legacy" | "native" | "local-only" {
-  if (!input.hasAgentConversation) return "legacy";
-  if (input.timelineEntryCount === 0 && input.localMessageCount > 0) return "local-only";
-  return "native";
-}
-
 function infoMessageEntry(
   id: string,
   role: "system" | "unknown",
