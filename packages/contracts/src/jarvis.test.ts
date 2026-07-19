@@ -31,10 +31,12 @@ import {
   JarvisStartWorkValidationResult,
   JarvisTurnInput,
   JarvisUserInputInput,
+  JarvisWorkerProfile,
   JarvisWorkerWorktreePruneResponse,
 } from "./jarvis.ts";
 
 const decodeCatalog = Schema.decodeUnknownEffect(JarvisCockpitCatalog);
+const decodeWorker = Schema.decodeUnknownEffect(JarvisWorkerProfile);
 const decodeSnapshot = Schema.decodeUnknownEffect(JarvisRunsSnapshot);
 const decodeEvent = Schema.decodeUnknownEffect(JarvisSessionEvent);
 const decodeEventsPage = Schema.decodeUnknownEffect(JarvisSessionEventsPage);
@@ -143,6 +145,11 @@ it.effect("decodes a Jarvis cockpit catalog fixture", () =>
             input_requests: true,
             checkpoints: true,
             attachments: true,
+            models: [
+              { id: "gpt-5.5", label: "GPT-5.5" },
+              { id: "gpt-5.6", label: "GPT-5.6" },
+            ],
+            default_model: "gpt-5.5",
           },
         },
       ],
@@ -182,6 +189,11 @@ it.effect("decodes a Jarvis cockpit catalog fixture", () =>
     assert.strictEqual(parsed.api_version, "v1");
     assert.strictEqual(parsed.engines[0]?.engine, "codex");
     assert.strictEqual(parsed.engines[0]?.supports.attachments, true);
+    assert.deepStrictEqual(parsed.engines[0]?.models, [
+      { id: "gpt-5.5", label: "GPT-5.5" },
+      { id: "gpt-5.6", label: "GPT-5.6" },
+    ]);
+    assert.strictEqual(parsed.engines[0]?.default_model, "gpt-5.5");
     assert.strictEqual(parsed.capabilities[0]?.capability, "code.edit");
     assert.deepStrictEqual(parsed.work_sources, [
       "manual",
@@ -209,6 +221,135 @@ it.effect("defaults optional Jarvis catalog option groups omitted by live v1 ser
 
     assert.deepStrictEqual(parsed.branch_strategies, []);
     assert.deepStrictEqual(parsed.landing_policies, []);
+  }),
+);
+
+it.effect("preserves top-level Jarvis engine model catalogs for compatibility", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeCatalog({
+      api_version: "v1",
+      schema_version: 1,
+      engines: [
+        {
+          engine: "codex",
+          display_name: "Codex",
+          supports: {
+            streaming: true,
+            resume: true,
+            interrupt: true,
+            approval_requests: true,
+            input_requests: true,
+            checkpoints: true,
+          },
+          models: [{ id: "gpt-5.legacy", label: "GPT-5 Legacy" }],
+          default_model: "gpt-5.legacy",
+        },
+      ],
+      capabilities: [],
+      work_sources: ["manual"],
+      engine_strategies: ["single"],
+      request_kinds: [],
+    });
+
+    assert.deepStrictEqual(parsed.engines[0]?.models, [
+      { id: "gpt-5.legacy", label: "GPT-5 Legacy" },
+    ]);
+    assert.strictEqual(parsed.engines[0]?.default_model, "gpt-5.legacy");
+  }),
+);
+
+it.effect("decodes a captured live-shaped worker engine catalog", () =>
+  Effect.gen(function* () {
+    const liveWorkersPayload = {
+      workers: [
+        {
+          worker_id: "macbook-worker",
+          display_name: "MacBook Pro",
+          status: "online",
+          health: "healthy",
+          last_seen_at: generatedAt,
+          capabilities: ["code.edit", "shell.run"],
+          engines: [
+            {
+              engine: "codex",
+              display_name: "Codex",
+              status: "available",
+              default: true,
+              supports: {
+                streaming: true,
+                resume: true,
+                interrupt: true,
+                approval_requests: true,
+                input_requests: true,
+                checkpoints: true,
+                models: [
+                  { id: "gpt-5.5", label: "GPT-5.5" },
+                  { id: "gpt-5.6", label: "GPT-5.6" },
+                ],
+                default_model: "gpt-5.5",
+              },
+            },
+          ],
+          capacity: {
+            max_sessions: 4,
+            active_sessions: 1,
+            queued_sessions: 0,
+          },
+          public_metadata: {},
+        },
+      ],
+    };
+
+    const parsed = yield* decodeWorker(liveWorkersPayload.workers[0]);
+
+    assert.strictEqual(parsed.engines[0]?.engine, "codex");
+    assert.deepStrictEqual(parsed.engines[0]?.models, [
+      { id: "gpt-5.5", label: "GPT-5.5" },
+      { id: "gpt-5.6", label: "GPT-5.6" },
+    ]);
+    assert.strictEqual(parsed.engines[0]?.default_model, "gpt-5.5");
+  }),
+);
+
+it.effect("preserves top-level Jarvis worker engine model catalogs for compatibility", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeWorker({
+      worker_id: "macbook-worker",
+      display_name: "MacBook Pro",
+      status: "online",
+      health: "healthy",
+      last_seen_at: generatedAt,
+      capabilities: ["code.edit"],
+      engines: [
+        {
+          engine: "codex",
+          display_name: "Codex",
+          status: "available",
+          default: true,
+          supports: {
+            streaming: true,
+            resume: true,
+            interrupt: true,
+            approval_requests: true,
+            input_requests: true,
+            checkpoints: true,
+          },
+          models: [{ id: "gpt-5.legacy", label: "GPT-5 Legacy" }],
+          default_model: "gpt-5.legacy",
+        },
+      ],
+      capacity: {
+        max_sessions: 4,
+        active_sessions: 1,
+        queued_sessions: 0,
+      },
+      public_metadata: {},
+    });
+
+    assert.deepStrictEqual(parsed.engines[0]?.models, [
+      { id: "gpt-5.legacy", label: "GPT-5 Legacy" },
+    ]);
+    assert.strictEqual(parsed.engines[0]?.default_model, "gpt-5.legacy");
   }),
 );
 
@@ -608,6 +749,11 @@ it.effect("decodes a Jarvis cockpit snapshot fixture", () =>
                 approval_requests: true,
                 input_requests: true,
                 checkpoints: true,
+                models: [
+                  { id: "gpt-5.5", label: "GPT-5.5" },
+                  { id: "gpt-5.6", label: "GPT-5.6" },
+                ],
+                default_model: "gpt-5.5",
               },
             },
           ],
@@ -680,6 +826,11 @@ it.effect("decodes a Jarvis cockpit snapshot fixture", () =>
     assert.strictEqual(parsed.sessions[0]?.parent_chat_id, "review_thread_42");
     assert.strictEqual(parsed.sessions[0]?.model, "gpt-5.5");
     assert.strictEqual(parsed.workers[0]?.engines[0]?.supports.resume, true);
+    assert.deepStrictEqual(parsed.workers[0]?.engines[0]?.models, [
+      { id: "gpt-5.5", label: "GPT-5.5" },
+      { id: "gpt-5.6", label: "GPT-5.6" },
+    ]);
+    assert.strictEqual(parsed.workers[0]?.engines[0]?.default_model, "gpt-5.5");
     const worker = parsed.workers[0];
     assert.ok(worker);
     assert.strictEqual(worker.repositories?.at(0)?.repo, "roughcoder/jarvis");

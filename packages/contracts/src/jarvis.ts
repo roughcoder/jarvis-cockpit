@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
@@ -180,7 +181,7 @@ const OptionalPossiblyEmptyPublicString = Schema.optional(
   Schema.NullOr(Schema.Union([TrimmedNonEmptyString, Schema.Literal("")])),
 );
 
-export const JarvisCapabilitySupport = Schema.Struct({
+const JarvisCapabilitySupportFields = {
   streaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   resume: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   interrupt: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -188,7 +189,9 @@ export const JarvisCapabilitySupport = Schema.Struct({
   input_requests: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   checkpoints: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   attachments: Schema.optionalKey(Schema.Boolean),
-});
+} as const;
+
+export const JarvisCapabilitySupport = Schema.Struct(JarvisCapabilitySupportFields);
 export type JarvisCapabilitySupport = typeof JarvisCapabilitySupport.Type;
 
 export const JarvisEngineModel = Schema.Struct({
@@ -197,16 +200,123 @@ export const JarvisEngineModel = Schema.Struct({
 });
 export type JarvisEngineModel = typeof JarvisEngineModel.Type;
 
-export const JarvisCatalogEngine = Schema.Struct({
+const JarvisCapabilitySupportWithEngineCatalog = Schema.Struct({
+  ...JarvisCapabilitySupportFields,
+  models: Schema.optionalKey(Schema.Array(JarvisEngineModel)),
+  default_model: OptionalPossiblyEmptyPublicString,
+});
+
+const CanonicalJarvisEngineCatalogFields = {
   engine: JarvisEngineId,
   display_name: TrimmedNonEmptyString,
-  description: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   supports: JarvisCapabilitySupport,
   models: Schema.optionalKey(Schema.Array(JarvisEngineModel)).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   default_model: OptionalPossiblyEmptyPublicString,
+} as const;
+
+const JarvisEngineCatalogWireFields = {
+  ...CanonicalJarvisEngineCatalogFields,
+  supports: JarvisCapabilitySupportWithEngineCatalog,
+  models: Schema.optionalKey(Schema.Array(JarvisEngineModel)),
+} as const;
+
+const hasOwn = (value: object, key: string): boolean =>
+  Object.prototype.hasOwnProperty.call(value, key);
+
+interface NormalizedJarvisCapabilitySupport {
+  readonly streaming: boolean;
+  readonly resume: boolean;
+  readonly interrupt: boolean;
+  readonly approval_requests: boolean;
+  readonly input_requests: boolean;
+  readonly checkpoints: boolean;
+  readonly attachments?: boolean;
+}
+
+interface LooseJarvisCapabilitySupport {
+  readonly streaming?: boolean | undefined;
+  readonly resume?: boolean | undefined;
+  readonly interrupt?: boolean | undefined;
+  readonly approval_requests?: boolean | undefined;
+  readonly input_requests?: boolean | undefined;
+  readonly checkpoints?: boolean | undefined;
+  readonly attachments?: boolean | undefined;
+}
+
+function normalizeJarvisCapabilitySupport(
+  supports: LooseJarvisCapabilitySupport,
+): NormalizedJarvisCapabilitySupport {
+  return {
+    streaming: supports.streaming ?? false,
+    resume: supports.resume ?? false,
+    interrupt: supports.interrupt ?? false,
+    approval_requests: supports.approval_requests ?? false,
+    input_requests: supports.input_requests ?? false,
+    checkpoints: supports.checkpoints ?? false,
+    ...(supports.attachments !== undefined ? { attachments: supports.attachments } : {}),
+  };
+}
+
+function normalizeJarvisEngineCatalog<
+  Engine extends {
+    readonly supports: LooseJarvisCapabilitySupport & {
+      readonly models?: ReadonlyArray<JarvisEngineModel> | undefined;
+      readonly default_model?: string | null | undefined;
+    };
+    readonly models?: ReadonlyArray<JarvisEngineModel> | undefined;
+    readonly default_model?: string | null | undefined;
+  },
+>(engine: Engine) {
+  const hasTopLevelModels = hasOwn(engine, "models");
+  const hasTopLevelDefaultModel = hasOwn(engine, "default_model");
+  const {
+    models: supportsModels,
+    default_model: supportsDefaultModel,
+    ...supports
+  } = engine.supports;
+  const {
+    supports: _rawSupports,
+    models: topLevelModels,
+    default_model: topLevelDefaultModel,
+    ...rest
+  } = engine;
+  const defaultModel = hasTopLevelDefaultModel ? topLevelDefaultModel : supportsDefaultModel;
+
+  return {
+    ...rest,
+    supports: normalizeJarvisCapabilitySupport(supports),
+    models: hasTopLevelModels ? (topLevelModels ?? []) : (supportsModels ?? []),
+    ...(defaultModel !== undefined ? { default_model: defaultModel } : {}),
+  };
+}
+
+const JarvisCatalogEngineCanonical = Schema.Struct({
+  ...CanonicalJarvisEngineCatalogFields,
+  description: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
+const JarvisCatalogEngineWire = Schema.Struct({
+  ...JarvisEngineCatalogWireFields,
+  description: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+});
+type JarvisCatalogEngineCanonicalEncoded = typeof JarvisCatalogEngineCanonical.Encoded;
+type JarvisCatalogEngineWireType = typeof JarvisCatalogEngineWire.Type;
+
+export const JarvisCatalogEngine = JarvisCatalogEngineWire.pipe(
+  Schema.decodeTo(
+    JarvisCatalogEngineCanonical,
+    SchemaTransformation.transformOrFail<
+      JarvisCatalogEngineCanonicalEncoded,
+      JarvisCatalogEngineWireType
+    >({
+      decode: (engine) =>
+        Effect.succeed(normalizeJarvisEngineCatalog(engine) as JarvisCatalogEngineCanonicalEncoded),
+      encode: (engine) =>
+        Effect.succeed(normalizeJarvisEngineCatalog(engine) as JarvisCatalogEngineWireType),
+    }),
+  ),
+);
 export type JarvisCatalogEngine = typeof JarvisCatalogEngine.Type;
 
 export const JarvisCatalogCapability = Schema.Struct({
@@ -947,17 +1057,34 @@ export const JarvisProjectThreadControlResponse = Schema.Struct({
 });
 export type JarvisProjectThreadControlResponse = typeof JarvisProjectThreadControlResponse.Type;
 
-export const JarvisWorkerEngine = Schema.Struct({
-  engine: JarvisEngineId,
-  display_name: TrimmedNonEmptyString,
+const JarvisWorkerEngineCanonical = Schema.Struct({
+  ...CanonicalJarvisEngineCatalogFields,
   status: Schema.Literals(["available", "unavailable", "degraded"]),
   default: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  supports: JarvisCapabilitySupport,
-  models: Schema.optionalKey(Schema.Array(JarvisEngineModel)).pipe(
-    Schema.withDecodingDefault(Effect.succeed([])),
-  ),
-  default_model: OptionalPossiblyEmptyPublicString,
 });
+
+const JarvisWorkerEngineWire = Schema.Struct({
+  ...JarvisEngineCatalogWireFields,
+  status: Schema.Literals(["available", "unavailable", "degraded"]),
+  default: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
+type JarvisWorkerEngineCanonicalEncoded = typeof JarvisWorkerEngineCanonical.Encoded;
+type JarvisWorkerEngineWireType = typeof JarvisWorkerEngineWire.Type;
+
+export const JarvisWorkerEngine = JarvisWorkerEngineWire.pipe(
+  Schema.decodeTo(
+    JarvisWorkerEngineCanonical,
+    SchemaTransformation.transformOrFail<
+      JarvisWorkerEngineCanonicalEncoded,
+      JarvisWorkerEngineWireType
+    >({
+      decode: (engine) =>
+        Effect.succeed(normalizeJarvisEngineCatalog(engine) as JarvisWorkerEngineCanonicalEncoded),
+      encode: (engine) =>
+        Effect.succeed(normalizeJarvisEngineCatalog(engine) as JarvisWorkerEngineWireType),
+    }),
+  ),
+);
 export type JarvisWorkerEngine = typeof JarvisWorkerEngine.Type;
 
 export const JarvisWorkerRepository = Schema.Struct({

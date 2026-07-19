@@ -49,6 +49,11 @@ const worker = {
         approval_requests: true,
         input_requests: true,
         checkpoints: true,
+        models: [
+          { id: "gpt-5.5", label: "GPT-5.5" },
+          { id: "gpt-5.6", label: "GPT-5.6" },
+        ],
+        default_model: "gpt-5.5",
       },
     },
   ],
@@ -998,6 +1003,11 @@ it.effect("cockpit client attaches bearer token and selects the snapshot sync mo
     assert.strictEqual(requests[0]?.authorization, "Bearer worker-token");
     assert.strictEqual(parsedSnapshot.runs[0]?.run_id, "run_1");
     assert.strictEqual(parsedSnapshot.runs[0]?.objective, "Do the work");
+    assert.deepStrictEqual(parsedSnapshot.workers[0]?.engines[0]?.models, [
+      { id: "gpt-5.5", label: "GPT-5.5" },
+      { id: "gpt-5.6", label: "GPT-5.6" },
+    ]);
+    assert.strictEqual(parsedSnapshot.workers[0]?.engines[0]?.default_model, "gpt-5.5");
   }),
 );
 
