@@ -442,6 +442,7 @@ function makeJarvisClientFromConnection(input: {
 const decodeCatalog = Schema.decodeUnknownEffect(JarvisCockpitCatalog);
 const decodeMcpStatus = Schema.decodeUnknownEffect(JarvisMcpStatus);
 const decodeSnapshot = Schema.decodeUnknownEffect(JarvisRunsSnapshot);
+const decodeSnapshotUnknownSync = Schema.decodeUnknownSync(JarvisRunsSnapshot);
 const decodeControlResult = Schema.decodeUnknownEffect(JarvisControlResult);
 const decodeLifecycleResult = Schema.decodeUnknownEffect(JarvisLifecycleResult);
 const decodeStartWorkValidationResult = Schema.decodeUnknownEffect(JarvisStartWorkValidationResult);
@@ -2159,9 +2160,9 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
         input_requests: true,
         checkpoints: true,
         attachments: true,
+        models: fixtureCodexModels,
+        default_model: "gpt-5.5",
       },
-      models: fixtureCodexModels,
-      default_model: "gpt-5.5",
     },
     {
       engine: "claude",
@@ -2176,9 +2177,9 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
         input_requests: true,
         checkpoints: true,
         attachments: true,
+        models: fixtureClaudeModels,
+        default_model: "claude-opus-4-7",
       },
-      models: fixtureClaudeModels,
-      default_model: "claude-opus-4-7",
     },
   ];
   const fixtureEngineForModel = (model: string | null | undefined): "codex" | "claude" => {
@@ -2430,7 +2431,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       },
     },
   ];
-  const initialSnapshot: JarvisRunsSnapshot = {
+  const initialSnapshot = {
     api_version: "v1",
     schema_version: 1,
     cursor: "evt_fixture_2",
@@ -2617,7 +2618,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
         ],
     requests: [],
     checkpoints: [],
-  };
+  } as const;
   const request = {
     request_id: JarvisRequestId.make("input_fixture_1"),
     session_ref: session.session_ref,
@@ -2657,11 +2658,11 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
     },
   };
 
-  let fixtureSnapshot: JarvisRunsSnapshot = {
+  let fixtureSnapshot: JarvisRunsSnapshot = decodeSnapshotUnknownSync({
     ...initialSnapshot,
     requests: [request],
     checkpoints: [checkpoint],
-  };
+  });
   const eventsBySession = new Map<string, ReadonlyArray<JarvisSessionEvent>>([
     [session.session_ref, events],
     [completedSession.session_ref, completedEvents],
@@ -3085,6 +3086,85 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
     return updatedRun;
   };
 
+  const fixtureCatalogPayload = {
+    api_version: "v1",
+    schema_version: 1,
+    engines: [
+      {
+        engine: "codex",
+        display_name: "Codex",
+        description: "OpenAI Codex provider session",
+        supports: {
+          streaming: true,
+          resume: true,
+          interrupt: true,
+          approval_requests: true,
+          input_requests: true,
+          checkpoints: true,
+          attachments: true,
+          models: fixtureCodexModels,
+          default_model: "gpt-5.5",
+        },
+      },
+      {
+        engine: "claude",
+        display_name: "Claude",
+        description: "Claude Code agent session",
+        supports: {
+          streaming: true,
+          resume: true,
+          interrupt: true,
+          approval_requests: true,
+          input_requests: true,
+          checkpoints: true,
+          attachments: true,
+          models: fixtureClaudeModels,
+          default_model: "claude-opus-4-7",
+        },
+      },
+    ],
+    capabilities: [
+      {
+        capability: "code.edit",
+        display_name: "Edit code",
+        maps_to: ["worker.session.create", "worker.session.turn"],
+      },
+      {
+        capability: "shell.run",
+        display_name: "Run shell commands",
+        maps_to: ["worker.job.start"],
+      },
+    ],
+    work_sources: ["manual", "github", "linear", "voice", "whatsapp"],
+    engine_strategies: ["single", "parallel", "review_panel"],
+    branch_strategies: ["auto", "use_existing", "create", "none"],
+    landing_policies: ["branch_only", "draft_pr", "ready_pr", "confirm_before_pr"],
+    request_kinds: ["approval", "input"],
+    start_options: {
+      sources: ["manual", "github", "linear"],
+      engines: ["codex", "claude"],
+      engine_strategies: ["single", "parallel"],
+      landing_modes: ["branch_only", "draft_pr", "ready_pr", "confirm_before_pr"],
+      required_fields: {
+        manual: ["phrase or work_item.title", "repo (unless a default repo is configured)"],
+        github: ["repo (unless a default repo is configured)"],
+        linear: [],
+      },
+      defaults: {
+        source: "manual",
+        worker_id: "macbook-worker",
+        repo: "roughcoder/jarvis",
+        engine: "codex",
+        engine_strategy: "single",
+        landing_mode: "draft_pr",
+      },
+    },
+    generated_at: now,
+  };
+
+  const decodeFixtureCatalog = () =>
+    decodeFor("fixture.catalog", decodeCatalog)(fixtureCatalogPayload);
+
   return {
     streamCockpitEvents: () =>
       Stream.fail(
@@ -3093,174 +3173,28 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
           message: "Jarvis fixture mode does not provide Cockpit SSE.",
         }),
       ),
-    getCatalog: () =>
-      Effect.succeed({
-        api_version: "v1",
-        schema_version: 1,
-        engines: [
-          {
-            engine: "codex",
-            display_name: "Codex",
-            description: "OpenAI Codex provider session",
-            supports: {
-              streaming: true,
-              resume: true,
-              interrupt: true,
-              approval_requests: true,
-              input_requests: true,
-              checkpoints: true,
-              attachments: true,
-            },
-            models: fixtureCodexModels,
-            default_model: "gpt-5.5",
-          },
-          {
-            engine: "claude",
-            display_name: "Claude",
-            description: "Claude Code agent session",
-            supports: {
-              streaming: true,
-              resume: true,
-              interrupt: true,
-              approval_requests: true,
-              input_requests: true,
-              checkpoints: true,
-              attachments: true,
-            },
-            models: fixtureClaudeModels,
-            default_model: "claude-opus-4-7",
-          },
-        ],
-        capabilities: [
-          {
-            capability: "code.edit",
-            display_name: "Edit code",
-            maps_to: ["worker.session.create", "worker.session.turn"],
-          },
-          {
-            capability: "shell.run",
-            display_name: "Run shell commands",
-            maps_to: ["worker.job.start"],
-          },
-        ],
-        work_sources: ["manual", "github", "linear", "voice", "whatsapp"],
-        engine_strategies: ["single", "parallel", "review_panel"],
-        branch_strategies: ["auto", "use_existing", "create", "none"],
-        landing_policies: ["branch_only", "draft_pr", "ready_pr", "confirm_before_pr"],
-        request_kinds: ["approval", "input"],
-        start_options: {
-          sources: ["manual", "github", "linear"],
-          engines: ["codex", "claude"],
-          engine_strategies: ["single", "parallel"],
-          landing_modes: ["branch_only", "draft_pr", "ready_pr", "confirm_before_pr"],
-          required_fields: {
-            manual: ["phrase or work_item.title", "repo (unless a default repo is configured)"],
-            github: ["repo (unless a default repo is configured)"],
-            linear: [],
-          },
-          defaults: {
-            source: "manual",
-            worker_id: "macbook-worker",
-            repo: "roughcoder/jarvis",
-            engine: "codex",
-            engine_strategy: "single",
-            landing_mode: "draft_pr",
-          },
-        },
-        generated_at: now,
-      }),
+    getCatalog: decodeFixtureCatalog,
     getCapabilities: () =>
-      Effect.succeed({
-        ok: true,
-        checked_at: now,
-        catalog: {
-          api_version: "v1",
-          schema_version: 1,
-          engines: [
-            {
-              engine: "codex",
-              display_name: "Codex",
-              description: "OpenAI Codex provider session",
-              supports: {
-                streaming: true,
-                resume: true,
-                interrupt: true,
-                approval_requests: true,
-                input_requests: true,
-                checkpoints: true,
-                attachments: true,
-              },
-              models: fixtureCodexModels,
-              default_model: "gpt-5.5",
-            },
-            {
-              engine: "claude",
-              display_name: "Claude",
-              description: "Claude Code agent session",
-              supports: {
-                streaming: true,
-                resume: true,
-                interrupt: true,
-                approval_requests: true,
-                input_requests: true,
-                checkpoints: true,
-                attachments: true,
-              },
-              models: fixtureClaudeModels,
-              default_model: "claude-opus-4-7",
-            },
-          ],
-          capabilities: [
-            {
-              capability: "code.edit",
-              display_name: "Edit code",
-              maps_to: ["worker.session.create", "worker.session.turn"],
-            },
-            {
-              capability: "shell.run",
-              display_name: "Run shell commands",
-              maps_to: ["worker.job.start"],
-            },
-          ],
-          work_sources: ["manual", "github", "linear", "voice", "whatsapp"],
-          engine_strategies: ["single", "parallel", "review_panel"],
-          branch_strategies: ["auto", "use_existing", "create", "none"],
-          landing_policies: ["branch_only", "draft_pr", "ready_pr", "confirm_before_pr"],
-          request_kinds: ["approval", "input"],
-          start_options: {
-            sources: ["manual", "github", "linear"],
-            engines: ["codex", "claude"],
-            engine_strategies: ["single", "parallel"],
-            landing_modes: ["branch_only", "draft_pr", "ready_pr", "confirm_before_pr"],
-            required_fields: {
-              manual: ["phrase or work_item.title", "repo (unless a default repo is configured)"],
-              github: ["repo (unless a default repo is configured)"],
-              linear: [],
-            },
-            defaults: {
-              source: "manual",
-              worker_id: "macbook-worker",
-              repo: "roughcoder/jarvis",
-              engine: "codex",
-              engine_strategy: "single",
-              landing_mode: "draft_pr",
-            },
-          },
-          generated_at: now,
-        },
-        routes: JARVIS_CAPABILITY_ROUTE_DEFINITIONS.map((route) => {
-          const path = route.path
-            .replace("{id}", encodeURIComponent(cockpitProjectId))
-            .replace("{tid}", encodeURIComponent("thread_fixture_orchestrator"));
-          return route.safeToProbe
-            ? makeProbedJarvisCapability({
-                route,
-                path,
-                statusCode: 200,
-                probedAt: now,
-              })
-            : makeUnprobedJarvisCapability(route, "Write route was not probed.");
-        }),
+      Effect.gen(function* () {
+        const catalog = yield* decodeFixtureCatalog();
+        return {
+          ok: true,
+          checked_at: now,
+          catalog,
+          routes: JARVIS_CAPABILITY_ROUTE_DEFINITIONS.map((route) => {
+            const path = route.path
+              .replace("{id}", encodeURIComponent(cockpitProjectId))
+              .replace("{tid}", encodeURIComponent("thread_fixture_orchestrator"));
+            return route.safeToProbe
+              ? makeProbedJarvisCapability({
+                  route,
+                  path,
+                  statusCode: 200,
+                  probedAt: now,
+                })
+              : makeUnprobedJarvisCapability(route, "Write route was not probed.");
+          }),
+        };
       }),
     getMcpStatus: () =>
       Effect.succeed({
