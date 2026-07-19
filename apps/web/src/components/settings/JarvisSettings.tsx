@@ -50,6 +50,7 @@ import {
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
+import { JarvisRetentionPanel } from "./JarvisRetention";
 import { deriveOrchestratorOptions } from "../../orchestratorModelOptions";
 
 function formatCommandFailure(error: unknown): string {
@@ -695,6 +696,8 @@ export function JarvisSettingsPanel() {
           </AlertDescription>
         </Alert>
       ) : null}
+
+      <JarvisRetentionPanel />
 
       <SettingsSection
         title="Jarvis Snapshot"

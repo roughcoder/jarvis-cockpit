@@ -1047,6 +1047,134 @@ it.effect("cockpit client sends idempotency keys when pruning worker worktrees",
   }),
 );
 
+it.effect("cockpit client calls retention plan, prune, and settings endpoints", () =>
+  Effect.gen(function* () {
+    const requests: Array<{ url: string; method: string; body: unknown }> = [];
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      token: "worker-token",
+      fetch: async (url, init) => {
+        requests.push({
+          url: String(url),
+          method: init?.method ?? "GET",
+          body: init?.body ? JSON.parse(String(init.body)) : null,
+        });
+        if (String(url).endsWith("/v1/retention/prune")) {
+          return jsonResponse({
+            ok: true,
+            deleted: { archived: 3, chat: 2, tree: 1 },
+            child_runs: 1,
+            bytes_reclaimed: 40_009_728,
+            kept: 42,
+          });
+        }
+        if (init?.method === "PUT") {
+          return jsonResponse({
+            ok: true,
+            settings: {
+              enabled: true,
+              interval_s: 21_600,
+              archived_ttl_days: 14,
+              chat_ttl_days: 10,
+              tree_ttl_days: 7,
+            },
+            source: { chat_ttl_days: "override" },
+          });
+        }
+        if (String(url).endsWith("/v1/retention/settings")) {
+          return jsonResponse({
+            ok: true,
+            settings: {
+              enabled: true,
+              interval_s: 21_600,
+              archived_ttl_days: 14,
+              chat_ttl_days: 7,
+              tree_ttl_days: 7,
+            },
+            source: { enabled: "env" },
+          });
+        }
+        return jsonResponse({
+          ok: true,
+          plan: {
+            classes: [{ name: "archived", ttl_days: 14, count: 3, bytes: 24_576_000 }],
+            total_count: 3,
+            total_bytes: 24_576_000,
+            kept: 42,
+          },
+          auto: {
+            enabled: true,
+            interval_s: 21_600,
+            last_run_at: null,
+            last_result: null,
+          },
+        });
+      },
+    });
+
+    const plan = yield* client.getRetentionPlan();
+    const settings = yield* client.getRetentionSettings();
+    const updated = yield* client.updateRetentionSettings({
+      idempotency_key: "settings-1",
+      chat_ttl_days: 10,
+      tree_ttl_days: null,
+    });
+    const pruned = yield* client.pruneRetention({ idempotency_key: "prune-1" });
+
+    assert.strictEqual(plan.plan?.total_count, 3);
+    assert.strictEqual(settings.settings.chat_ttl_days, 7);
+    assert.strictEqual(updated.settings.chat_ttl_days, 10);
+    assert.strictEqual(pruned.deleted.tree, 1);
+    assert.deepStrictEqual(
+      requests.map((request) => [request.method, request.url, request.body]),
+      [
+        ["GET", "http://jarvis.local:8787/v1/retention/plan", null],
+        ["GET", "http://jarvis.local:8787/v1/retention/settings", null],
+        [
+          "PUT",
+          "http://jarvis.local:8787/v1/retention/settings",
+          {
+            idempotency_key: "settings-1",
+            chat_ttl_days: 10,
+            tree_ttl_days: null,
+          },
+        ],
+        ["POST", "http://jarvis.local:8787/v1/retention/prune", { idempotency_key: "prune-1" }],
+      ],
+    );
+  }),
+);
+
+it.effect("fixture client serves deterministic retention data and editable settings", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisFixtureClient();
+
+    const plan = yield* client.getRetentionPlan();
+    const pruned = yield* client.pruneRetention({ idempotency_key: "fixture-prune" });
+    const updated = yield* client.updateRetentionSettings({
+      idempotency_key: "settings-1",
+      chat_ttl_days: 0,
+    });
+    const disabledPlan = yield* client.getRetentionPlan();
+    const reset = yield* client.updateRetentionSettings({
+      idempotency_key: "settings-2",
+      chat_ttl_days: null,
+    });
+
+    assert.strictEqual(plan.plan?.total_count, 6);
+    assert.strictEqual(plan.settings?.archived_ttl_days, 14);
+    assert.deepStrictEqual(pruned.deleted, { archived: 3, chat: 2, tree: 1 });
+    assert.strictEqual(updated.source.chat_ttl_days, "override");
+    assert.strictEqual(
+      disabledPlan.plan?.classes.find((row) => row.name === "chat")?.disabled,
+      true,
+    );
+    assert.strictEqual(disabledPlan.plan?.total_count, 4);
+    assert.strictEqual(reset.settings.chat_ttl_days, 7);
+    assert.strictEqual(reset.source.chat_ttl_days, "env");
+  }),
+);
+
 it.effect("cockpit client incrementally reads authenticated SSE frames", () =>
   Effect.gen(function* () {
     const requests: Array<{ url: string; accept: string | null; authorization: string | null }> =

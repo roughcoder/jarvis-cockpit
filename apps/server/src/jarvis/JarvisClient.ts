@@ -44,6 +44,12 @@ import {
   JarvisProjectThreadTurnResult,
   type JarvisProjectThreadUserInputInput,
   JarvisProjectUpdateInput,
+  JarvisRetentionPlanResponse,
+  type JarvisRetentionPruneInput,
+  JarvisRetentionPruneResponse,
+  type JarvisRetentionSettings,
+  type JarvisRetentionSettingsUpdateInput,
+  JarvisRetentionSettingsResponse,
   JarvisDeleteInput,
   JarvisLifecycleResult,
   JarvisMcpStatus,
@@ -251,6 +257,17 @@ export interface JarvisClient {
     readonly workerId: string;
     readonly idempotencyKey: string;
   }) => Effect.Effect<JarvisWorkerWorktreePruneResponse, JarvisClientError>;
+  readonly getRetentionPlan: () => Effect.Effect<JarvisRetentionPlanResponse, JarvisClientError>;
+  readonly pruneRetention: (
+    input: JarvisRetentionPruneInput,
+  ) => Effect.Effect<JarvisRetentionPruneResponse, JarvisClientError>;
+  readonly getRetentionSettings: () => Effect.Effect<
+    JarvisRetentionSettingsResponse,
+    JarvisClientError
+  >;
+  readonly updateRetentionSettings: (
+    input: JarvisRetentionSettingsUpdateInput,
+  ) => Effect.Effect<JarvisRetentionSettingsResponse, JarvisClientError>;
   readonly sendTurn: (
     sessionRef: string,
     input: JarvisTurnInput,
@@ -461,6 +478,9 @@ const decodeSessionCheckpointsResponse = Schema.decodeUnknownEffect(
 const decodeWorkerWorktreePruneResponse = Schema.decodeUnknownEffect(
   JarvisWorkerWorktreePruneResponse,
 );
+const decodeRetentionPlanResponse = Schema.decodeUnknownEffect(JarvisRetentionPlanResponse);
+const decodeRetentionPruneResponse = Schema.decodeUnknownEffect(JarvisRetentionPruneResponse);
+const decodeRetentionSettingsResponse = Schema.decodeUnknownEffect(JarvisRetentionSettingsResponse);
 
 const mapDecodeError = (operation: string) => (cause: unknown) =>
   new JarvisClientError({
@@ -1494,6 +1514,25 @@ export function makeJarvisCockpitClient(input: {
       ).pipe(
         Effect.flatMap(decodeFor("workers.worktrees.prune", decodeWorkerWorktreePruneResponse)),
       ),
+    getRetentionPlan: () =>
+      requestJson("retention.plan", "/v1/retention/plan").pipe(
+        Effect.flatMap(decodeFor("retention.plan", decodeRetentionPlanResponse)),
+      ),
+    pruneRetention: (pruneInput) =>
+      postJson("retention.prune", "/v1/retention/prune", pruneInput).pipe(
+        Effect.flatMap(decodeFor("retention.prune", decodeRetentionPruneResponse)),
+      ),
+    getRetentionSettings: () =>
+      requestJson("retention.settings.get", "/v1/retention/settings").pipe(
+        Effect.flatMap(decodeFor("retention.settings.get", decodeRetentionSettingsResponse)),
+      ),
+    updateRetentionSettings: (settingsInput) =>
+      requestJson("retention.settings.update", "/v1/retention/settings", {
+        method: "PUT",
+        body: JSON.stringify(settingsInput),
+      }).pipe(
+        Effect.flatMap(decodeFor("retention.settings.update", decodeRetentionSettingsResponse)),
+      ),
     sendTurn: (sessionRef, turnInput) =>
       postJson(
         "sessions.turn",
@@ -1752,6 +1791,13 @@ export function makeJarvisClient(config: {
       validateWork: (input) => withClient("work.validate", (client) => client.validateWork(input)),
       pruneWorkerWorktrees: (input) =>
         withClient("workers.worktrees.prune", (client) => client.pruneWorkerWorktrees(input)),
+      getRetentionPlan: () => withClient("retention.plan", (client) => client.getRetentionPlan()),
+      pruneRetention: (input) =>
+        withClient("retention.prune", (client) => client.pruneRetention(input)),
+      getRetentionSettings: () =>
+        withClient("retention.settings.get", (client) => client.getRetentionSettings()),
+      updateRetentionSettings: (input) =>
+        withClient("retention.settings.update", (client) => client.updateRetentionSettings(input)),
       sendTurn: (sessionRef, input) =>
         withClient("sessions.turns", (client) => client.sendTurn(sessionRef, input)),
       respondApproval: (sessionRef, input) =>
@@ -1954,6 +2000,10 @@ function makeMissingConfigurationClient(message: string): JarvisClient {
     startWork: () => fail("jarvis.client.configure"),
     validateWork: () => fail("jarvis.client.configure"),
     pruneWorkerWorktrees: () => fail("jarvis.client.configure"),
+    getRetentionPlan: () => fail("jarvis.client.configure"),
+    pruneRetention: () => fail("jarvis.client.configure"),
+    getRetentionSettings: () => fail("jarvis.client.configure"),
+    updateRetentionSettings: () => fail("jarvis.client.configure"),
     sendTurn: () => fail("jarvis.client.configure"),
     respondApproval: () => fail("jarvis.client.configure"),
     respondInput: () => fail("jarvis.client.configure"),
@@ -2000,6 +2050,69 @@ function fixtureProjectThreadControlResponse(
 export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): JarvisClient {
   const emptyProjects = options?.emptyProjects === true;
   const now = "2026-07-01T12:00:00+00:00";
+  type MutableRetentionSource = Record<keyof JarvisRetentionSettings, "env" | "override">;
+  const defaultRetentionSettings: JarvisRetentionSettings = {
+    enabled: true,
+    interval_s: 21_600,
+    archived_ttl_days: 14,
+    chat_ttl_days: 7,
+    tree_ttl_days: 7,
+  };
+  let retentionSettings: JarvisRetentionSettings = defaultRetentionSettings;
+  let retentionSource: MutableRetentionSource = {
+    enabled: "env",
+    interval_s: "env",
+    archived_ttl_days: "env",
+    chat_ttl_days: "env",
+    tree_ttl_days: "env",
+  };
+  const fixtureRetentionPlan = (): JarvisRetentionPlanResponse => ({
+    ok: true,
+    plan: {
+      classes: [
+        {
+          name: "archived",
+          ttl_days: retentionSettings.archived_ttl_days,
+          count: retentionSettings.archived_ttl_days === 0 ? 0 : 3,
+          bytes: retentionSettings.archived_ttl_days === 0 ? 0 : 24_576_000,
+          disabled: retentionSettings.archived_ttl_days === 0,
+        },
+        {
+          name: "chat",
+          ttl_days: retentionSettings.chat_ttl_days,
+          count: retentionSettings.chat_ttl_days === 0 ? 0 : 2,
+          bytes: retentionSettings.chat_ttl_days === 0 ? 0 : 12_288_000,
+          disabled: retentionSettings.chat_ttl_days === 0,
+        },
+        {
+          name: "tree",
+          ttl_days: retentionSettings.tree_ttl_days,
+          count: retentionSettings.tree_ttl_days === 0 ? 0 : 1,
+          bytes: retentionSettings.tree_ttl_days === 0 ? 0 : 3_145_728,
+          disabled: retentionSettings.tree_ttl_days === 0,
+        },
+      ],
+      total_count:
+        (retentionSettings.archived_ttl_days === 0 ? 0 : 3) +
+        (retentionSettings.chat_ttl_days === 0 ? 0 : 2) +
+        (retentionSettings.tree_ttl_days === 0 ? 0 : 1),
+      total_bytes:
+        (retentionSettings.archived_ttl_days === 0 ? 0 : 24_576_000) +
+        (retentionSettings.chat_ttl_days === 0 ? 0 : 12_288_000) +
+        (retentionSettings.tree_ttl_days === 0 ? 0 : 3_145_728),
+      kept: 42,
+    },
+    settings: retentionSettings,
+    auto: {
+      enabled: retentionSettings.enabled,
+      interval_s: retentionSettings.interval_s,
+      last_run_at: "2026-06-30T18:00:00+00:00",
+      last_result: {
+        deleted: 4,
+        bytes: 18_874_368,
+      },
+    },
+  });
   // Fixture messages must carry durable identity like live Jarvis messages do. Without a
   // message_id/sequence the client replay key degrades to a hash of (role, peer_id, observed_at,
   // content), so repeating a prompt silently deduplicates the turn away and a tied observed_at
@@ -3740,6 +3853,86 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
         pruned: [{ name: "fixture-stale-worktree", bytes: 4096 }],
         refused: [],
       }),
+    getRetentionPlan: () => Effect.succeed(fixtureRetentionPlan()),
+    pruneRetention: () =>
+      Effect.succeed({
+        ok: true,
+        deleted: {
+          archived: retentionSettings.archived_ttl_days === 0 ? 0 : 3,
+          chat: retentionSettings.chat_ttl_days === 0 ? 0 : 2,
+          tree: retentionSettings.tree_ttl_days === 0 ? 0 : 1,
+        },
+        child_runs: 1,
+        bytes_reclaimed: fixtureRetentionPlan().plan?.total_bytes ?? 0,
+        kept: 42,
+      }),
+    getRetentionSettings: () =>
+      Effect.succeed({
+        ok: true,
+        settings: retentionSettings,
+        source: retentionSource,
+      }),
+    updateRetentionSettings: (input) => {
+      const nextSettings = { ...retentionSettings };
+      const nextSource: MutableRetentionSource = { ...retentionSource };
+      const applyField = (
+        key: keyof JarvisRetentionSettings,
+        value: boolean | number | null | undefined,
+      ) => {
+        if (value === undefined) return;
+        if (value === null) {
+          switch (key) {
+            case "enabled":
+              nextSettings.enabled = defaultRetentionSettings.enabled;
+              break;
+            case "interval_s":
+              nextSettings.interval_s = defaultRetentionSettings.interval_s;
+              break;
+            case "archived_ttl_days":
+              nextSettings.archived_ttl_days = defaultRetentionSettings.archived_ttl_days;
+              break;
+            case "chat_ttl_days":
+              nextSettings.chat_ttl_days = defaultRetentionSettings.chat_ttl_days;
+              break;
+            case "tree_ttl_days":
+              nextSettings.tree_ttl_days = defaultRetentionSettings.tree_ttl_days;
+              break;
+          }
+          nextSource[key] = "env";
+          return;
+        }
+        switch (key) {
+          case "enabled":
+            nextSettings.enabled = value === true;
+            break;
+          case "interval_s":
+            nextSettings.interval_s = Math.max(0, Math.floor(Number(value)));
+            break;
+          case "archived_ttl_days":
+            nextSettings.archived_ttl_days = Math.max(0, Math.floor(Number(value)));
+            break;
+          case "chat_ttl_days":
+            nextSettings.chat_ttl_days = Math.max(0, Math.floor(Number(value)));
+            break;
+          case "tree_ttl_days":
+            nextSettings.tree_ttl_days = Math.max(0, Math.floor(Number(value)));
+            break;
+        }
+        nextSource[key] = "override";
+      };
+      applyField("enabled", input.enabled);
+      applyField("interval_s", input.interval_s);
+      applyField("archived_ttl_days", input.archived_ttl_days);
+      applyField("chat_ttl_days", input.chat_ttl_days);
+      applyField("tree_ttl_days", input.tree_ttl_days);
+      retentionSettings = nextSettings;
+      retentionSource = nextSource;
+      return Effect.succeed({
+        ok: true,
+        settings: retentionSettings,
+        source: retentionSource,
+      });
+    },
     startWork: (workInput) => {
       const synthetic = synthesizeStartedWork(workInput);
       return Effect.succeed({
