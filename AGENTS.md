@@ -3,7 +3,6 @@
 ## Task Completion Requirements
 
 - `pnpm exec vp check` and `pnpm exec vp run typecheck` must pass before considering tasks completed.
-  - If changing native mobile code, `pnpm exec vp run lint:mobile` must also pass.
 - Use `pnpm exec vp test` for the built-in Vite+ test command and `pnpm exec vp run test` when you specifically need the `test` package script.
 
 ## Local Development
@@ -41,7 +40,7 @@ Long term maintainability is a core priority. If you add new functionality, firs
 - `apps/web`: React/Vite UI. Owns session UX, conversation/event rendering, and client-side state. Connects to the server via WebSocket.
 - `packages/contracts`: Shared effect/Schema schemas and TypeScript contracts for provider events, WebSocket protocol, and model/session types. Keep this package schema-only — no runtime logic.
 - `packages/shared`: Shared runtime utilities consumed by both server and client applications. Uses explicit subpath exports (e.g. `@t3tools/shared/git`) — no barrel index.
-- `packages/client-runtime`: Shared runtime package for sharing client code across web and mobile.
+- `packages/client-runtime`: Shared runtime package for sharing client code across surviving client surfaces.
 
 ## Reference Repos
 

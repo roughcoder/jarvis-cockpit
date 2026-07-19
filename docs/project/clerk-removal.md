@@ -27,7 +27,7 @@ Coinbase wallet integrations out of installs:
 | `@clerk/clerk-js`          | `apps/web` (vite `optimizeDeps`)        |
 | `@clerk/electron`          | `apps/desktop`, `apps/web`              |
 | `@clerk/electron-passkeys` | `apps/desktop` (macOS/Windows passkeys) |
-| `@clerk/expo`              | `apps/mobile`                           |
+| Clerk Expo SDK             | deleted Expo app                        |
 | `@clerk/react`             | `apps/web`                              |
 | `@clerk/shared`            | transitive pin                          |
 
@@ -36,12 +36,12 @@ The `@clerk/clerk-js` entry in `apps/web/vite.config.ts` `optimizeDeps` was the 
 
 ## Environment variables removed
 
-- `T3CODE_CLERK_PUBLISHABLE_KEY` (and its `VITE_` / `EXPO_PUBLIC_` mirrors)
+- `T3CODE_CLERK_PUBLISHABLE_KEY` (and framework-specific mirrors)
 - `T3CODE_CLERK_JWT_TEMPLATE` (and mirrors)
 - `T3CODE_CLERK_CLI_OAUTH_CLIENT_ID`
 - `T3CODE_CLERK_PASSKEY_RP_DOMAINS`
-- `T3CODE_RELAY_URL` — retained in `.env.example` only for the mobile agent-awareness push lane,
-  which still speaks to an externally-hosted relay; the in-repo relay worker is gone.
+- `T3CODE_RELAY_URL` — retained in `.env.example` only for relay-backed paths that may still
+  speak to an externally-hosted relay; the in-repo relay worker is gone.
 
 CI-side, the `production` GitHub environment no longer needs `CLERK_PUBLISHABLE_KEY`,
 `CLERK_JWT_AUDIENCE`, `CLERK_JWT_TEMPLATE`, `CLERK_CLI_OAUTH_CLIENT_ID`, `CLERK_SECRET_KEY`, or
@@ -54,13 +54,12 @@ CI-side, the `production` GitHub environment no longer needs `CLERK_PUBLISHABLE_
 - **Relay environment linking** — linking a local environment to a cloud account, and the managed
   relay session/account state that backed it.
 - **Managed cloud environments** — the hosted tunnel endpoints upstream provisions per account,
-  including relay environment _discovery_ (`client-runtime/src/relay/discovery.ts` and its atoms) and
-  the mobile "connect a cloud environment" list.
+  including relay environment _discovery_ (`client-runtime/src/relay/discovery.ts` and its atoms).
 - **The `/api/connect/*` HTTP API group** — `EnvironmentConnectHttpApi` (link-proof, relay-config,
   link-state, unlink, preferences, mint-credential, `/api/t3-connect/health`) is gone from
   `packages/contracts/src/environmentHttp.ts` and from `EnvironmentHttpApi`.
 - **The `t3 connect` CLI command** and its cloud-link reconciliation on server boot.
-- **The cloud waitlist** enrolment flow (mobile).
+- **The cloud waitlist** enrolment flow.
 - **macOS/Windows passkeys** — passkeys were implemented entirely by `@clerk/electron-passkeys`.
   There is no passkey support without Clerk.
 - **`infra/relay`** — the entire Cloudflare Worker control plane, plus
@@ -92,15 +91,14 @@ excision is intact. Boot the dev server.
 These look like part of the removed lane but are load-bearing elsewhere. **Do not delete them in a
 future cleanup pass without re-checking these consumers.**
 
-| Kept                                                                      | Why                                                                                                                                                                                                                          |
-| ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/contracts/src/relay.ts`                                         | `apps/server/src/relay/AgentAwarenessRelay.ts` imports it; live Jarvis orchestration via `OrchestrationReactor`.                                                                                                             |
-| `packages/client-runtime/src/relay/*`                                     | `apps/mobile/src/features/agent-awareness/*` depends on `ManagedRelay` for push + live activities.                                                                                                                           |
-| `apps/server/src/cloud/config.ts`, `environmentKeys.ts`                   | Consumed by `AgentAwarenessRelay`.                                                                                                                                                                                           |
-| `apps/server/src/cloud/traceRelayRequest.ts`, `relayTracing.ts`           | Consumed by `apps/server/src/http.ts` and `src/auth/http.ts`.                                                                                                                                                                |
-| `packages/shared/src/relayTracing.ts`                                     | Client relay tracing, independent of Clerk.                                                                                                                                                                                  |
-| `apps/mobile/src/features/cloud/{dpop,managedRelayLayer,publicConfig}.ts` | Consumed by mobile agent-awareness and observability; only their Clerk-specific fields were stripped.                                                                                                                        |
-| macOS entitlements + provisioning-profile signing                         | The entitlements plist also carries the hardened-runtime keys Electron needs (`allow-jit`, `allow-unsigned-executable-memory`, `disable-library-validation`). Only the passkey `associated-domains` entitlement was dropped. |
+| Kept                                                            | Why                                                                                                                                                                                                                          |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/contracts/src/relay.ts`                               | `apps/server/src/relay/AgentAwarenessRelay.ts` imports it; live Jarvis orchestration via `OrchestrationReactor`.                                                                                                             |
+| `packages/client-runtime/src/relay/*`                           | Relay-backed client code still imports `ManagedRelay`; revisit only after checking surviving relay consumers.                                                                                                                |
+| `apps/server/src/cloud/config.ts`, `environmentKeys.ts`         | Consumed by `AgentAwarenessRelay`.                                                                                                                                                                                           |
+| `apps/server/src/cloud/traceRelayRequest.ts`, `relayTracing.ts` | Consumed by `apps/server/src/http.ts` and `src/auth/http.ts`.                                                                                                                                                                |
+| `packages/shared/src/relayTracing.ts`                           | Client relay tracing, independent of Clerk.                                                                                                                                                                                  |
+| macOS entitlements + provisioning-profile signing               | The entitlements plist also carries the hardened-runtime keys Electron needs (`allow-jit`, `allow-unsigned-executable-memory`, `disable-library-validation`). Only the passkey `associated-domains` entitlement was dropped. |
 
 ## macOS signing: what changed
 
@@ -123,20 +121,18 @@ needs a real signed macOS build to confirm end to end.
 
 ## Deliberate naming residue: `clerkToken`
 
-`packages/client-runtime/src/relay/managedRelay.ts`, `managedRelayState.ts`, and
-`apps/mobile/src/features/agent-awareness/remoteRegistration.ts` still use the parameter name
-`clerkToken` for what is really just the relay bearer token. This was left alone on purpose: those
-modules survive (mobile agent-awareness needs them), and a ~80-site rename inside files we intend to
-keep merging from upstream would create ongoing conflict noise for a cosmetic gain. `grep -i clerk`
-will therefore still match there, plus one explanatory comment in `connection/resolver.ts`.
+`packages/client-runtime/src/relay/managedRelay.ts` and `managedRelayState.ts` still use the
+parameter name `clerkToken` for what is really just the relay bearer token. This was left alone on
+purpose: those modules survive, and a broad rename inside files we intend to keep merging from
+upstream would create ongoing conflict noise for a cosmetic gain. `grep -i clerk` will therefore
+still match there, plus one explanatory comment in `connection/resolver.ts`.
 
 The `CloudSession` capability that used to carry this token is **gone** — it was removed once relay
 environment discovery was deleted and nothing else consumed it.
 
-The lane is inert regardless. Mobile `remoteRegistration` takes an injected `tokenProvider`, which
-was supplied by the deleted Clerk auth provider and now yields `null`, so every relay call
-short-circuits before sending. That is the intended "collapse to signed-out" behaviour, not an
-oversight.
+The Clerk-specific lane is inert regardless. The deleted Clerk auth provider no longer supplies a
+token, so relay calls that depended on that identity path collapse before sending. That is the
+intended "collapse to signed-out" behaviour, not an oversight.
 
 ## Where upstream merges will conflict
 
@@ -162,7 +158,7 @@ Ranked by how much pain to expect.
    `renderMacEntitlements`, so upstream diffs in that file will not apply cleanly.
 7. **Deleted files** — git will report modify/delete conflicts whenever upstream touches
    `infra/relay/**`, `apps/web/src/cloud/**`, `apps/web/src/components/clerk/**`,
-   `apps/mobile/src/features/cloud/**` (the deleted subset), `apps/desktop/src/app/DesktopClerk.ts`,
+   the deleted Expo app's cloud files, `apps/desktop/src/app/DesktopClerk.ts`,
    `packages/shared/src/relayAuth.ts`, or `docs/cloud/**`. Resolution is almost always `git rm` again.
 
 ## If T3 Connect is ever wanted back
