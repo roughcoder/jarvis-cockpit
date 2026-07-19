@@ -1,17 +1,32 @@
-import type { JarvisWorkerProfile } from "@t3tools/contracts";
+import type {
+  JarvisConversationWorkspace,
+  JarvisProject,
+  JarvisProjectRepository,
+  JarvisWorkerProfile,
+} from "@t3tools/contracts";
 import { memo, useMemo } from "react";
 import {
+  ChevronDownIcon,
   FolderGit2Icon,
   GitBranchIcon,
+  PlusIcon,
   RotateCcwIcon,
   ServerIcon,
   TriangleAlertIcon,
 } from "lucide-react";
 
 import type { StartWorkRoutingSummary } from "../startWork.logic";
+import {
+  type ProjectConversationWorkspaceStaging,
+  setProjectConversationWorkspaceRepoBaseRef,
+  toggleProjectConversationWorkspaceRepo,
+  workspaceRepoNames,
+} from "../projectConversationWorkspace.logic";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import {
   Menu,
+  MenuCheckboxItem,
   MenuGroup,
   MenuGroupLabel,
   MenuItem,
@@ -37,8 +52,8 @@ import {
   workerSupportsEngine,
 } from "./composerJarvisRouting.logic";
 
-type ComposerOverridesStripProps = {
-  compact: boolean;
+/** Native draft surface: where a new session will start. */
+export type ComposerJarvisRoutingStripProps = {
   selectedProject: ComposerJarvisProject | null;
   selectedRepo: ComposerJarvisRepo | null;
   environmentProjects: ReadonlyArray<ComposerJarvisProject>;
@@ -54,8 +69,26 @@ type ComposerOverridesStripProps = {
   onWorkerOverrideChange: (workerId: string | null) => void;
 };
 
+/**
+ * Project ("brain") conversation: which repos are attached and, once provisioned,
+ * where the workspace is running. The engine lives in the footer picker slot
+ * alongside the native model picker, not here.
+ */
+export type ComposerBrainWorkspaceStripProps = {
+  project: Pick<JarvisProject, "repos"> | null;
+  workspace: JarvisConversationWorkspace | null | undefined;
+  staging: ProjectConversationWorkspaceStaging;
+  disabled?: boolean;
+  onStagingChange: (staging: ProjectConversationWorkspaceStaging) => void;
+};
+
+type ComposerOverridesStripProps = { compact: boolean } & (
+  | ({ mode: "jarvis-routing" } & ComposerJarvisRoutingStripProps)
+  | ({ mode: "brain-workspace" } & ComposerBrainWorkspaceStripProps)
+);
+
 type JarvisWorkerRoutingOptionsInput = Pick<
-  ComposerOverridesStripProps,
+  ComposerJarvisRoutingStripProps,
   "defaultWorkerId" | "selectedEngine" | "selectedRepo" | "selectedWorkerOverrideId" | "workers"
 > & {
   readonly workersPending?: boolean;
@@ -113,7 +146,7 @@ function useJarvisWorkerRoutingOptions(input: JarvisWorkerRoutingOptionsInput) {
   };
 }
 
-function ComposerJarvisRoutingControls(props: ComposerOverridesStripProps) {
+function ComposerJarvisRoutingControls(props: ComposerJarvisRoutingStripProps) {
   const { compatibleWorkers, incompatibleWorkers, defaultWorker, workerTriggerLabel } =
     useJarvisWorkerRoutingOptions(props);
 
@@ -307,9 +340,7 @@ function WorkerMenuContent(props: {
   );
 }
 
-export function ComposerJarvisRoutingMenuContent(
-  props: Omit<ComposerOverridesStripProps, "compact">,
-) {
+export function ComposerJarvisRoutingMenuContent(props: ComposerJarvisRoutingStripProps) {
   const { compatibleWorkers, incompatibleWorkers, defaultWorker } =
     useJarvisWorkerRoutingOptions(props);
 
@@ -380,18 +411,191 @@ export function ComposerJarvisRoutingMenuContent(
   );
 }
 
+function ComposerBrainWorkspaceControls(props: ComposerBrainWorkspaceStripProps) {
+  const workspace = props.workspace ?? null;
+  const stagedCount = props.staging.repos.length;
+  const projectRepos = props.project?.repos ?? [];
+  const attachedNames = workspaceRepoNames(workspace);
+
+  if (workspace === null) {
+    return (
+      <>
+        <WorkspaceRepoMenu
+          label="Attach repos"
+          icon="attach"
+          repos={projectRepos}
+          attachedNames={attachedNames}
+          staging={props.staging}
+          disabled={props.disabled}
+          onStagingChange={props.onStagingChange}
+        />
+        <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+          {stagedCount > 0
+            ? `${stagedCount} repo${stagedCount === 1 ? "" : "s"} staged for workspace`
+            : "Planning only - no repo access"}
+        </span>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <WorkspaceLiveSummary workspace={workspace} />
+      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+      <WorkspaceRepoMenu
+        label={stagedCount > 0 ? `Add repo (${stagedCount})` : "Add repo"}
+        icon="add"
+        repos={projectRepos}
+        attachedNames={attachedNames}
+        staging={props.staging}
+        disabled={props.disabled}
+        onStagingChange={props.onStagingChange}
+      />
+    </>
+  );
+}
+
+function WorkspaceRepoMenu(props: {
+  readonly label: string;
+  readonly icon: "attach" | "add";
+  readonly repos: ReadonlyArray<JarvisProjectRepository>;
+  readonly attachedNames: ReadonlySet<string>;
+  readonly staging: ProjectConversationWorkspaceStaging;
+  readonly disabled: boolean | undefined;
+  readonly onStagingChange: (staging: ProjectConversationWorkspaceStaging) => void;
+}) {
+  return (
+    <Menu>
+      <MenuTrigger
+        render={
+          <Button
+            size="sm"
+            variant="ghost"
+            className="min-w-0 max-w-44 shrink justify-start whitespace-nowrap px-2 text-muted-foreground/75 hover:text-foreground/85 sm:px-3"
+            aria-label={props.label}
+            disabled={props.disabled || props.repos.length === 0}
+          />
+        }
+      >
+        {props.icon === "add" ? (
+          <PlusIcon className="size-4 shrink-0" />
+        ) : (
+          <FolderGit2Icon className="size-4 shrink-0" />
+        )}
+        <span className="min-w-0 truncate">{props.label}</span>
+        <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
+      </MenuTrigger>
+      <MenuPopup align="start" side="top" className="min-w-80">
+        <MenuGroup>
+          <MenuGroupLabel>Repositories</MenuGroupLabel>
+          {props.repos.length === 0 ? (
+            <MenuGroupLabel className="max-w-72 normal-case text-muted-foreground">
+              Add repositories to this project before attaching a workspace.
+            </MenuGroupLabel>
+          ) : (
+            props.repos.map((repo) => {
+              const staged = props.staging.repos.find((candidate) => candidate.name === repo.name);
+              const attached =
+                props.attachedNames.has(repo.name) || props.attachedNames.has(repo.remote);
+              const selected = staged !== undefined;
+              return (
+                <div key={`${repo.name}:${repo.remote}`} className="space-y-1">
+                  <MenuCheckboxItem
+                    checked={selected}
+                    disabled={attached && !selected}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      props.onStagingChange(
+                        toggleProjectConversationWorkspaceRepo(props.staging, repo.name),
+                      );
+                    }}
+                  >
+                    <span className="min-w-0 flex items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate">{repoLabel(repo)}</span>
+                      {repo.default ? (
+                        <span className="text-[11px] text-muted-foreground">default</span>
+                      ) : null}
+                      {attached ? (
+                        <span className="text-[11px] text-muted-foreground">attached</span>
+                      ) : null}
+                    </span>
+                  </MenuCheckboxItem>
+                  {selected ? (
+                    <div
+                      className="px-2 pb-2 ps-8"
+                      onClick={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => event.stopPropagation()}
+                    >
+                      <Input
+                        size="sm"
+                        value={staged.baseRef}
+                        placeholder="origin/main"
+                        aria-label={`${repo.name} base ref`}
+                        onChange={(event) =>
+                          props.onStagingChange(
+                            setProjectConversationWorkspaceRepoBaseRef(
+                              props.staging,
+                              repo.name,
+                              event.currentTarget.value,
+                            ),
+                          )
+                        }
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })
+          )}
+        </MenuGroup>
+      </MenuPopup>
+    </Menu>
+  );
+}
+
+function WorkspaceLiveSummary({ workspace }: { readonly workspace: JarvisConversationWorkspace }) {
+  const worker = workspace.worker_id?.trim() || "auto worker";
+  const worktreeCount = workspace.worktrees.length;
+  return (
+    <div className="flex min-w-0 flex-1 items-center gap-2 text-[11px] text-muted-foreground">
+      <span className="flex min-w-0 items-center gap-1 truncate">
+        <ServerIcon className="size-3.5 shrink-0" />
+        <span className="truncate">{worker}</span>
+      </span>
+      <span className="flex shrink-0 items-center gap-1">
+        <GitBranchIcon className="size-3.5" />
+        {worktreeCount} worktree{worktreeCount === 1 ? "" : "s"}
+      </span>
+      {workspace.status ? <span className="truncate">{workspace.status}</span> : null}
+      {workspace.provision_phase ? (
+        <span className="truncate">{workspace.provision_phase}</span>
+      ) : null}
+    </div>
+  );
+}
+
+function repoLabel(repo: JarvisProjectRepository): string {
+  if (repo.remote.trim().length === 0 || repo.remote === repo.name) {
+    return repo.name;
+  }
+  return `${repo.name} - ${repo.remote}`;
+}
+
 export const ComposerOverridesStrip = memo(function ComposerOverridesStrip(
   props: ComposerOverridesStripProps,
 ) {
   return (
     <div
       data-chat-composer-overrides-strip="true"
+      data-chat-composer-overrides-strip-mode={props.mode}
       className={cn(
-        "relative z-0 mx-2 mt-1.5 rounded-[16px] border border-border/55 bg-muted/45 px-2.5 py-2 shadow-sm backdrop-blur",
+        "relative z-0 mx-2 mb-1.5 rounded-[16px] border border-border/55 bg-muted/45 px-2.5 py-2 shadow-sm backdrop-blur",
         props.compact ? "flex items-center gap-2" : "flex min-w-0 items-center gap-1",
       )}
     >
-      {props.compact ? (
+      {props.mode === "brain-workspace" ? (
+        <ComposerBrainWorkspaceControls {...props} />
+      ) : props.compact ? (
         <>
           <Menu>
             <MenuTrigger

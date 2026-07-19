@@ -73,7 +73,11 @@ import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
-import { ComposerOverridesStrip } from "../composer/ComposerOverridesStrip";
+import {
+  type ComposerBrainWorkspaceStripProps,
+  ComposerOverridesStrip,
+} from "../composer/ComposerOverridesStrip";
+import { ComposerWorkspaceEnginePicker } from "../composer/ComposerWorkspaceEnginePicker";
 import type { ComposerCapabilities } from "../composer/composerCapabilities";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
@@ -572,7 +576,13 @@ export interface ChatComposerProps {
   resolvedTheme: "light" | "dark";
   settings: UnifiedSettings;
   keybindings: ResolvedKeybindingsConfig;
-  belowComposer?: React.ReactNode;
+  /**
+   * Jarvis project-conversation workspace state. Required when
+   * `capabilities.contextStrip` is `brain-workspace` or `capabilities.picker`
+   * is `workspace-engine` — it backs the repo/worker context chips above the
+   * input and the engine picker in the footer.
+   */
+  brainWorkspace?: ComposerBrainWorkspaceStripProps;
   idlePlaceholder?: string;
   terminalOpen: boolean;
   gitCwd: string | null;
@@ -665,7 +675,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     resolvedTheme,
     settings,
     keybindings,
-    belowComposer,
+    brainWorkspace,
     idlePlaceholder,
     terminalOpen,
     gitCwd,
@@ -945,7 +955,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Jarvis routing context
   // ------------------------------------------------------------------
-  const canRouteJarvisStart = capabilities.jarvisRouting;
+  const canRouteJarvisStart = capabilities.contextStrip === "jarvis-routing";
   const jarvisProjectsQuery = useEnvironmentQuery(
     canRouteJarvisStart
       ? serverEnvironment.jarvisProjects({ environmentId, input: { includeArchived: false } })
@@ -1422,7 +1432,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
   const showRuntimeModeControl = capabilities.approvalControl;
-  const showEngineControl = capabilities.engineControl;
+  const showEngineControl = capabilities.picker === "provider-model";
+  const showWorkspaceEnginePicker =
+    capabilities.picker === "workspace-engine" && brainWorkspace !== undefined;
+  const showBrainWorkspaceStrip =
+    capabilities.contextStrip === "brain-workspace" && brainWorkspace !== undefined;
   const showComposerInteractionModeToggle =
     capabilities.interactionControl && composerProviderControls.showInteractionModeToggle;
   const showPlanSidebarToggle =
@@ -1466,15 +1480,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return idlePlaceholder;
     }
     if (capabilities.mentions && capabilities.slashCommands) {
-      return "Ask anything, @tag files/folders, $use skills, or / for commands";
+      return "Do anything — @tag files/folders, $use skills, or / for commands";
     }
     if (capabilities.mentions) {
-      return "Ask anything, or @tag files/folders";
+      return "Do anything — @tag files/folders";
     }
     if (capabilities.slashCommands) {
-      return "Ask anything, $use skills, or / for commands";
+      return "Do anything — $use skills, or / for commands";
     }
-    return "Ask anything";
+    return "Do anything";
   }, [capabilities.mentions, capabilities.slashCommands, idlePlaceholder]);
   const composerDisabled = composerDisabledReason !== null;
 
@@ -2522,6 +2536,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       className="mx-auto w-full min-w-0 max-w-3xl"
       data-chat-composer-form="true"
     >
+      {/* Context chips: repo / where-it-runs / branch, above the input box. */}
+      {!isComposerCollapsedMobile && !activePendingApproval ? (
+        canRouteJarvisStart ? (
+          <ComposerOverridesStrip
+            mode="jarvis-routing"
+            compact={isComposerFooterCompact}
+            selectedProject={selectedJarvisProject}
+            selectedRepo={selectedJarvisRepoEntry}
+            environmentProjects={environmentProjects}
+            workers={jarvisWorkers}
+            workersPending={jarvisSnapshotQuery.isPending}
+            selectedEngine={selectedJarvisEngine}
+            selectedWorkerOverrideId={selectedWorkerOverrideIdForDispatch}
+            defaultWorkerId={jarvisDefaultWorkerId}
+            routingSummary={jarvisRoutingSummary}
+            compatibilityWarning={jarvisCompatibilityWarning}
+            onProjectSelect={handleJarvisProjectSelect}
+            onRepoSelect={handleJarvisRepoSelect}
+            onWorkerOverrideChange={handleJarvisWorkerOverrideChange}
+          />
+        ) : showBrainWorkspaceStrip ? (
+          <ComposerOverridesStrip
+            mode="brain-workspace"
+            compact={isComposerFooterCompact}
+            {...brainWorkspace}
+          />
+        ) : null
+      ) : null}
       <div
         className={cn(
           "group rounded-[22px] p-px transition-colors duration-200",
@@ -2956,32 +2998,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 )}
               >
                 <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                  {showEngineControl ? (
-                    <ProviderModelPicker
-                      compact={isComposerFooterCompact}
-                      activeInstanceId={selectedInstanceId}
-                      model={selectedModelForPickerWithCustomFallback}
-                      lockedProvider={lockedProvider}
-                      lockedContinuationGroupKey={lockedContinuationGroupKey}
-                      instanceEntries={providerInstanceEntries}
-                      keybindings={keybindings}
-                      modelOptionsByInstance={modelOptionsByInstance}
-                      terminalOpen={terminalOpen}
-                      open={isComposerModelPickerOpen}
-                      {...(composerProviderState.modelPickerIconClassName
-                        ? {
-                            activeProviderIconClassName:
-                              composerProviderState.modelPickerIconClassName,
-                          }
-                        : {})}
-                      onOpenChange={(open) => {
-                        setIsComposerModelPickerOpen(open);
-                      }}
-                      getModelDisabledReason={getModelDisabledReason}
-                      onInstanceModelChange={onProviderModelSelect}
-                    />
-                  ) : null}
-
                   {isComposerFooterCompact && showCompactComposerControlsMenu ? (
                     <CompactComposerControlsMenu
                       activePlan={showPlanSidebarToggle}
@@ -3031,6 +3047,43 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }
                   className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
                 >
+                  {showEngineControl ? (
+                    <ProviderModelPicker
+                      compact={isComposerFooterCompact}
+                      activeInstanceId={selectedInstanceId}
+                      model={selectedModelForPickerWithCustomFallback}
+                      lockedProvider={lockedProvider}
+                      lockedContinuationGroupKey={lockedContinuationGroupKey}
+                      instanceEntries={providerInstanceEntries}
+                      keybindings={keybindings}
+                      modelOptionsByInstance={modelOptionsByInstance}
+                      terminalOpen={terminalOpen}
+                      open={isComposerModelPickerOpen}
+                      {...(composerProviderState.modelPickerIconClassName
+                        ? {
+                            activeProviderIconClassName:
+                              composerProviderState.modelPickerIconClassName,
+                          }
+                        : {})}
+                      onOpenChange={(open) => {
+                        setIsComposerModelPickerOpen(open);
+                      }}
+                      getModelDisabledReason={getModelDisabledReason}
+                      onInstanceModelChange={onProviderModelSelect}
+                    />
+                  ) : null}
+
+                  {showWorkspaceEnginePicker ? (
+                    <ComposerWorkspaceEnginePicker
+                      compact={isComposerFooterCompact}
+                      staging={brainWorkspace.staging}
+                      {...(brainWorkspace.disabled === undefined
+                        ? {}
+                        : { disabled: brainWorkspace.disabled })}
+                      onStagingChange={brainWorkspace.onStagingChange}
+                    />
+                  ) : null}
+
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     activeContextWindow={activeContextWindow}
@@ -3057,25 +3110,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             </>
           )}
         </div>
-        {canRouteJarvisStart && !isComposerCollapsedMobile && !activePendingApproval ? (
-          <ComposerOverridesStrip
-            compact={isComposerFooterCompact}
-            selectedProject={selectedJarvisProject}
-            selectedRepo={selectedJarvisRepoEntry}
-            environmentProjects={environmentProjects}
-            workers={jarvisWorkers}
-            workersPending={jarvisSnapshotQuery.isPending}
-            selectedEngine={selectedJarvisEngine}
-            selectedWorkerOverrideId={selectedWorkerOverrideIdForDispatch}
-            defaultWorkerId={jarvisDefaultWorkerId}
-            routingSummary={jarvisRoutingSummary}
-            compatibilityWarning={jarvisCompatibilityWarning}
-            onProjectSelect={handleJarvisProjectSelect}
-            onRepoSelect={handleJarvisRepoSelect}
-            onWorkerOverrideChange={handleJarvisWorkerOverrideChange}
-          />
-        ) : null}
-        {belowComposer}
       </div>
     </form>
   );
