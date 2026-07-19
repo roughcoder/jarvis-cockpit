@@ -2,12 +2,17 @@ import { memo } from "react";
 import { ChevronDownIcon, CpuIcon, ServerIcon } from "lucide-react";
 
 import {
+  type ProjectConversationWorkspaceEnginePreference,
   type ProjectConversationWorkspaceEngineOption,
   type ProjectConversationWorkspaceStaging,
+  resolveWorkspaceEngineEffort,
   resolveWorkspaceEngineModel,
   resolveWorkspaceEngineOption,
+  resolveWorkspaceEngineSpeed,
+  setProjectConversationWorkspaceEffort,
   setProjectConversationWorkspaceEngine,
   setProjectConversationWorkspaceModel,
+  setProjectConversationWorkspaceSpeed,
 } from "../projectConversationWorkspace.logic";
 import { Button } from "../ui/button";
 import {
@@ -44,8 +49,20 @@ export const ComposerWorkspaceEnginePicker = memo(function ComposerWorkspaceEngi
     engine: props.staging.engine,
     model: props.staging.model,
   });
+  const selectedEffort = resolveWorkspaceEngineEffort({
+    engineOptions: props.engineOptions,
+    engine: props.staging.engine,
+    effort: props.staging.effort,
+  });
+  const selectedSpeed = resolveWorkspaceEngineSpeed({
+    engineOptions: props.engineOptions,
+    engine: props.staging.engine,
+    speed: props.staging.speed,
+  });
+  const showEffortRow = selectedEngine.efforts.length > 0;
+  const showSpeedRow = selectedEngine.speeds.length > 0;
   const triggerLabel = selectedModel
-    ? `${selectedEngine.label} · ${selectedModel.label}`
+    ? `${selectedEngine.label} · ${selectedModel.label}${selectedEffort ? ` ${selectedEffort.label}` : ""}`
     : selectedEngine.label;
 
   return (
@@ -68,8 +85,17 @@ export const ComposerWorkspaceEnginePicker = memo(function ComposerWorkspaceEngi
         <span className="flex min-w-0 flex-1 items-center gap-2">
           <ServerIcon aria-hidden="true" className="size-4 shrink-0" />
           <Tooltip>
-            <TooltipTrigger render={<span className="min-w-0 flex-1 overflow-hidden truncate" />}>
-              {triggerLabel}
+            <TooltipTrigger
+              render={<span className="flex min-w-0 flex-1 items-baseline gap-1 overflow-hidden" />}
+            >
+              <span className="min-w-0 truncate">
+                {selectedModel
+                  ? `${selectedEngine.label} · ${selectedModel.label}`
+                  : selectedEngine.label}
+              </span>
+              {selectedEffort ? (
+                <span className="shrink-0 text-muted-foreground/60">{selectedEffort.label}</span>
+              ) : null}
             </TooltipTrigger>
             <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
           </Tooltip>
@@ -84,7 +110,9 @@ export const ComposerWorkspaceEnginePicker = memo(function ComposerWorkspaceEngi
           <MenuRadioGroup
             value={props.staging.engine}
             onValueChange={(value) =>
-              props.onStagingChange(setProjectConversationWorkspaceEngine(props.staging, value))
+              props.onStagingChange(
+                setProjectConversationWorkspaceEngine(props.staging, value, props.engineOptions),
+              )
             }
           >
             {props.engineOptions.map((option) => (
@@ -101,16 +129,10 @@ export const ComposerWorkspaceEnginePicker = memo(function ComposerWorkspaceEngi
         </MenuGroup>
         <MenuSeparator />
         <MenuGroup>
-          <MenuGroupLabel>Model</MenuGroupLabel>
           <MenuSub>
             <MenuSubTrigger className="py-2">
               <CpuIcon aria-hidden="true" className="size-4" />
-              <div className="grid min-w-0 gap-0.5">
-                <span className="font-medium text-foreground">{selectedEngine.label}</span>
-                <span className="truncate text-muted-foreground text-xs leading-4">
-                  {selectedModel?.label ?? "No model catalog reported"}
-                </span>
-              </div>
+              <PickerSubmenuRow label="Model" value={selectedModel?.label ?? "No catalog"} />
             </MenuSubTrigger>
             <MenuSubPopup className="min-w-64">
               <MenuGroup>
@@ -147,8 +169,90 @@ export const ComposerWorkspaceEnginePicker = memo(function ComposerWorkspaceEngi
               </MenuGroup>
             </MenuSubPopup>
           </MenuSub>
+          {showEffortRow ? (
+            <EnginePreferenceSubmenu
+              label="Effort"
+              groupLabel={`${selectedEngine.label} efforts`}
+              value={selectedEffort?.label ?? "Default"}
+              options={selectedEngine.efforts}
+              selectedId={selectedEffort?.id ?? ""}
+              defaultId={selectedEngine.defaultEffort}
+              onValueChange={(value) =>
+                props.onStagingChange(setProjectConversationWorkspaceEffort(props.staging, value))
+              }
+            />
+          ) : null}
+          {showSpeedRow ? (
+            <EnginePreferenceSubmenu
+              label="Speed"
+              groupLabel={`${selectedEngine.label} speeds`}
+              value={selectedSpeed?.label ?? "Default"}
+              options={selectedEngine.speeds}
+              selectedId={selectedSpeed?.id ?? ""}
+              defaultId={selectedEngine.defaultSpeed}
+              onValueChange={(value) =>
+                props.onStagingChange(setProjectConversationWorkspaceSpeed(props.staging, value))
+              }
+            />
+          ) : null}
         </MenuGroup>
       </MenuPopup>
     </Menu>
   );
 });
+
+function PickerSubmenuRow(props: { readonly label: string; readonly value: string }) {
+  return (
+    <div className="flex min-w-0 flex-1 items-center justify-between gap-6">
+      <span className="font-medium text-foreground">{props.label}</span>
+      <span className="min-w-0 truncate text-muted-foreground text-sm">{props.value}</span>
+    </div>
+  );
+}
+
+function EnginePreferenceSubmenu(props: {
+  readonly label: string;
+  readonly groupLabel: string;
+  readonly value: string;
+  readonly options: ReadonlyArray<ProjectConversationWorkspaceEnginePreference>;
+  readonly selectedId: string;
+  readonly defaultId: string | null;
+  readonly onValueChange: (value: string) => void;
+}) {
+  return (
+    <MenuSub>
+      <MenuSubTrigger className="py-2">
+        <CpuIcon aria-hidden="true" className="size-4" />
+        <PickerSubmenuRow label={props.label} value={props.value} />
+      </MenuSubTrigger>
+      <MenuSubPopup className="min-w-64">
+        <MenuGroup>
+          <MenuGroupLabel>{props.groupLabel}</MenuGroupLabel>
+          <MenuRadioGroup value={props.selectedId} onValueChange={props.onValueChange}>
+            {props.options.map((option) => (
+              <MenuRadioItem key={option.id} value={option.id} className="py-2">
+                <div className="grid min-w-0 gap-0.5">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+                      {option.label}
+                    </span>
+                    {option.id === props.defaultId ? (
+                      <span className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-muted-foreground text-[10px] uppercase leading-none">
+                        Default
+                      </span>
+                    ) : null}
+                  </div>
+                  {option.description ? (
+                    <span className="text-muted-foreground text-xs leading-4">
+                      {option.description}
+                    </span>
+                  ) : null}
+                </div>
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+        </MenuGroup>
+      </MenuSubPopup>
+    </MenuSub>
+  );
+}

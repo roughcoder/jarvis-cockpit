@@ -2,15 +2,19 @@ import { describe, expect, it } from "vite-plus/test";
 import { JarvisWorkerId } from "@t3tools/contracts";
 
 import {
+  buildTurnEffortInput,
   buildTurnModelInput,
+  buildTurnSpeedInput,
   buildTurnWorkspaceInput,
   clearProjectConversationWorkspaceRepos,
   createProjectConversationWorkspaceStaging,
   deriveWorkspaceProvisionSteps,
   projectConversationWorkspaceMatchesSubmission,
   setProjectConversationWorkspaceModel,
+  setProjectConversationWorkspaceEffort,
   setProjectConversationWorkspaceEngine,
   setProjectConversationWorkspaceRepoBaseRef,
+  setProjectConversationWorkspaceSpeed,
   shouldPollProjectConversationWorkspace,
   toggleProjectConversationWorkspaceRepo,
   workspaceEngineOptionsFromWorkers,
@@ -64,6 +68,8 @@ describe("project conversation workspace staging", () => {
     expect(clearProjectConversationWorkspaceRepos(staging)).toEqual({
       engine: "claude",
       model: null,
+      effort: null,
+      speed: null,
       repos: [],
     });
   });
@@ -76,6 +82,16 @@ describe("project conversation workspace staging", () => {
         description: "Codex",
         models: [{ id: "gpt-5.5", label: "GPT-5.5" }],
         defaultModel: "gpt-5.5",
+        efforts: [
+          { id: "low", label: "Light" },
+          { id: "high", label: "High" },
+        ],
+        defaultEffort: "high",
+        speeds: [
+          { id: "standard", label: "Standard", description: "Default speed" },
+          { id: "priority", label: "Fast", description: "1.5x speed, more usage" },
+        ],
+        defaultSpeed: "standard",
       },
       {
         value: "claude" as const,
@@ -86,18 +102,36 @@ describe("project conversation workspace staging", () => {
           { id: "claude-sonnet-4-7", label: "Claude Sonnet 4.7" },
         ],
         defaultModel: "claude-opus-4-7",
+        efforts: [
+          { id: "medium", label: "Medium" },
+          { id: "xhigh", label: "Extra High" },
+        ],
+        defaultEffort: "xhigh",
+        speeds: [],
+        defaultSpeed: null,
       },
     ];
-    let staging = createProjectConversationWorkspaceStaging("codex", "gpt-5.5");
-    staging = setProjectConversationWorkspaceEngine(staging, "claude");
+    let staging = createProjectConversationWorkspaceStaging("codex", "gpt-5.5", "high", "priority");
+    staging = setProjectConversationWorkspaceEngine(staging, "claude", engineOptions);
 
-    expect(staging).toMatchObject({ engine: "claude", model: null });
+    expect(staging).toMatchObject({
+      engine: "claude",
+      model: "claude-opus-4-7",
+      effort: "xhigh",
+      speed: null,
+    });
     expect(buildTurnModelInput(staging, "codex", "gpt-5.5", engineOptions)).toBe("claude-opus-4-7");
+    expect(buildTurnEffortInput(staging, "codex", "high", engineOptions)).toBe("xhigh");
+    expect(buildTurnSpeedInput(staging, "codex", "priority", engineOptions)).toBeUndefined();
 
     staging = setProjectConversationWorkspaceModel(staging, "claude-sonnet-4-7");
+    staging = setProjectConversationWorkspaceEffort(staging, "medium");
+    staging = setProjectConversationWorkspaceSpeed(staging, "priority");
     expect(buildTurnModelInput(staging, "claude", "claude-opus-4-7", engineOptions)).toBe(
       "claude-sonnet-4-7",
     );
+    expect(buildTurnEffortInput(staging, "claude", "xhigh", engineOptions)).toBe("medium");
+    expect(buildTurnSpeedInput(staging, "claude", null, engineOptions)).toBeUndefined();
   });
 
   it("builds engine model options from worker catalogs", () => {
@@ -124,6 +158,17 @@ describe("project conversation workspace staging", () => {
             },
             models: [{ id: "gpt-5.5", label: "GPT-5.5" }],
             default_model: "gpt-5.5",
+            efforts: [
+              { id: "high", label: "High" },
+              {
+                id: "xhigh",
+                label: "Extra High",
+                description: "Consumes usage limits faster",
+              },
+            ],
+            default_effort: "high",
+            speeds: [{ id: "standard", label: "Standard", description: "Default speed" }],
+            default_speed: "standard",
           },
         ],
         capacity: { max_sessions: 1, active_sessions: 0, queued_sessions: 0 },
@@ -136,6 +181,19 @@ describe("project conversation workspace staging", () => {
     expect(options.find((option) => option.value === "codex")?.models).toEqual([
       { id: "gpt-5.5", label: "GPT-5.5" },
     ]);
+    expect(options.find((option) => option.value === "codex")?.efforts).toEqual([
+      { id: "high", label: "High" },
+      {
+        id: "xhigh",
+        label: "Extra High",
+        description: "Consumes usage limits faster",
+      },
+    ]);
+    expect(options.find((option) => option.value === "codex")?.defaultEffort).toBe("high");
+    expect(options.find((option) => option.value === "codex")?.speeds).toEqual([
+      { id: "standard", label: "Standard", description: "Default speed" },
+    ]);
+    expect(options.find((option) => option.value === "codex")?.defaultSpeed).toBe("standard");
   });
 
   it("clears staged workspace only when it still matches the submitted snapshot", () => {

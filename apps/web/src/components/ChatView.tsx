@@ -9,6 +9,7 @@ import {
   type ProjectId,
   type ProviderApprovalDecision,
   ProviderInstanceId,
+  type ProviderOptionSelection,
   type ServerProvider,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
@@ -34,6 +35,7 @@ import {
 import {
   applyClaudePromptEffortPrefix,
   createModelSelection,
+  getModelSelectionStringOptionValue,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
@@ -213,7 +215,9 @@ import {
   threadComposerCapabilities,
 } from "./composer/composerCapabilities";
 import {
+  buildTurnEffortInput,
   buildTurnModelInput,
+  buildTurnSpeedInput,
   createProjectConversationWorkspaceStaging,
   normalizeWorkspaceEngineOrNull,
   syncProjectConversationWorkspaceSelection,
@@ -348,6 +352,30 @@ function formatOutgoingPrompt(params: {
   const caps = getProviderModelCapabilities(params.models, params.model, params.provider);
   const promptEffort = resolvePromptInjectedEffort(caps, params.effort);
   return applyClaudePromptEffortPrefix(params.text, promptEffort);
+}
+
+const JARVIS_EFFORT_MODEL_OPTION_ID = "jarvisEffort";
+const JARVIS_SPEED_MODEL_OPTION_ID = "jarvisSpeed";
+
+function withJarvisTurnOptions(
+  selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+  input: {
+    readonly effort: string | undefined;
+    readonly speed: string | undefined;
+  },
+): ReadonlyArray<ProviderOptionSelection> | undefined {
+  const next = (selections ?? []).filter(
+    (selection) =>
+      selection.id !== JARVIS_EFFORT_MODEL_OPTION_ID &&
+      selection.id !== JARVIS_SPEED_MODEL_OPTION_ID,
+  );
+  if (input.effort !== undefined) {
+    next.push({ id: JARVIS_EFFORT_MODEL_OPTION_ID, value: input.effort });
+  }
+  if (input.speed !== undefined) {
+    next.push({ id: JARVIS_SPEED_MODEL_OPTION_ID, value: input.speed });
+  }
+  return next.length > 0 ? next : undefined;
 }
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
@@ -1735,12 +1763,21 @@ function ChatViewContent(props: StandardChatViewProps) {
         {
           engine: currentJarvisWorkerEngine,
           model: activeThread?.modelSelection.model,
+          effort: getModelSelectionStringOptionValue(
+            activeThread?.modelSelection,
+            JARVIS_EFFORT_MODEL_OPTION_ID,
+          ),
+          speed: getModelSelectionStringOptionValue(
+            activeThread?.modelSelection,
+            JARVIS_SPEED_MODEL_OPTION_ID,
+          ),
         },
       ),
     }));
   }, [
     activeIsJarvisWorkerThread,
     activeThread?.modelSelection.model,
+    activeThread?.modelSelection,
     currentJarvisWorkerEngine,
     jarvisWorkerWorkspaceStagingKey,
   ]);
@@ -1755,9 +1792,35 @@ function ChatViewContent(props: StandardChatViewProps) {
         activeThread.modelSelection.model,
         jarvisWorkerWorkspaceEngineOptions,
       );
-      return stagedModel === undefined
-        ? baseSelection
-        : createModelSelection(baseSelection.instanceId, stagedModel, baseSelection.options);
+      const stagedEffort = buildTurnEffortInput(
+        jarvisWorkerWorkspaceStaging,
+        currentJarvisWorkerEngine,
+        getModelSelectionStringOptionValue(
+          activeThread.modelSelection,
+          JARVIS_EFFORT_MODEL_OPTION_ID,
+        ),
+        jarvisWorkerWorkspaceEngineOptions,
+      );
+      const stagedSpeed = buildTurnSpeedInput(
+        jarvisWorkerWorkspaceStaging,
+        currentJarvisWorkerEngine,
+        getModelSelectionStringOptionValue(
+          activeThread.modelSelection,
+          JARVIS_SPEED_MODEL_OPTION_ID,
+        ),
+        jarvisWorkerWorkspaceEngineOptions,
+      );
+      if (stagedModel === undefined && stagedEffort === undefined && stagedSpeed === undefined) {
+        return baseSelection;
+      }
+      return createModelSelection(
+        baseSelection.instanceId,
+        stagedModel ?? baseSelection.model,
+        withJarvisTurnOptions(baseSelection.options, {
+          effort: stagedEffort,
+          speed: stagedSpeed,
+        }),
+      );
     },
     [
       activeIsJarvisWorkerThread,

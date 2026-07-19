@@ -399,7 +399,9 @@ it.effect("fixture client records project conversation workspace escalation", ()
 
     yield* client.sendProjectThreadTurn("jarvis-cockpit", thread.thread_id, {
       text: "Inspect runtime.",
-      model: "gpt-5.6",
+      model: "gpt-5.6-sol",
+      effort: "xhigh",
+      speed: "priority",
       idempotency_key: "fixture-workspace-escalation",
       workspace: {
         repos: [{ name: "runtime", base_ref: "origin/main" }],
@@ -409,7 +411,9 @@ it.effect("fixture client records project conversation workspace escalation", ()
     const detail = yield* client.getProjectThread("jarvis-cockpit", thread.thread_id);
 
     assert.strictEqual(detail.workspace?.engine, "codex");
-    assert.strictEqual(detail.model, "gpt-5.6");
+    assert.strictEqual(detail.model, "gpt-5.6-sol");
+    assert.strictEqual(detail.effort, "xhigh");
+    assert.strictEqual(detail.speed, "priority");
     assert.strictEqual(detail.workspace?.worktrees[0]?.name, "runtime");
     assert.strictEqual(detail.workspace?.worktrees[0]?.base_ref, "origin/main");
   }),
@@ -762,6 +766,8 @@ it.effect("cockpit client decodes JSON project thread turn responses", () =>
     const result = yield* client.sendProjectThreadTurn("dogfood", "thread-1", {
       text: "What changed?",
       model: "gpt-5.6",
+      effort: "high",
+      speed: "standard",
       idempotency_key: "turn-1",
       workspace: {
         repos: [{ name: "runtime", base_ref: "origin/main" }],
@@ -775,6 +781,8 @@ it.effect("cockpit client decodes JSON project thread turn responses", () =>
     assert.deepStrictEqual(requests[0]?.body, {
       text: "What changed?",
       model: "gpt-5.6",
+      effort: "high",
+      speed: "standard",
       idempotency_key: "turn-1",
       workspace: {
         repos: [{ name: "runtime", base_ref: "origin/main" }],

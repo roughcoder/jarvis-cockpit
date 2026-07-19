@@ -200,10 +200,21 @@ export const JarvisEngineModel = Schema.Struct({
 });
 export type JarvisEngineModel = typeof JarvisEngineModel.Type;
 
+export const JarvisEngineOption = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  description: Schema.optional(TrimmedNonEmptyString),
+});
+export type JarvisEngineOption = typeof JarvisEngineOption.Type;
+
 const JarvisCapabilitySupportWithEngineCatalog = Schema.Struct({
   ...JarvisCapabilitySupportFields,
   models: Schema.optionalKey(Schema.Array(JarvisEngineModel)),
   default_model: OptionalPossiblyEmptyPublicString,
+  efforts: Schema.optionalKey(Schema.Array(JarvisEngineOption)),
+  default_effort: OptionalPossiblyEmptyPublicString,
+  speeds: Schema.optionalKey(Schema.Array(JarvisEngineOption)),
+  default_speed: OptionalPossiblyEmptyPublicString,
 });
 
 const CanonicalJarvisEngineCatalogFields = {
@@ -214,12 +225,22 @@ const CanonicalJarvisEngineCatalogFields = {
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   default_model: OptionalPossiblyEmptyPublicString,
+  efforts: Schema.optionalKey(Schema.Array(JarvisEngineOption)).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  default_effort: OptionalPossiblyEmptyPublicString,
+  speeds: Schema.optionalKey(Schema.Array(JarvisEngineOption)).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  default_speed: OptionalPossiblyEmptyPublicString,
 } as const;
 
 const JarvisEngineCatalogWireFields = {
   ...CanonicalJarvisEngineCatalogFields,
   supports: JarvisCapabilitySupportWithEngineCatalog,
   models: Schema.optionalKey(Schema.Array(JarvisEngineModel)),
+  efforts: Schema.optionalKey(Schema.Array(JarvisEngineOption)),
+  speeds: Schema.optionalKey(Schema.Array(JarvisEngineOption)),
 } as const;
 
 const hasOwn = (value: object, key: string): boolean =>
@@ -264,31 +285,57 @@ function normalizeJarvisEngineCatalog<
     readonly supports: LooseJarvisCapabilitySupport & {
       readonly models?: ReadonlyArray<JarvisEngineModel> | undefined;
       readonly default_model?: string | null | undefined;
+      readonly efforts?: ReadonlyArray<JarvisEngineOption> | undefined;
+      readonly default_effort?: string | null | undefined;
+      readonly speeds?: ReadonlyArray<JarvisEngineOption> | undefined;
+      readonly default_speed?: string | null | undefined;
     };
     readonly models?: ReadonlyArray<JarvisEngineModel> | undefined;
     readonly default_model?: string | null | undefined;
+    readonly efforts?: ReadonlyArray<JarvisEngineOption> | undefined;
+    readonly default_effort?: string | null | undefined;
+    readonly speeds?: ReadonlyArray<JarvisEngineOption> | undefined;
+    readonly default_speed?: string | null | undefined;
   },
 >(engine: Engine) {
   const hasTopLevelModels = hasOwn(engine, "models");
   const hasTopLevelDefaultModel = hasOwn(engine, "default_model");
+  const hasTopLevelEfforts = hasOwn(engine, "efforts");
+  const hasTopLevelDefaultEffort = hasOwn(engine, "default_effort");
+  const hasTopLevelSpeeds = hasOwn(engine, "speeds");
+  const hasTopLevelDefaultSpeed = hasOwn(engine, "default_speed");
   const {
     models: supportsModels,
     default_model: supportsDefaultModel,
+    efforts: supportsEfforts,
+    default_effort: supportsDefaultEffort,
+    speeds: supportsSpeeds,
+    default_speed: supportsDefaultSpeed,
     ...supports
   } = engine.supports;
   const {
     supports: _rawSupports,
     models: topLevelModels,
     default_model: topLevelDefaultModel,
+    efforts: topLevelEfforts,
+    default_effort: topLevelDefaultEffort,
+    speeds: topLevelSpeeds,
+    default_speed: topLevelDefaultSpeed,
     ...rest
   } = engine;
   const defaultModel = hasTopLevelDefaultModel ? topLevelDefaultModel : supportsDefaultModel;
+  const defaultEffort = hasTopLevelDefaultEffort ? topLevelDefaultEffort : supportsDefaultEffort;
+  const defaultSpeed = hasTopLevelDefaultSpeed ? topLevelDefaultSpeed : supportsDefaultSpeed;
 
   return {
     ...rest,
     supports: normalizeJarvisCapabilitySupport(supports),
     models: hasTopLevelModels ? (topLevelModels ?? []) : (supportsModels ?? []),
     ...(defaultModel !== undefined ? { default_model: defaultModel } : {}),
+    efforts: hasTopLevelEfforts ? (topLevelEfforts ?? []) : (supportsEfforts ?? []),
+    ...(defaultEffort !== undefined ? { default_effort: defaultEffort } : {}),
+    speeds: hasTopLevelSpeeds ? (topLevelSpeeds ?? []) : (supportsSpeeds ?? []),
+    ...(defaultSpeed !== undefined ? { default_speed: defaultSpeed } : {}),
   };
 }
 
@@ -856,6 +903,8 @@ export const JarvisProjectThread = Schema.Struct({
   // literals and fall back to neutral. (Same forward-compat pattern as JarvisSessionEventType.)
   engine: OptionalPossiblyEmptyPublicString,
   model: OptionalPossiblyEmptyPublicString,
+  effort: OptionalPossiblyEmptyPublicString,
+  speed: OptionalPossiblyEmptyPublicString,
   worker_id: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   host: OptionalPossiblyEmptyPublicString,
   status: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -995,6 +1044,8 @@ export type JarvisTurnAttachment = typeof JarvisTurnAttachment.Type;
 export const JarvisProjectThreadTurnInput = Schema.Struct({
   text: TrimmedNonEmptyString,
   model: Schema.optional(TrimmedNonEmptyString),
+  effort: Schema.optional(TrimmedNonEmptyString),
+  speed: Schema.optional(TrimmedNonEmptyString),
   attachments: Schema.optionalKey(Schema.Array(JarvisTurnAttachment)),
   workspace: Schema.optionalKey(JarvisTurnWorkspaceInput),
   idempotency_key: TrimmedNonEmptyString,
@@ -1796,6 +1847,8 @@ export const JarvisTurnInput = Schema.Struct({
   turn_id: Schema.optional(TrimmedNonEmptyString),
   prompt: TrimmedNonEmptyString,
   model: Schema.optional(TrimmedNonEmptyString),
+  effort: Schema.optional(TrimmedNonEmptyString),
+  speed: Schema.optional(TrimmedNonEmptyString),
   idempotency_key: Schema.optional(TrimmedNonEmptyString),
   metadata: Schema.optionalKey(JarvisWriteMetadata).pipe(
     Schema.withDecodingDefault(Effect.succeed({ surface: "jarvis-cockpit" })),

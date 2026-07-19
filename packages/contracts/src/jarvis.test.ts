@@ -150,6 +150,22 @@ it.effect("decodes a Jarvis cockpit catalog fixture", () =>
               { id: "gpt-5.6", label: "GPT-5.6" },
             ],
             default_model: "gpt-5.5",
+            efforts: [
+              { id: "low", label: "Light" },
+              { id: "medium", label: "Medium" },
+              { id: "high", label: "High" },
+              {
+                id: "xhigh",
+                label: "Extra High",
+                description: "Consumes usage limits faster",
+              },
+            ],
+            default_effort: "high",
+            speeds: [
+              { id: "standard", label: "Standard", description: "Default speed" },
+              { id: "priority", label: "Fast", description: "1.5x speed, more usage" },
+            ],
+            default_speed: "standard",
           },
         },
       ],
@@ -194,6 +210,22 @@ it.effect("decodes a Jarvis cockpit catalog fixture", () =>
       { id: "gpt-5.6", label: "GPT-5.6" },
     ]);
     assert.strictEqual(parsed.engines[0]?.default_model, "gpt-5.5");
+    assert.deepStrictEqual(parsed.engines[0]?.efforts, [
+      { id: "low", label: "Light" },
+      { id: "medium", label: "Medium" },
+      { id: "high", label: "High" },
+      {
+        id: "xhigh",
+        label: "Extra High",
+        description: "Consumes usage limits faster",
+      },
+    ]);
+    assert.strictEqual(parsed.engines[0]?.default_effort, "high");
+    assert.deepStrictEqual(parsed.engines[0]?.speeds, [
+      { id: "standard", label: "Standard", description: "Default speed" },
+      { id: "priority", label: "Fast", description: "1.5x speed, more usage" },
+    ]);
+    assert.strictEqual(parsed.engines[0]?.default_speed, "standard");
     assert.strictEqual(parsed.capabilities[0]?.capability, "code.edit");
     assert.deepStrictEqual(parsed.work_sources, [
       "manual",
@@ -243,6 +275,9 @@ it.effect("preserves top-level Jarvis engine model catalogs for compatibility", 
           },
           models: [{ id: "gpt-5.legacy", label: "GPT-5 Legacy" }],
           default_model: "gpt-5.legacy",
+          efforts: [{ id: "high", label: "High" }],
+          default_effort: "high",
+          speeds: [],
         },
       ],
       capabilities: [],
@@ -255,6 +290,9 @@ it.effect("preserves top-level Jarvis engine model catalogs for compatibility", 
       { id: "gpt-5.legacy", label: "GPT-5 Legacy" },
     ]);
     assert.strictEqual(parsed.engines[0]?.default_model, "gpt-5.legacy");
+    assert.deepStrictEqual(parsed.engines[0]?.efforts, [{ id: "high", label: "High" }]);
+    assert.strictEqual(parsed.engines[0]?.default_effort, "high");
+    assert.deepStrictEqual(parsed.engines[0]?.speeds, []);
   }),
 );
 
@@ -1317,6 +1355,8 @@ it.effect("decodes command inputs with cockpit metadata defaults", () =>
     });
     const turn = yield* decodeTurn({
       prompt: "Continue from the current diff.",
+      effort: "high",
+      speed: "standard",
     });
     const approval = yield* decodeApproval({
       request_id: "approval_1",
@@ -1341,6 +1381,8 @@ it.effect("decodes command inputs with cockpit metadata defaults", () =>
     assert.strictEqual(start.branch_strategy, "auto");
     assert.strictEqual(start.metadata?.surface, "jarvis-cockpit");
     assert.strictEqual(turn.metadata?.surface, "jarvis-cockpit");
+    assert.strictEqual(turn.effort, "high");
+    assert.strictEqual(turn.speed, "standard");
     assert.strictEqual(approval.decision, "approved");
     assert.strictEqual(deniedApproval.decision, "denied");
     assert.strictEqual(input.text, "Use the existing orchestration store patterns.");
@@ -1371,6 +1413,8 @@ it.effect("decodes project thread turns with optional image attachments", () =>
     const withWorkspace = yield* decodeProjectThreadTurn({
       text: "Inspect the runtime repo and summarize the failing tests.",
       idempotency_key: "turn-with-workspace",
+      effort: "high",
+      speed: "priority",
       workspace: {
         repos: [{ name: "runtime", base_ref: "origin/main" }],
         engine: "codex",
@@ -1391,6 +1435,8 @@ it.effect("decodes project thread turns with optional image attachments", () =>
       repos: [{ name: "runtime", base_ref: "origin/main" }],
       engine: "codex",
     });
+    assert.strictEqual(encodedWithWorkspace.effort, "high");
+    assert.strictEqual(encodedWithWorkspace.speed, "priority");
   }),
 );
 
