@@ -34,6 +34,7 @@ export interface ProjectConversationLocalTurnView {
   readonly response: string;
   readonly toolItems?: ReadonlyArray<JarvisThreadTurnMergedItem>;
   readonly workspaceInput?: JarvisTurnWorkspaceInput | null;
+  readonly modelInput?: string | null;
   readonly attachments?: ReadonlyArray<JarvisTurnAttachment>;
   readonly composerImages?: ReadonlyArray<ComposerImageAttachment>;
   readonly status: ProjectConversationSendStatus;

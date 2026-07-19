@@ -1,15 +1,19 @@
 import { describe, expect, it } from "vite-plus/test";
+import { JarvisWorkerId } from "@t3tools/contracts";
 
 import {
+  buildTurnModelInput,
   buildTurnWorkspaceInput,
   clearProjectConversationWorkspaceRepos,
   createProjectConversationWorkspaceStaging,
   deriveWorkspaceProvisionSteps,
   projectConversationWorkspaceMatchesSubmission,
+  setProjectConversationWorkspaceModel,
   setProjectConversationWorkspaceEngine,
   setProjectConversationWorkspaceRepoBaseRef,
   shouldPollProjectConversationWorkspace,
   toggleProjectConversationWorkspaceRepo,
+  workspaceEngineOptionsFromWorkers,
   workspaceRepoNames,
 } from "./projectConversationWorkspace.logic";
 
@@ -59,8 +63,79 @@ describe("project conversation workspace staging", () => {
     staging = toggleProjectConversationWorkspaceRepo(staging, "runtime");
     expect(clearProjectConversationWorkspaceRepos(staging)).toEqual({
       engine: "claude",
+      model: null,
       repos: [],
     });
+  });
+
+  it("resets stale model state on engine switches and sends the new engine default", () => {
+    const engineOptions = [
+      {
+        value: "codex" as const,
+        label: "Codex",
+        description: "Codex",
+        models: [{ id: "gpt-5.5", label: "GPT-5.5" }],
+        defaultModel: "gpt-5.5",
+      },
+      {
+        value: "claude" as const,
+        label: "Claude",
+        description: "Claude",
+        models: [
+          { id: "claude-opus-4-7", label: "Claude Opus 4.7" },
+          { id: "claude-sonnet-4-7", label: "Claude Sonnet 4.7" },
+        ],
+        defaultModel: "claude-opus-4-7",
+      },
+    ];
+    let staging = createProjectConversationWorkspaceStaging("codex", "gpt-5.5");
+    staging = setProjectConversationWorkspaceEngine(staging, "claude");
+
+    expect(staging).toMatchObject({ engine: "claude", model: null });
+    expect(buildTurnModelInput(staging, "codex", "gpt-5.5", engineOptions)).toBe("claude-opus-4-7");
+
+    staging = setProjectConversationWorkspaceModel(staging, "claude-sonnet-4-7");
+    expect(buildTurnModelInput(staging, "claude", "claude-opus-4-7", engineOptions)).toBe(
+      "claude-sonnet-4-7",
+    );
+  });
+
+  it("builds engine model options from worker catalogs", () => {
+    const options = workspaceEngineOptionsFromWorkers([
+      {
+        worker_id: JarvisWorkerId.make("worker"),
+        display_name: "Worker",
+        status: "online",
+        health: "healthy",
+        capabilities: [],
+        engines: [
+          {
+            engine: "codex",
+            display_name: "Codex",
+            status: "available",
+            default: true,
+            supports: {
+              streaming: true,
+              resume: true,
+              interrupt: true,
+              approval_requests: true,
+              input_requests: true,
+              checkpoints: true,
+            },
+            models: [{ id: "gpt-5.5", label: "GPT-5.5" }],
+            default_model: "gpt-5.5",
+          },
+        ],
+        capacity: { max_sessions: 1, active_sessions: 0, queued_sessions: 0 },
+        repositories: [],
+        system: {},
+        public_metadata: {},
+      },
+    ]);
+
+    expect(options.find((option) => option.value === "codex")?.models).toEqual([
+      { id: "gpt-5.5", label: "GPT-5.5" },
+    ]);
   });
 
   it("clears staged workspace only when it still matches the submitted snapshot", () => {

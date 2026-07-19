@@ -450,9 +450,10 @@ function normalizeJarvisPublicLabel(value: string | null | undefined): string | 
 }
 
 function modelSelectionForSession(session: JarvisWorkerSession) {
+  const model = normalizeJarvisPublicLabel(session.model) ?? session.engine;
   return {
     instanceId: ProviderInstanceId.make(jarvisProviderInstanceId(session.provider)),
-    model: session.engine,
+    model,
   };
 }
 

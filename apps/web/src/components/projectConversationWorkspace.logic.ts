@@ -1,6 +1,23 @@
-import type { JarvisConversationWorkspace, JarvisTurnWorkspaceInput } from "@t3tools/contracts";
+import type {
+  JarvisConversationWorkspace,
+  JarvisTurnWorkspaceInput,
+  JarvisWorkerProfile,
+} from "@t3tools/contracts";
 
 export type ProjectConversationWorkspaceEngine = "codex" | "claude";
+
+export interface ProjectConversationWorkspaceEngineModel {
+  readonly id: string;
+  readonly label: string;
+}
+
+export interface ProjectConversationWorkspaceEngineOption {
+  readonly value: ProjectConversationWorkspaceEngine;
+  readonly label: string;
+  readonly description: string;
+  readonly models: ReadonlyArray<ProjectConversationWorkspaceEngineModel>;
+  readonly defaultModel: string | null;
+}
 
 export interface ProjectConversationWorkspaceStagedRepo {
   readonly name: string;
@@ -9,6 +26,7 @@ export interface ProjectConversationWorkspaceStagedRepo {
 
 export interface ProjectConversationWorkspaceStaging {
   readonly engine: ProjectConversationWorkspaceEngine;
+  readonly model: string | null;
   readonly repos: ReadonlyArray<ProjectConversationWorkspaceStagedRepo>;
 }
 
@@ -21,19 +39,70 @@ export interface ProjectConversationProvisionStep {
 
 const PROVISION_PHASES = ["resolving-access", "cloning", "creating-worktree", "running"] as const;
 
+const DEFAULT_ENGINE_OPTIONS: ReadonlyArray<ProjectConversationWorkspaceEngineOption> = [
+  {
+    value: "codex",
+    label: "Codex",
+    description: "OpenAI Codex app-server.",
+    models: [],
+    defaultModel: null,
+  },
+  {
+    value: "claude",
+    label: "Claude",
+    description: "Claude Code agent.",
+    models: [],
+    defaultModel: null,
+  },
+];
+
 export function createProjectConversationWorkspaceStaging(
   engine: ProjectConversationWorkspaceEngine = "codex",
+  model: string | null = null,
 ): ProjectConversationWorkspaceStaging {
-  return { engine, repos: [] };
+  return { engine, model: normalizeWorkspaceModel(model), repos: [] };
 }
 
 export function setProjectConversationWorkspaceEngine(
   staging: ProjectConversationWorkspaceStaging,
   engine: string,
 ): ProjectConversationWorkspaceStaging {
+  const nextEngine = normalizeWorkspaceEngine(engine);
+  if (nextEngine === staging.engine) {
+    return staging;
+  }
   return {
     ...staging,
-    engine: normalizeWorkspaceEngine(engine),
+    engine: nextEngine,
+    model: null,
+  };
+}
+
+export function setProjectConversationWorkspaceModel(
+  staging: ProjectConversationWorkspaceStaging,
+  model: string | null,
+): ProjectConversationWorkspaceStaging {
+  return {
+    ...staging,
+    model: normalizeWorkspaceModel(model),
+  };
+}
+
+export function syncProjectConversationWorkspaceSelection(
+  staging: ProjectConversationWorkspaceStaging,
+  input: {
+    readonly engine: string | null | undefined;
+    readonly model: string | null | undefined;
+  },
+): ProjectConversationWorkspaceStaging {
+  const engine = normalizeWorkspaceEngineOrNull(input.engine);
+  if (engine === null) {
+    return staging;
+  }
+  return {
+    ...staging,
+    engine,
+    model: normalizeWorkspaceModel(input.model),
   };
 }
 
@@ -106,6 +175,31 @@ export function buildTurnWorkspaceInput(
   };
 }
 
+export function buildTurnModelInput(
+  staging: ProjectConversationWorkspaceStaging,
+  currentEngine: string | null | undefined,
+  currentModel: string | null | undefined,
+  engineOptions: ReadonlyArray<ProjectConversationWorkspaceEngineOption>,
+): string | undefined {
+  const explicitModel = normalizeWorkspaceModel(staging.model);
+  const selectedModel =
+    explicitModel ?? resolveWorkspaceEngineDefaultModel(engineOptions, staging.engine);
+  if (selectedModel === null) {
+    return undefined;
+  }
+
+  const normalizedCurrentEngine = normalizeWorkspaceEngineOrNull(currentEngine);
+  if (normalizedCurrentEngine !== staging.engine) {
+    return selectedModel;
+  }
+
+  if (explicitModel !== null && explicitModel !== normalizeWorkspaceModel(currentModel)) {
+    return explicitModel;
+  }
+
+  return undefined;
+}
+
 export function projectConversationWorkspaceMatchesSubmission(
   current: JarvisTurnWorkspaceInput | null | undefined,
   submitted: JarvisTurnWorkspaceInput | null | undefined,
@@ -122,6 +216,78 @@ export function projectConversationWorkspaceMatchesSubmission(
         repo.base_ref === submittedRepos[index]?.base_ref,
     )
   );
+}
+
+export function projectConversationModelMatchesSubmission(
+  current: string | null | undefined,
+  submitted: string | null | undefined,
+): boolean {
+  return normalizeWorkspaceModel(current) === normalizeWorkspaceModel(submitted);
+}
+
+export function workspaceEngineOptionsFromWorkers(
+  workers: ReadonlyArray<JarvisWorkerProfile>,
+): ProjectConversationWorkspaceEngineOption[] {
+  return DEFAULT_ENGINE_OPTIONS.map((fallback) => {
+    const matchingEngines = workers
+      .flatMap((worker) => worker.engines)
+      .filter((engine) => normalizeWorkspaceEngineOrNull(engine.engine) === fallback.value);
+    const first = matchingEngines[0];
+    const modelById = new Map<string, ProjectConversationWorkspaceEngineModel>();
+    for (const engine of matchingEngines) {
+      for (const model of engine.models ?? []) {
+        const id = normalizeWorkspaceModel(model.id);
+        if (id === null || modelById.has(id)) {
+          continue;
+        }
+        modelById.set(id, { id, label: model.label.trim() || id });
+      }
+    }
+    const defaultModel =
+      matchingEngines
+        .map((engine) => normalizeWorkspaceModel(engine.default_model))
+        .find((model): model is string => model !== null) ?? null;
+
+    return {
+      value: fallback.value,
+      label: first?.display_name?.trim() || fallback.label,
+      description: fallback.description,
+      models: [...modelById.values()],
+      defaultModel,
+    };
+  });
+}
+
+export function resolveWorkspaceEngineOption(
+  engineOptions: ReadonlyArray<ProjectConversationWorkspaceEngineOption>,
+  engine: string | null | undefined,
+): ProjectConversationWorkspaceEngineOption {
+  const normalized = normalizeWorkspaceEngineOrNull(engine) ?? "codex";
+  return (
+    engineOptions.find((option) => option.value === normalized) ??
+    DEFAULT_ENGINE_OPTIONS.find((option) => option.value === normalized) ??
+    DEFAULT_ENGINE_OPTIONS[0]!
+  );
+}
+
+export function resolveWorkspaceEngineModel(input: {
+  readonly engineOptions: ReadonlyArray<ProjectConversationWorkspaceEngineOption>;
+  readonly engine: string | null | undefined;
+  readonly model: string | null | undefined;
+}): ProjectConversationWorkspaceEngineModel | null {
+  const option = resolveWorkspaceEngineOption(input.engineOptions, input.engine);
+  const model = normalizeWorkspaceModel(input.model) ?? option.defaultModel;
+  if (model === null) {
+    return null;
+  }
+  return option.models.find((candidate) => candidate.id === model) ?? { id: model, label: model };
+}
+
+export function resolveWorkspaceEngineDefaultModel(
+  engineOptions: ReadonlyArray<ProjectConversationWorkspaceEngineOption>,
+  engine: string | null | undefined,
+): string | null {
+  return resolveWorkspaceEngineOption(engineOptions, engine).defaultModel;
 }
 
 export function shouldPollProjectConversationWorkspace(input: {
@@ -193,8 +359,23 @@ export function workspaceRepoNames(
   );
 }
 
-function normalizeWorkspaceEngine(engine: string): ProjectConversationWorkspaceEngine {
+export function normalizeWorkspaceEngine(engine: string): ProjectConversationWorkspaceEngine {
   return engine.trim().toLowerCase() === "claude" ? "claude" : "codex";
+}
+
+export function normalizeWorkspaceEngineOrNull(
+  engine: string | null | undefined,
+): ProjectConversationWorkspaceEngine | null {
+  const normalized = engine?.trim().toLowerCase();
+  if (normalized === "codex" || normalized === "claude") {
+    return normalized;
+  }
+  return null;
+}
+
+function normalizeWorkspaceModel(model: string | null | undefined): string | null {
+  const normalized = model?.trim();
+  return normalized && normalized.length > 0 ? normalized : null;
 }
 
 function uniqueStagedRepos(

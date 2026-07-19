@@ -175,6 +175,11 @@ export type JarvisSyncMode = typeof JarvisSyncMode.Type;
 export const JarvisSyncStatus = Schema.Literals(["fresh", "partial", "stale", "failed"]);
 export type JarvisSyncStatus = typeof JarvisSyncStatus.Type;
 
+const OptionalPublicString = Schema.optional(Schema.NullOr(TrimmedNonEmptyString));
+const OptionalPossiblyEmptyPublicString = Schema.optional(
+  Schema.NullOr(Schema.Union([TrimmedNonEmptyString, Schema.Literal("")])),
+);
+
 export const JarvisCapabilitySupport = Schema.Struct({
   streaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   resume: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -186,11 +191,21 @@ export const JarvisCapabilitySupport = Schema.Struct({
 });
 export type JarvisCapabilitySupport = typeof JarvisCapabilitySupport.Type;
 
+export const JarvisEngineModel = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+});
+export type JarvisEngineModel = typeof JarvisEngineModel.Type;
+
 export const JarvisCatalogEngine = Schema.Struct({
   engine: JarvisEngineId,
   display_name: TrimmedNonEmptyString,
   description: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   supports: JarvisCapabilitySupport,
+  models: Schema.optionalKey(Schema.Array(JarvisEngineModel)).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  default_model: OptionalPossiblyEmptyPublicString,
 });
 export type JarvisCatalogEngine = typeof JarvisCatalogEngine.Type;
 
@@ -200,11 +215,6 @@ export const JarvisCatalogCapability = Schema.Struct({
   maps_to: Schema.Array(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type JarvisCatalogCapability = typeof JarvisCatalogCapability.Type;
-
-const OptionalPublicString = Schema.optional(Schema.NullOr(TrimmedNonEmptyString));
-const OptionalPossiblyEmptyPublicString = Schema.optional(
-  Schema.NullOr(Schema.Union([TrimmedNonEmptyString, Schema.Literal("")])),
-);
 
 export const JarvisCatalogStartOptions = Schema.Struct({
   sources: Schema.Array(TrimmedNonEmptyString),
@@ -874,6 +884,7 @@ export type JarvisTurnAttachment = typeof JarvisTurnAttachment.Type;
 
 export const JarvisProjectThreadTurnInput = Schema.Struct({
   text: TrimmedNonEmptyString,
+  model: Schema.optional(TrimmedNonEmptyString),
   attachments: Schema.optionalKey(Schema.Array(JarvisTurnAttachment)),
   workspace: Schema.optionalKey(JarvisTurnWorkspaceInput),
   idempotency_key: TrimmedNonEmptyString,
@@ -942,6 +953,10 @@ export const JarvisWorkerEngine = Schema.Struct({
   status: Schema.Literals(["available", "unavailable", "degraded"]),
   default: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   supports: JarvisCapabilitySupport,
+  models: Schema.optionalKey(Schema.Array(JarvisEngineModel)).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  default_model: OptionalPossiblyEmptyPublicString,
 });
 export type JarvisWorkerEngine = typeof JarvisWorkerEngine.Type;
 
@@ -1513,6 +1528,7 @@ export type JarvisResumeWorkInput = typeof JarvisResumeWorkInput.Type;
 export const JarvisTurnInput = Schema.Struct({
   turn_id: Schema.optional(TrimmedNonEmptyString),
   prompt: TrimmedNonEmptyString,
+  model: Schema.optional(TrimmedNonEmptyString),
   idempotency_key: Schema.optional(TrimmedNonEmptyString),
   metadata: Schema.optionalKey(JarvisWriteMetadata).pipe(
     Schema.withDecodingDefault(Effect.succeed({ surface: "jarvis-cockpit" })),

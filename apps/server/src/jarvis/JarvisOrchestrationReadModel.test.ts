@@ -178,9 +178,9 @@ it.effect("serves terminal Jarvis session history from the final cached fetch", 
     yield* loadJarvisReadModel(client, cache);
     yield* loadJarvisReadModel(client, cache);
 
-    assert.deepStrictEqual(eventAfters, [undefined]);
-    assert.deepStrictEqual(checkpointAfters, [undefined]);
-    assert.deepStrictEqual(requestAfters, [undefined]);
+    assert.deepStrictEqual(eventAfters, [undefined, undefined]);
+    assert.deepStrictEqual(checkpointAfters, [undefined, undefined]);
+    assert.deepStrictEqual(requestAfters, [undefined, undefined]);
   }),
 );
 
@@ -213,7 +213,7 @@ it.effect("prunes Jarvis session history that is absent from a later snapshot", 
     yield* loadJarvisReadModel(client, cache);
     yield* cache.read(client, session);
 
-    assert.deepStrictEqual(eventAfters, [undefined, undefined]);
+    assert.deepStrictEqual(eventAfters, [undefined, undefined, undefined]);
   }),
 );
 
