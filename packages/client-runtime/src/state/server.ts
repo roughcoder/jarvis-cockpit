@@ -319,6 +319,28 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    jarvisRetentionPlan: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:jarvis-retention-plan",
+      tag: WS_METHODS.serverGetJarvisRetentionPlan,
+      refreshIntervalMs: 30_000,
+    }),
+    pruneJarvisRetention: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:prune-jarvis-retention",
+      tag: WS_METHODS.serverPruneJarvisRetention,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    jarvisRetentionSettings: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:jarvis-retention-settings",
+      tag: WS_METHODS.serverGetJarvisRetentionSettings,
+      refreshIntervalMs: 30_000,
+    }),
+    updateJarvisRetentionSettings: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:update-jarvis-retention-settings",
+      tag: WS_METHODS.serverUpdateJarvisRetentionSettings,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     closeJarvisSession: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:close-jarvis-session",
       tag: WS_METHODS.serverCloseJarvisSession,

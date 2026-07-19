@@ -174,6 +174,11 @@ import {
   JarvisProjectThreadTurnRpcResult,
   JarvisProjectThreadUserInputInput,
   JarvisProjectUpdateInput,
+  JarvisRetentionPlanResult,
+  JarvisRetentionPruneInput,
+  JarvisRetentionPruneResult,
+  JarvisRetentionSettingsResult,
+  JarvisRetentionSettingsUpdateInput,
   JarvisMcpStatusResult,
   JarvisCapabilitiesResult,
   JarvisStartWorkInput,
@@ -271,6 +276,10 @@ export const WS_METHODS = {
   serverGetJarvisProjectThread: "server.getJarvisProjectThread",
   serverValidateJarvisWork: "server.validateJarvisWork",
   serverPruneJarvisWorkerWorktrees: "server.pruneJarvisWorkerWorktrees",
+  serverGetJarvisRetentionPlan: "server.getJarvisRetentionPlan",
+  serverPruneJarvisRetention: "server.pruneJarvisRetention",
+  serverGetJarvisRetentionSettings: "server.getJarvisRetentionSettings",
+  serverUpdateJarvisRetentionSettings: "server.updateJarvisRetentionSettings",
   serverCloseJarvisSession: "server.closeJarvisSession",
   serverArchiveJarvisSession: "server.archiveJarvisSession",
   serverDeleteJarvisSession: "server.deleteJarvisSession",
@@ -488,6 +497,40 @@ export const WsServerPruneJarvisWorkerWorktreesRpc = Rpc.make(
       input: JarvisWorkerWorktreePruneInput,
     }),
     success: JarvisWorkerWorktreePruneResult,
+    error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerGetJarvisRetentionPlanRpc = Rpc.make(WS_METHODS.serverGetJarvisRetentionPlan, {
+  payload: Schema.Struct({}),
+  success: JarvisRetentionPlanResult,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerPruneJarvisRetentionRpc = Rpc.make(WS_METHODS.serverPruneJarvisRetention, {
+  payload: Schema.Struct({
+    input: JarvisRetentionPruneInput,
+  }),
+  success: JarvisRetentionPruneResult,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerGetJarvisRetentionSettingsRpc = Rpc.make(
+  WS_METHODS.serverGetJarvisRetentionSettings,
+  {
+    payload: Schema.Struct({}),
+    success: JarvisRetentionSettingsResult,
+    error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerUpdateJarvisRetentionSettingsRpc = Rpc.make(
+  WS_METHODS.serverUpdateJarvisRetentionSettings,
+  {
+    payload: Schema.Struct({
+      input: JarvisRetentionSettingsUpdateInput,
+    }),
+    success: JarvisRetentionSettingsResult,
     error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
   },
 );
@@ -1181,6 +1224,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeJarvisProjectThreadRpc,
   WsServerValidateJarvisWorkRpc,
   WsServerPruneJarvisWorkerWorktreesRpc,
+  WsServerGetJarvisRetentionPlanRpc,
+  WsServerPruneJarvisRetentionRpc,
+  WsServerGetJarvisRetentionSettingsRpc,
+  WsServerUpdateJarvisRetentionSettingsRpc,
   WsServerCloseJarvisSessionRpc,
   WsServerArchiveJarvisSessionRpc,
   WsServerDeleteJarvisSessionRpc,

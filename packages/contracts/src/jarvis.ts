@@ -1372,6 +1372,146 @@ export const JarvisWorkerWorktreePruneResult = Schema.Struct({
 });
 export type JarvisWorkerWorktreePruneResult = typeof JarvisWorkerWorktreePruneResult.Type;
 
+export const JarvisRetentionClassName = TrimmedNonEmptyString;
+export type JarvisRetentionClassName = typeof JarvisRetentionClassName.Type;
+
+export const JarvisRetentionClassPlan = Schema.Struct({
+  name: JarvisRetentionClassName,
+  ttl_days: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  count: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  bytes: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  disabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
+export type JarvisRetentionClassPlan = typeof JarvisRetentionClassPlan.Type;
+
+export const JarvisRetentionPlan = Schema.Struct({
+  classes: Schema.Array(JarvisRetentionClassPlan).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  total_count: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  total_bytes: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  kept: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+});
+export type JarvisRetentionPlan = typeof JarvisRetentionPlan.Type;
+
+export const JarvisRetentionSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  interval_s: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  archived_ttl_days: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  chat_ttl_days: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  tree_ttl_days: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+});
+export type JarvisRetentionSettings = typeof JarvisRetentionSettings.Type;
+
+export const JarvisRetentionSettingsSource = Schema.Literals(["env", "override"]);
+export type JarvisRetentionSettingsSource = typeof JarvisRetentionSettingsSource.Type;
+
+export const JarvisRetentionSettingsSourceMap = Schema.Record(
+  Schema.String,
+  JarvisRetentionSettingsSource,
+).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+export type JarvisRetentionSettingsSourceMap = typeof JarvisRetentionSettingsSourceMap.Type;
+
+export const JarvisRetentionAutoStatus = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  interval_s: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  last_run_at: Schema.optional(Schema.NullOr(IsoDateTime)),
+  last_result: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        deleted: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+        bytes: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+      }),
+    ),
+  ),
+});
+export type JarvisRetentionAutoStatus = typeof JarvisRetentionAutoStatus.Type;
+
+export const JarvisRetentionPlanResponse = Schema.Struct({
+  ok: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  plan: Schema.optionalKey(JarvisRetentionPlan),
+  settings: Schema.optionalKey(JarvisRetentionSettings),
+  auto: Schema.optionalKey(JarvisRetentionAutoStatus),
+});
+export type JarvisRetentionPlanResponse = typeof JarvisRetentionPlanResponse.Type;
+
+export const JarvisRetentionPruneInput = Schema.Struct({
+  idempotency_key: TrimmedNonEmptyString,
+});
+export type JarvisRetentionPruneInput = typeof JarvisRetentionPruneInput.Type;
+
+export const JarvisRetentionDeletedCounts = Schema.Struct({
+  archived: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  chat: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  tree: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+});
+export type JarvisRetentionDeletedCounts = typeof JarvisRetentionDeletedCounts.Type;
+
+export const JarvisRetentionPruneResponse = Schema.Struct({
+  ok: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  deleted: JarvisRetentionDeletedCounts.pipe(
+    Schema.withDecodingDefault(Effect.succeed({ archived: 0, chat: 0, tree: 0 })),
+  ),
+  child_runs: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  bytes_reclaimed: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  kept: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+});
+export type JarvisRetentionPruneResponse = typeof JarvisRetentionPruneResponse.Type;
+
+export const JarvisRetentionSettingsUpdateInput = Schema.Struct({
+  idempotency_key: TrimmedNonEmptyString,
+  enabled: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  interval_s: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  archived_ttl_days: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  chat_ttl_days: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  tree_ttl_days: Schema.optional(Schema.NullOr(NonNegativeInt)),
+});
+export type JarvisRetentionSettingsUpdateInput = typeof JarvisRetentionSettingsUpdateInput.Type;
+
+export const JarvisRetentionSettingsResponse = Schema.Struct({
+  ok: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  settings: JarvisRetentionSettings.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({
+        enabled: false,
+        interval_s: 0,
+        archived_ttl_days: 0,
+        chat_ttl_days: 0,
+        tree_ttl_days: 0,
+      }),
+    ),
+  ),
+  source: JarvisRetentionSettingsSourceMap,
+});
+export type JarvisRetentionSettingsResponse = typeof JarvisRetentionSettingsResponse.Type;
+
+export const JarvisRetentionPlanResult = Schema.Struct({
+  ok: Schema.Boolean,
+  plan: Schema.optionalKey(JarvisRetentionPlan),
+  settings: Schema.optionalKey(JarvisRetentionSettings),
+  auto: Schema.optionalKey(JarvisRetentionAutoStatus),
+  unsupported: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  error: Schema.optionalKey(JarvisReadError),
+});
+export type JarvisRetentionPlanResult = typeof JarvisRetentionPlanResult.Type;
+
+export const JarvisRetentionPruneResult = Schema.Struct({
+  ok: Schema.Boolean,
+  result: Schema.optionalKey(JarvisRetentionPruneResponse),
+  unsupported: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  error: Schema.optionalKey(JarvisReadError),
+});
+export type JarvisRetentionPruneResult = typeof JarvisRetentionPruneResult.Type;
+
+export const JarvisRetentionSettingsResult = Schema.Struct({
+  ok: Schema.Boolean,
+  settings: Schema.optionalKey(JarvisRetentionSettings),
+  source: JarvisRetentionSettingsSourceMap,
+  unsupported: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  error: Schema.optionalKey(JarvisReadError),
+});
+export type JarvisRetentionSettingsResult = typeof JarvisRetentionSettingsResult.Type;
+
 export const JarvisReclamationSummary = Schema.Struct({
   records: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   events: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),

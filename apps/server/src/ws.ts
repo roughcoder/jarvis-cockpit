@@ -685,6 +685,10 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.subscribeJarvisProjectThread, AuthOrchestrationReadScope],
   [WS_METHODS.serverValidateJarvisWork, AuthOrchestrationReadScope],
   [WS_METHODS.serverPruneJarvisWorkerWorktrees, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverGetJarvisRetentionPlan, AuthOrchestrationReadScope],
+  [WS_METHODS.serverPruneJarvisRetention, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverGetJarvisRetentionSettings, AuthOrchestrationReadScope],
+  [WS_METHODS.serverUpdateJarvisRetentionSettings, AuthOrchestrationOperateScope],
   [WS_METHODS.serverCloseJarvisSession, AuthOrchestrationOperateScope],
   [WS_METHODS.serverArchiveJarvisSession, AuthOrchestrationOperateScope],
   [WS_METHODS.serverDeleteJarvisSession, AuthOrchestrationOperateScope],
@@ -2100,6 +2104,116 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.serverGetJarvisRetentionPlan]: () =>
+          observeRpcEffect(
+            WS_METHODS.serverGetJarvisRetentionPlan,
+            jarvisClient.getRetentionPlan().pipe(
+              Effect.map((result) => ({
+                ok: result.ok,
+                ...(result.plan !== undefined ? { plan: result.plan } : {}),
+                ...(result.settings !== undefined ? { settings: result.settings } : {}),
+                ...(result.auto !== undefined ? { auto: result.auto } : {}),
+                unsupported: false,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  unsupported: isUnsupportedJarvisRetentionError(error),
+                  error: {
+                    message: jarvisRetentionFailureMessage(
+                      error,
+                      "Jarvis retention plan request failed.",
+                    ),
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverPruneJarvisRetention]: ({ input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverPruneJarvisRetention,
+            jarvisClient.pruneRetention(input).pipe(
+              Effect.map((result) => ({
+                ok: result.ok,
+                result,
+                unsupported: false,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  unsupported: isUnsupportedJarvisRetentionError(error),
+                  error: {
+                    message: jarvisRetentionFailureMessage(
+                      error,
+                      "Jarvis retention cleanup failed.",
+                    ),
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverGetJarvisRetentionSettings]: () =>
+          observeRpcEffect(
+            WS_METHODS.serverGetJarvisRetentionSettings,
+            jarvisClient.getRetentionSettings().pipe(
+              Effect.map((result) => ({
+                ok: result.ok,
+                settings: result.settings,
+                source: result.source,
+                unsupported: false,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  unsupported: isUnsupportedJarvisRetentionError(error),
+                  source: {},
+                  error: {
+                    message: jarvisRetentionFailureMessage(
+                      error,
+                      "Jarvis retention settings request failed.",
+                    ),
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverUpdateJarvisRetentionSettings]: ({ input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverUpdateJarvisRetentionSettings,
+            jarvisClient.updateRetentionSettings(input).pipe(
+              Effect.map((result) => ({
+                ok: result.ok,
+                settings: result.settings,
+                source: result.source,
+                unsupported: false,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  unsupported: isUnsupportedJarvisRetentionError(error),
+                  source: {},
+                  error: {
+                    message: jarvisRetentionFailureMessage(
+                      error,
+                      "Jarvis retention settings update failed.",
+                    ),
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.serverCreateJarvisProject]: ({ input }) =>
           observeRpcEffect(
             WS_METHODS.serverCreateJarvisProject,
@@ -3311,6 +3425,14 @@ function formatJarvisProjectTurnFailure(error: unknown): string {
     return message;
   }
   return `${message} ${responseBody}`;
+}
+
+function isUnsupportedJarvisRetentionError(error: unknown): boolean {
+  return error instanceof JarvisClientError && error.status === 404;
+}
+
+function jarvisRetentionFailureMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message.trim().length > 0 ? error.message : fallback;
 }
 
 export const websocketRpcRouteLayer = Layer.unwrap(

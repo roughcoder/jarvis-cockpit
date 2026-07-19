@@ -15,6 +15,10 @@ import {
   JarvisProjectThreadsResponse,
   JarvisProjectThreadTurnInput,
   JarvisRestoreCheckpointInput,
+  JarvisRetentionPlanResponse,
+  JarvisRetentionPruneResponse,
+  JarvisRetentionSettingsResponse,
+  JarvisRetentionSettingsUpdateInput,
   JarvisRunsSnapshot,
   JarvisSessionCheckpointsResponse,
   JarvisSessionCheckpointsPage,
@@ -45,6 +49,12 @@ const decodeTurn = Schema.decodeUnknownEffect(JarvisTurnInput);
 const decodeApproval = Schema.decodeUnknownEffect(JarvisApprovalInput);
 const decodeUserInput = Schema.decodeUnknownEffect(JarvisUserInputInput);
 const decodeRestoreCheckpoint = Schema.decodeUnknownEffect(JarvisRestoreCheckpointInput);
+const decodeRetentionPlan = Schema.decodeUnknownEffect(JarvisRetentionPlanResponse);
+const decodeRetentionPrune = Schema.decodeUnknownEffect(JarvisRetentionPruneResponse);
+const decodeRetentionSettings = Schema.decodeUnknownEffect(JarvisRetentionSettingsResponse);
+const decodeRetentionSettingsUpdate = Schema.decodeUnknownEffect(
+  JarvisRetentionSettingsUpdateInput,
+);
 const decodeArchive = Schema.decodeUnknownEffect(JarvisArchiveInput);
 const decodeDelete = Schema.decodeUnknownEffect(JarvisDeleteInput);
 const decodeControlResult = Schema.decodeUnknownEffect(JarvisControlResult);
@@ -199,6 +209,78 @@ it.effect("defaults optional Jarvis catalog option groups omitted by live v1 ser
 
     assert.deepStrictEqual(parsed.branch_strategies, []);
     assert.deepStrictEqual(parsed.landing_policies, []);
+  }),
+);
+
+it.effect("decodes tolerant Jarvis retention plan responses", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeRetentionPlan({
+      ok: true,
+      plan: {
+        classes: [
+          {
+            name: "archived",
+            ttl_days: 14,
+            count: 3,
+            bytes: 24_576_000,
+          },
+        ],
+        total_count: 3,
+        total_bytes: 24_576_000,
+        kept: 42,
+      },
+      auto: {
+        enabled: true,
+        interval_s: 21_600,
+        last_run_at: "2026-06-30T18:00:00+00:00",
+        last_result: {
+          deleted: 4,
+          bytes: 18_874_368,
+        },
+      },
+    });
+
+    assert.strictEqual(parsed.ok, true);
+    assert.strictEqual(parsed.plan?.classes[0]?.disabled, false);
+    assert.strictEqual(parsed.auto?.last_result?.deleted, 4);
+
+    const empty = yield* decodeRetentionPlan({});
+    assert.strictEqual(empty.ok, false);
+  }),
+);
+
+it.effect("decodes Jarvis retention prune and settings payloads", () =>
+  Effect.gen(function* () {
+    const prune = yield* decodeRetentionPrune({
+      ok: true,
+      deleted: { archived: 3 },
+      bytes_reclaimed: 1024,
+    });
+    const settings = yield* decodeRetentionSettings({
+      ok: true,
+      settings: {
+        enabled: true,
+        interval_s: 21_600,
+        archived_ttl_days: 14,
+        chat_ttl_days: 7,
+        tree_ttl_days: 7,
+      },
+      source: {
+        enabled: "env",
+        chat_ttl_days: "override",
+      },
+    });
+    const update = yield* decodeRetentionSettingsUpdate({
+      idempotency_key: "retention-settings-1",
+      enabled: null,
+      chat_ttl_days: 10,
+    });
+
+    assert.deepStrictEqual(prune.deleted, { archived: 3, chat: 0, tree: 0 });
+    assert.strictEqual(prune.child_runs, 0);
+    assert.strictEqual(settings.source.chat_ttl_days, "override");
+    assert.strictEqual(update.enabled, null);
+    assert.strictEqual(update.chat_ttl_days, 10);
   }),
 );
 
