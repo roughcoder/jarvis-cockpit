@@ -2004,7 +2004,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
   // content), so repeating a prompt silently deduplicates the turn away and a tied observed_at
   // sorts the transcript by content hash instead of chronologically. Counting from a fixed epoch
   // keeps fixtures deterministic while still advancing.
-  const fixtureMessageEpochMs = Date.parse(now);
+  const fixtureMessageEpoch = DateTime.makeUnsafe(now);
   let fixtureMessageCount = 0;
   const fixtureMessage = <M extends Omit<JarvisProjectThreadMessage, "observed_at">>(
     message: M,
@@ -2014,7 +2014,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       ...message,
       message_id: `msg_fixture_${String(sequence).padStart(4, "0")}`,
       sequence,
-      observed_at: new Date(fixtureMessageEpochMs + sequence * 1000).toISOString(),
+      observed_at: DateTime.formatIso(DateTime.add(fixtureMessageEpoch, { seconds: sequence })),
     };
   };
   const sessionRef = JarvisSessionRef.make("sessref_macbook-worker_sess_fixture_codex");

@@ -19,6 +19,10 @@ export default defineConfig({
     ],
     hookTimeout: 60_000,
     testTimeout: 60_000,
+    // Root `vp test` exercises sqlite, git, temp worktrees, and orchestration
+    // runtimes across packages. File-level parallelism creates load-sensitive
+    // timing failures in those integration suites.
+    fileParallelism: false,
   },
   fmt: {
     ignorePatterns: [
