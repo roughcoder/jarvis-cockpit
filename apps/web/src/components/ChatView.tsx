@@ -212,6 +212,14 @@ import {
   draftComposerCapabilities,
   threadComposerCapabilities,
 } from "./composer/composerCapabilities";
+import {
+  buildTurnModelInput,
+  createProjectConversationWorkspaceStaging,
+  normalizeWorkspaceEngineOrNull,
+  syncProjectConversationWorkspaceSelection,
+  workspaceEngineOptionsFromWorkers,
+  type ProjectConversationWorkspaceStaging,
+} from "./projectConversationWorkspace.logic";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
@@ -1670,14 +1678,94 @@ function ChatViewContent(props: StandardChatViewProps) {
     ? (activeEnvironment?.serverConfig ?? null)
     : (primaryEnvironment?.serverConfig ?? null);
   const activeIsJarvisCockpitEnvironment = isJarvisCockpitEnvironment(serverConfig ?? undefined);
+  const activeIsJarvisWorkerThread = activeThread?.id.startsWith("jarvis-session_") === true;
   const composerCapabilities = useMemo(
     () =>
       routeKind === "draft"
         ? draftComposerCapabilities({
             jarvisRouting: activeIsJarvisCockpitEnvironment,
           })
-        : threadComposerCapabilities(),
-    [activeIsJarvisCockpitEnvironment, routeKind],
+        : activeIsJarvisWorkerThread
+          ? { ...threadComposerCapabilities(), picker: "workspace-engine" as const }
+          : threadComposerCapabilities(),
+    [activeIsJarvisCockpitEnvironment, activeIsJarvisWorkerThread, routeKind],
+  );
+  const [jarvisWorkerWorkspaceStagingByThread, setJarvisWorkerWorkspaceStagingByThread] = useState<
+    Record<string, ProjectConversationWorkspaceStaging>
+  >({});
+  const jarvisWorkerWorkspaceStagingKey =
+    activeIsJarvisWorkerThread && activeThread
+      ? `${activeThread.environmentId}:${activeThread.id}`
+      : null;
+  const jarvisWorkerWorkspaceStaging =
+    jarvisWorkerWorkspaceStagingKey !== null
+      ? (jarvisWorkerWorkspaceStagingByThread[jarvisWorkerWorkspaceStagingKey] ??
+        createProjectConversationWorkspaceStaging())
+      : createProjectConversationWorkspaceStaging();
+  const currentJarvisWorkerEngine =
+    normalizeWorkspaceEngineOrNull(activeThread?.session?.providerName) ??
+    normalizeWorkspaceEngineOrNull(activeThread?.modelSelection.model);
+  const jarvisWorkerSnapshotQuery = useEnvironmentQuery(
+    activeIsJarvisWorkerThread
+      ? serverEnvironment.jarvisSnapshot({ environmentId, input: {} })
+      : null,
+  );
+  const jarvisWorkerWorkspaceEngineOptions = useMemo(
+    () =>
+      workspaceEngineOptionsFromWorkers(jarvisWorkerSnapshotQuery.data?.snapshot?.workers ?? []),
+    [jarvisWorkerSnapshotQuery.data?.snapshot?.workers],
+  );
+  const setJarvisWorkerWorkspaceStaging = (staging: ProjectConversationWorkspaceStaging) => {
+    if (jarvisWorkerWorkspaceStagingKey === null) {
+      return;
+    }
+    setJarvisWorkerWorkspaceStagingByThread((existing) => ({
+      ...existing,
+      [jarvisWorkerWorkspaceStagingKey]: staging,
+    }));
+  };
+  useEffect(() => {
+    if (!activeIsJarvisWorkerThread || jarvisWorkerWorkspaceStagingKey === null) {
+      return;
+    }
+    setJarvisWorkerWorkspaceStagingByThread((existing) => ({
+      ...existing,
+      [jarvisWorkerWorkspaceStagingKey]: syncProjectConversationWorkspaceSelection(
+        existing[jarvisWorkerWorkspaceStagingKey] ?? createProjectConversationWorkspaceStaging(),
+        {
+          engine: currentJarvisWorkerEngine,
+          model: activeThread?.modelSelection.model,
+        },
+      ),
+    }));
+  }, [
+    activeIsJarvisWorkerThread,
+    activeThread?.modelSelection.model,
+    currentJarvisWorkerEngine,
+    jarvisWorkerWorkspaceStagingKey,
+  ]);
+  const resolveJarvisWorkerModelSelectionForTurn = useCallback(
+    (baseSelection: ModelSelection): ModelSelection => {
+      if (!activeIsJarvisWorkerThread || !activeThread) {
+        return baseSelection;
+      }
+      const stagedModel = buildTurnModelInput(
+        jarvisWorkerWorkspaceStaging,
+        currentJarvisWorkerEngine,
+        activeThread.modelSelection.model,
+        jarvisWorkerWorkspaceEngineOptions,
+      );
+      return stagedModel === undefined
+        ? baseSelection
+        : createModelSelection(baseSelection.instanceId, stagedModel, baseSelection.options);
+    },
+    [
+      activeIsJarvisWorkerThread,
+      activeThread,
+      currentJarvisWorkerEngine,
+      jarvisWorkerWorkspaceEngineOptions,
+      jarvisWorkerWorkspaceStaging,
+    ],
   );
   const versionMismatch = resolveServerConfigVersionMismatch(serverConfig);
   const versionMismatchDismissKey =
@@ -4034,6 +4122,8 @@ function ChatViewContent(props: StandardChatViewProps) {
       selectedJarvisRepo: ctxSelectedJarvisRepo,
       selectedJarvisEngine: ctxSelectedJarvisEngine,
     } = sendCtx;
+    const ctxModelSelectionForTurn =
+      resolveJarvisWorkerModelSelectionForTurn(ctxSelectedModelSelection);
     const promptForSend = promptRef.current;
     const {
       trimmedPrompt: trimmed,
@@ -4235,9 +4325,9 @@ function ChatViewContent(props: StandardChatViewProps) {
     }
     const title = truncate(titleSeed);
     const threadCreateModelSelection = createModelSelection(
-      ctxSelectedModelSelection.instanceId,
-      ctxSelectedModel || activeProject.defaultModelSelection?.model || DEFAULT_MODEL,
-      ctxSelectedModelSelection.options,
+      ctxModelSelectionForTurn.instanceId,
+      ctxModelSelectionForTurn.model || activeProject.defaultModelSelection?.model || DEFAULT_MODEL,
+      ctxModelSelectionForTurn.options,
     );
 
     let failure: AtomCommandResult<unknown, unknown> | null = null;
@@ -4259,7 +4349,7 @@ function ChatViewContent(props: StandardChatViewProps) {
       const settingsResult = await persistThreadSettingsForNextTurn({
         threadId: threadIdForSend,
         createdAt: messageCreatedAt,
-        ...(ctxSelectedModel ? { modelSelection: ctxSelectedModelSelection } : {}),
+        ...(ctxSelectedModel ? { modelSelection: ctxModelSelectionForTurn } : {}),
         runtimeMode,
         interactionMode,
       });
@@ -4329,7 +4419,7 @@ function ChatViewContent(props: StandardChatViewProps) {
             text: outgoingMessageText,
             attachments: turnAttachmentsResult.value,
           },
-          modelSelection: ctxSelectedModelSelection,
+          modelSelection: ctxModelSelectionForTurn,
           titleSeed: title,
           runtimeMode,
           interactionMode,
@@ -4623,6 +4713,8 @@ function ChatViewContent(props: StandardChatViewProps) {
         selectedPromptEffort: ctxSelectedPromptEffort,
         selectedModelSelection: ctxSelectedModelSelection,
       } = sendCtx;
+      const ctxModelSelectionForTurn =
+        resolveJarvisWorkerModelSelectionForTurn(ctxSelectedModelSelection);
 
       const threadIdForSend = activeThread.id;
       const messageIdForSend = newMessageId();
@@ -4668,7 +4760,7 @@ function ChatViewContent(props: StandardChatViewProps) {
       const settingsResult = await persistThreadSettingsForNextTurn({
         threadId: threadIdForSend,
         createdAt: messageCreatedAt,
-        modelSelection: ctxSelectedModelSelection,
+        modelSelection: ctxModelSelectionForTurn,
         runtimeMode,
         interactionMode: nextInteractionMode,
       });
@@ -4693,7 +4785,7 @@ function ChatViewContent(props: StandardChatViewProps) {
               text: outgoingMessageText,
               attachments: [],
             },
-            modelSelection: ctxSelectedModelSelection,
+            modelSelection: ctxModelSelectionForTurn,
             titleSeed: activeThread.title,
             runtimeMode,
             interactionMode: nextInteractionMode,
@@ -4754,6 +4846,7 @@ function ChatViewContent(props: StandardChatViewProps) {
       autoOpenPlanSidebar,
       environmentId,
       composerRef,
+      resolveJarvisWorkerModelSelectionForTurn,
     ],
   );
 
@@ -4795,7 +4888,8 @@ function ChatViewContent(props: StandardChatViewProps) {
       text: implementationPrompt,
     });
     const nextThreadTitle = truncate(buildPlanImplementationThreadTitle(planMarkdown));
-    const nextThreadModelSelection: ModelSelection = ctxSelectedModelSelection;
+    const nextThreadModelSelection: ModelSelection =
+      resolveJarvisWorkerModelSelectionForTurn(ctxSelectedModelSelection);
 
     sendInFlightRef.current = true;
     beginLocalDispatch({ preparingWorktree: false });
@@ -4832,7 +4926,7 @@ function ChatViewContent(props: StandardChatViewProps) {
             text: outgoingImplementationPrompt,
             attachments: [],
           },
-          modelSelection: ctxSelectedModelSelection,
+          modelSelection: nextThreadModelSelection,
           titleSeed: nextThreadTitle,
           runtimeMode,
           interactionMode: "default",
@@ -4915,6 +5009,7 @@ function ChatViewContent(props: StandardChatViewProps) {
     autoOpenPlanSidebar,
     environmentId,
     composerRef,
+    resolveJarvisWorkerModelSelectionForTurn,
   ]);
 
   const getModelDisabledReason = useCallback(
@@ -5364,6 +5459,17 @@ function ChatViewContent(props: StandardChatViewProps) {
                       resolvedTheme={resolvedTheme}
                       settings={settings}
                       keybindings={keybindings}
+                      {...(activeIsJarvisWorkerThread
+                        ? {
+                            brainWorkspace: {
+                              project: null,
+                              workspace: null,
+                              staging: jarvisWorkerWorkspaceStaging,
+                              disabled: activeThread?.archivedAt != null,
+                              onStagingChange: setJarvisWorkerWorkspaceStaging,
+                            },
+                          }
+                        : {})}
                       terminalOpen={Boolean(terminalUiState.terminalOpen)}
                       gitCwd={gitCwd}
                       promptRef={promptRef}

@@ -29,6 +29,7 @@ const jarvisThreadId = ThreadId.make("jarvis-session_sessref_macbook-worker_sess
 function jarvisTurnStartCommand(overrides?: {
   readonly commandId?: string;
   readonly messageId?: string;
+  readonly model?: string;
   readonly text?: string;
   readonly threadId?: ThreadId;
 }) {
@@ -44,6 +45,14 @@ function jarvisTurnStartCommand(overrides?: {
     },
     runtimeMode: "full-access" as const,
     interactionMode: "default" as const,
+    ...(overrides?.model
+      ? {
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("jarvis_codex"),
+            model: overrides.model,
+          },
+        }
+      : {}),
     createdAt: now,
   };
 }
@@ -546,6 +555,28 @@ it.effect("forwards the client user message id in Jarvis turn metadata", () =>
 
     assert.deepStrictEqual(result, { sequence: 0 });
     assert.strictEqual(capturedTurnInput?.metadata?.client_message_id, "msg_client_user");
+  }),
+);
+
+it.effect("forwards the selected model in Jarvis session turns", () =>
+  Effect.gen(function* () {
+    let capturedTurnInput: JarvisTurnInput | undefined;
+    const client = {
+      ...makeJarvisFixtureClient(),
+      sendTurn: (_sessionRef: string, input: JarvisTurnInput) => {
+        capturedTurnInput = input;
+        return Effect.succeed({ ok: true, cursor: "evt_turn" });
+      },
+    };
+
+    const result = yield* dispatchJarvisCommand({
+      client,
+      enabled: true,
+      command: jarvisTurnStartCommand({ model: "gpt-5.6" }),
+    });
+
+    assert.deepStrictEqual(result, { sequence: 0 });
+    assert.strictEqual(capturedTurnInput?.model, "gpt-5.6");
   }),
 );
 

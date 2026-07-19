@@ -151,6 +151,7 @@ function dispatchJarvisWrite(
       return client
         .sendTurn(sessionRef, {
           prompt: command.message.text,
+          ...(command.modelSelection?.model ? { model: command.modelSelection.model } : {}),
           idempotency_key: String(command.commandId),
           metadata: {
             client_message_id: String(command.message.messageId),
@@ -292,6 +293,7 @@ function turnInputForCommand(
 ) {
   return {
     prompt: command.message.text,
+    ...(command.modelSelection?.model ? { model: command.modelSelection.model } : {}),
     idempotency_key: String(command.commandId),
     metadata: {
       client_message_id: String(command.message.messageId),

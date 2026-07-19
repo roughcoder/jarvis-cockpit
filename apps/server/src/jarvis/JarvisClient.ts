@@ -2019,13 +2019,70 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
     };
   };
   const sessionRef = JarvisSessionRef.make("sessref_macbook-worker_sess_fixture_codex");
+  const completedSessionRef = JarvisSessionRef.make(
+    "sessref_macbook-worker_sess_fixture_completed_codex",
+  );
   const runId = JarvisRunId.make("run_fixture_dashboard");
+  const completedRunId = JarvisRunId.make("run_fixture_completed_dashboard");
+  const fixtureCodexModels = [
+    { id: "gpt-5.5", label: "GPT-5.5" },
+    { id: "gpt-5.6", label: "GPT-5.6" },
+  ];
+  const fixtureClaudeModels = [
+    { id: "claude-opus-4-7", label: "Claude Opus 4.7" },
+    { id: "claude-sonnet-4-7", label: "Claude Sonnet 4.7" },
+  ];
+  const fixtureWorkerEngines = [
+    {
+      engine: "codex",
+      display_name: "Codex",
+      status: "available" as const,
+      default: true,
+      supports: {
+        streaming: true,
+        resume: true,
+        interrupt: true,
+        approval_requests: true,
+        input_requests: true,
+        checkpoints: true,
+        attachments: true,
+      },
+      models: fixtureCodexModels,
+      default_model: "gpt-5.5",
+    },
+    {
+      engine: "claude",
+      display_name: "Claude",
+      status: "available" as const,
+      default: false,
+      supports: {
+        streaming: true,
+        resume: true,
+        interrupt: true,
+        approval_requests: true,
+        input_requests: true,
+        checkpoints: true,
+        attachments: true,
+      },
+      models: fixtureClaudeModels,
+      default_model: "claude-opus-4-7",
+    },
+  ];
+  const fixtureEngineForModel = (model: string | null | undefined): "codex" | "claude" => {
+    const normalized = model?.trim();
+    return normalized && fixtureClaudeModels.some((candidate) => candidate.id === normalized)
+      ? "claude"
+      : "codex";
+  };
+  const fixtureDefaultModelForEngine = (engine: string | null | undefined): string =>
+    engine?.trim().toLowerCase() === "claude" ? "claude-opus-4-7" : "gpt-5.5";
   const session: JarvisWorkerSession = {
     session_ref: sessionRef,
     worker_id: "macbook-worker" as JarvisWorkerSession["worker_id"],
     session_id: JarvisWorkerSessionId.make("sess_fixture_codex"),
     provider: "codex",
     engine: "codex",
+    model: "gpt-5.5",
     authority: "jarvis",
     supported_controls: [
       "turn",
@@ -2055,6 +2112,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
   };
   const run: JarvisRun = {
     run_id: runId,
+    model: "gpt-5.5",
     title: "Build Jarvis cockpit",
     objective: "Expose Jarvis orchestration through T3 cockpit projections",
     status: "needs_input",
@@ -2076,6 +2134,34 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
     metadata: {
       surface: "jarvis-cockpit",
     },
+  };
+  const completedSession: JarvisWorkerSession = {
+    ...session,
+    session_ref: completedSessionRef,
+    session_id: JarvisWorkerSessionId.make("sess_fixture_completed_codex"),
+    run_id: completedRunId,
+    status: "completed",
+    title: "Fixture completed Codex turn",
+    latest_event_cursor: "evt_fixture_completed_2",
+    pending_input_count: 0,
+    pending_approval_count: 0,
+    checkpoint_count: 0,
+  };
+  const completedRun: JarvisRun = {
+    ...run,
+    run_id: completedRunId,
+    title: "Review completed fixture work",
+    objective: "Show an idle Jarvis worker session for cockpit UI fixtures",
+    status: "completed",
+    phase: "completed",
+    session_count: 1,
+    active_session_count: 0,
+    pending_input_count: 0,
+    pending_approval_count: 0,
+    artifact_count: 0,
+    primary_artifact_ids: [],
+    latest_cursor: "evt_fixture_completed_2",
+    terminal_reason: "completed",
   };
   const jarvisProjectId = JarvisProjectId.make("jarvis");
   const cockpitProjectId = JarvisProjectId.make("jarvis-cockpit");
@@ -2121,6 +2207,8 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
           project_id: cockpitProjectId,
           session_id: "project:jarvis-cockpit:orchestrator:thread_fixture_cockpit_plan",
           title: "Cockpit planning",
+          engine: "codex",
+          model: "gpt-5.5",
           created_at: now,
           updated_at: now,
           created_by: "neil",
@@ -2199,6 +2287,36 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       },
     },
   ];
+  const completedEvents: ReadonlyArray<JarvisSessionEvent> = [
+    {
+      event_id: JarvisSessionEvent.fields.event_id.make("evt_fixture_completed_1"),
+      sequence: 1,
+      session_ref: completedSession.session_ref,
+      run_id: completedRunId,
+      type: "session.created",
+      occurred_at: now,
+      turn_id: null,
+      message_id: null,
+      data: {
+        provider: "codex",
+        engine: "codex",
+        model: "gpt-5.5",
+      },
+    },
+    {
+      event_id: JarvisSessionEvent.fields.event_id.make("evt_fixture_completed_2"),
+      sequence: 2,
+      session_ref: completedSession.session_ref,
+      run_id: completedRunId,
+      type: "turn.completed",
+      occurred_at: now,
+      turn_id: "turn_fixture_completed_1",
+      message_id: null,
+      data: {
+        model: "gpt-5.5",
+      },
+    },
+  ];
   const initialSnapshot: JarvisRunsSnapshot = {
     api_version: "v1",
     schema_version: 1,
@@ -2210,8 +2328,8 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       synced_at: now,
       errors: [],
     },
-    runs: emptyProjects ? [] : [run],
-    sessions: emptyProjects ? [] : [session],
+    runs: emptyProjects ? [] : [run, completedRun],
+    sessions: emptyProjects ? [] : [session, completedSession],
     workers: [
       {
         worker_id: "macbook-worker" as JarvisWorkerSession["worker_id"],
@@ -2220,23 +2338,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
         health: "healthy",
         last_seen_at: now,
         capabilities: ["code.edit", "shell.run", "browser.use", "github.pr.create"],
-        engines: [
-          {
-            engine: "codex",
-            display_name: "Codex",
-            status: "available",
-            default: true,
-            supports: {
-              streaming: true,
-              resume: true,
-              interrupt: true,
-              approval_requests: true,
-              input_requests: true,
-              checkpoints: true,
-              attachments: true,
-            },
-          },
-        ],
+        engines: fixtureWorkerEngines,
         capacity: {
           max_sessions: 4,
           active_sessions: emptyProjects ? 0 : 1,
@@ -2297,23 +2399,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
         health: "healthy",
         last_seen_at: now,
         capabilities: ["code.edit", "shell.run", "browser.use", "github.pr.create"],
-        engines: [
-          {
-            engine: "codex",
-            display_name: "Codex",
-            status: "available",
-            default: true,
-            supports: {
-              streaming: true,
-              resume: true,
-              interrupt: true,
-              approval_requests: true,
-              input_requests: true,
-              checkpoints: true,
-              attachments: true,
-            },
-          },
-        ],
+        engines: fixtureWorkerEngines,
         capacity: {
           max_sessions: 4,
           active_sessions: 0,
@@ -2465,6 +2551,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
   };
   const eventsBySession = new Map<string, ReadonlyArray<JarvisSessionEvent>>([
     [session.session_ref, events],
+    [completedSession.session_ref, completedEvents],
   ]);
   const requestsBySession = new Map<string, ReadonlyArray<typeof request>>([
     [session.session_ref, [request]],
@@ -2548,6 +2635,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
     const repo = firstTrimmed(workInput.repo) ?? "roughcoder/jarvis";
     const engine = firstTrimmed(workInput.engine) ?? "codex";
     const provider = engine.toLowerCase().startsWith("claude") ? "claude" : "codex";
+    const model = fixtureDefaultModelForEngine(engine);
     const workerId = firstTrimmed(workInput.worker_id) ?? "macbook-worker";
     const linkedProjectId = firstTrimmed(workInput.project_id) ?? null;
     const workPurpose =
@@ -2564,6 +2652,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       ...run,
       run_id: syntheticRunId,
       project_id: linkedProjectId,
+      model,
       title,
       objective,
       status: "running",
@@ -2598,6 +2687,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       title,
       provider,
       engine,
+      model,
       status: "running",
       repo,
       branch: syntheticBranch,
@@ -2720,6 +2810,12 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
     const turnId = `turn_fixture_${fixtureIdSlug(targetSession.session_id)}_${nextSequence}`;
     const cursor = `${targetRun.run_id}_evt_turn_${nextSequence + 2}_completed`;
     const prompt = firstTrimmed(turnInput.prompt) ?? "Continue.";
+    const requestedModel = firstTrimmed(turnInput.model);
+    const model =
+      requestedModel ?? targetSession.model ?? fixtureDefaultModelForEngine(targetSession.engine);
+    const engine =
+      requestedModel === undefined ? targetSession.engine : fixtureEngineForModel(model);
+    const provider = engine === "claude" ? "claude" : "codex";
     const newEvents: ReadonlyArray<JarvisSessionEvent> = [
       fixtureEvent({
         eventId: `${targetRun.run_id}_evt_turn_${nextSequence}_started`,
@@ -2730,6 +2826,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
         turnId,
         data: {
           prompt,
+          model,
         },
       }),
       fixtureEvent({
@@ -2741,7 +2838,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
         turnId,
         messageId: `${turnId}_message`,
         data: {
-          text: `Fixture mode recorded the turn: ${prompt}`,
+          text: `Fixture mode recorded the ${model} turn: ${prompt}`,
         },
       }),
       fixtureEvent({
@@ -2755,11 +2852,15 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
     ];
     const updatedSession: JarvisWorkerSession = {
       ...targetSession,
+      provider,
+      engine,
+      model,
       latest_event_cursor: cursor,
       updated_at: now,
     };
     const updatedRun: JarvisRun = {
       ...targetRun,
+      model,
       latest_activity_at: now,
       latest_cursor: cursor,
       updated_at: now,
@@ -2897,6 +2998,24 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
               checkpoints: true,
               attachments: true,
             },
+            models: fixtureCodexModels,
+            default_model: "gpt-5.5",
+          },
+          {
+            engine: "claude",
+            display_name: "Claude",
+            description: "Claude Code agent session",
+            supports: {
+              streaming: true,
+              resume: true,
+              interrupt: true,
+              approval_requests: true,
+              input_requests: true,
+              checkpoints: true,
+              attachments: true,
+            },
+            models: fixtureClaudeModels,
+            default_model: "claude-opus-4-7",
           },
         ],
         capabilities: [
@@ -2958,6 +3077,24 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
                 checkpoints: true,
                 attachments: true,
               },
+              models: fixtureCodexModels,
+              default_model: "gpt-5.5",
+            },
+            {
+              engine: "claude",
+              display_name: "Claude",
+              description: "Claude Code agent session",
+              supports: {
+                streaming: true,
+                resume: true,
+                interrupt: true,
+                approval_requests: true,
+                input_requests: true,
+                checkpoints: true,
+                attachments: true,
+              },
+              models: fixtureClaudeModels,
+              default_model: "claude-opus-4-7",
             },
           ],
           capabilities: [
@@ -3324,6 +3461,8 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
         project_id: project.id,
         session_id: `project:${project.id}:orchestrator:thread_fixture_${threadSlug}_${generatedProjectThreadCount}`,
         title,
+        engine: "codex",
+        model: "gpt-5.5",
         created_at: now,
         updated_at: now,
         created_by: "fixture",
@@ -3444,9 +3583,20 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
         );
       }
       const workspace = fixtureConversationWorkspace(input.workspace);
-      const activeThread =
-        workspace === undefined ? thread : { ...thread, updated_at: now, workspace };
-      if (workspace !== undefined) {
+      const requestedModel = firstTrimmed(input.model);
+      const model =
+        requestedModel ??
+        thread.model ??
+        fixtureDefaultModelForEngine(workspace?.engine ?? thread.engine);
+      const engine = workspace?.engine ?? thread.engine ?? fixtureEngineForModel(model);
+      const activeThread = {
+        ...thread,
+        engine,
+        model,
+        updated_at: now,
+        ...(workspace !== undefined ? { workspace } : {}),
+      };
+      if (workspace !== undefined || requestedModel !== undefined) {
         projectThreads.set(
           candidateProjectId,
           (projectThreads.get(candidateProjectId) ?? []).map((candidate) =>
@@ -3454,7 +3604,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
           ),
         );
       }
-      const text = `Fixture Jarvis recorded a Codex project conversation for ${project.name}: ${input.text}`;
+      const text = `Fixture Jarvis recorded a ${model} project conversation for ${project.name}: ${input.text}`;
       const key = projectThreadKey(candidateProjectId, threadId);
       projectThreadMessages.set(key, [
         ...(projectThreadMessages.get(key) ?? []),
@@ -3467,7 +3617,12 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
         events: [
           {
             event: "thread.turn.started",
-            data: { thread_id: activeThread.thread_id, project_id: project.id },
+            data: {
+              thread_id: activeThread.thread_id,
+              project_id: project.id,
+              engine,
+              model,
+            },
           },
           {
             event: "thread.reply",

@@ -79,6 +79,7 @@ import {
 } from "../composer/ComposerOverridesStrip";
 import { ComposerWorkspaceEnginePicker } from "../composer/ComposerWorkspaceEnginePicker";
 import type { ComposerCapabilities } from "../composer/composerCapabilities";
+import { workspaceEngineOptionsFromWorkers } from "../projectConversationWorkspace.logic";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
@@ -1068,10 +1069,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ],
   );
 
+  const shouldReadJarvisSnapshot =
+    canRouteJarvisStart ||
+    (capabilities.picker === "workspace-engine" && brainWorkspace !== undefined);
   const jarvisSnapshotQuery = useEnvironmentQuery(
-    canRouteJarvisStart ? serverEnvironment.jarvisSnapshot({ environmentId, input: {} }) : null,
+    shouldReadJarvisSnapshot
+      ? serverEnvironment.jarvisSnapshot({ environmentId, input: {} })
+      : null,
   );
   const jarvisWorkers = jarvisSnapshotQuery.data?.snapshot?.workers ?? [];
+  const workspaceEngineOptions = useMemo(
+    () => workspaceEngineOptionsFromWorkers(jarvisWorkers),
+    [jarvisWorkers],
+  );
   useEffect(() => {
     if (
       !jarvisSnapshotQuery.isPending &&
@@ -3077,6 +3087,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     <ComposerWorkspaceEnginePicker
                       compact={isComposerFooterCompact}
                       staging={brainWorkspace.staging}
+                      engineOptions={workspaceEngineOptions}
                       {...(brainWorkspace.disabled === undefined
                         ? {}
                         : { disabled: brainWorkspace.disabled })}

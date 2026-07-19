@@ -94,10 +94,13 @@ import {
 } from "./projectConversationComposer.logic";
 import {
   buildTurnWorkspaceInput,
+  buildTurnModelInput,
   clearProjectConversationWorkspaceRepos,
   createProjectConversationWorkspaceStaging,
+  projectConversationModelMatchesSubmission,
   projectConversationWorkspaceMatchesSubmission,
-  setProjectConversationWorkspaceEngine,
+  syncProjectConversationWorkspaceSelection,
+  workspaceEngineOptionsFromWorkers,
   type ProjectConversationWorkspaceStaging,
 } from "./projectConversationWorkspace.logic";
 import { projectConversationCapabilities } from "./composer/composerCapabilities";
@@ -149,6 +152,7 @@ interface ProjectConversationSubmissionSnapshot {
   readonly attachments: ReadonlyArray<JarvisTurnAttachment>;
   readonly composerImages: ReadonlyArray<ComposerImageAttachment>;
   readonly workspace: JarvisTurnWorkspaceInput | null;
+  readonly model: string | null;
 }
 
 const PROJECT_CONVERSATION_FILE_DATA_URL_READ_MESSAGES = {
@@ -253,6 +257,13 @@ export function AgentConversationChatView({
     [filesQuery.data],
   );
   const providerStatuses = useAtomValue(primaryServerProvidersAtom);
+  const jarvisSnapshotQuery = useEnvironmentQuery(
+    serverEnvironment.jarvisSnapshot({ environmentId, input: {} }),
+  );
+  const workspaceEngineOptions = useMemo(
+    () => workspaceEngineOptionsFromWorkers(jarvisSnapshotQuery.data?.snapshot?.workers ?? []),
+    [jarvisSnapshotQuery.data?.snapshot?.workers],
+  );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const settings = useEnvironmentSettings(environmentId);
   const { resolvedTheme } = useTheme();
@@ -384,6 +395,7 @@ export function AgentConversationChatView({
   const projectName = project?.name ?? projectId;
   const archived = isProjectConversationArchived(conversation);
   const conversationWorkspace = conversation?.workspace ?? null;
+  const conversationWorkspaceEngine = conversationWorkspace?.engine ?? conversation?.engine;
   const archiveSummary = archivedProjectConversationSummary(conversation);
   const conversationTitle = resolveProjectConversationTitle({
     serverTitle: conversation?.title ?? "Project conversation",
@@ -472,18 +484,17 @@ export function AgentConversationChatView({
   }, [routeThreadKey, routeThreadRef]);
 
   useEffect(() => {
-    const engine = conversationWorkspace?.engine?.trim().toLowerCase();
-    if (engine !== "codex" && engine !== "claude") {
-      return;
-    }
     setWorkspaceStagingByThread((existing) => ({
       ...existing,
-      [workspaceStagingKey]: setProjectConversationWorkspaceEngine(
+      [workspaceStagingKey]: syncProjectConversationWorkspaceSelection(
         existing[workspaceStagingKey] ?? createProjectConversationWorkspaceStaging(),
-        engine,
+        {
+          engine: conversationWorkspaceEngine,
+          model: conversation?.model,
+        },
       ),
     }));
-  }, [conversationWorkspace?.engine, workspaceStagingKey]);
+  }, [conversation?.model, conversationWorkspaceEngine, workspaceStagingKey]);
 
   const threadsRefreshRef = useRef(threadsQuery.refresh);
   useEffect(() => {
@@ -761,13 +772,24 @@ export function AgentConversationChatView({
     const existingTurnId = options.existingTurnId;
     const turnAttachments = submission.attachments;
     const turnWorkspace = submission.workspace;
+    const turnModel = submission.model;
     const workspaceMatchesSubmission = projectConversationWorkspaceMatchesSubmission(
-      buildTurnWorkspaceInput(workspaceStaging, conversation?.engine),
+      buildTurnWorkspaceInput(workspaceStaging, conversationWorkspaceEngine),
       turnWorkspace,
+    );
+    const modelMatchesSubmission = projectConversationModelMatchesSubmission(
+      buildTurnModelInput(
+        workspaceStaging,
+        conversationWorkspaceEngine,
+        conversation?.model,
+        workspaceEngineOptions,
+      ) ?? null,
+      turnModel,
     );
     const clearMatchingRetryDraft =
       existingTurnId !== undefined &&
       workspaceMatchesSubmission &&
+      modelMatchesSubmission &&
       projectConversationComposerMatchesSubmission({
         draftPrompt: promptRef.current,
         draftImageIds: composerImagesRef.current.map((image) => image.id),
@@ -789,6 +811,7 @@ export function AgentConversationChatView({
           response: "",
           toolItems: [],
           workspaceInput: turnWorkspace,
+          modelInput: turnModel,
           attachments: turnAttachments,
           composerImages: submission.composerImages,
           status: "pending",
@@ -812,6 +835,7 @@ export function AgentConversationChatView({
         input: {
           text,
           idempotency_key: `project-thread-turn-${turnId}`,
+          ...(turnModel !== null ? { model: turnModel } : {}),
           ...(turnAttachments.length > 0 ? { attachments: turnAttachments } : {}),
           ...(turnWorkspace !== null ? { workspace: turnWorkspace } : {}),
         },
@@ -868,7 +892,14 @@ export function AgentConversationChatView({
     if (sendBusy || archived || conversation === null) return;
     const sendContext = composerRef.current?.getSendContext();
     if (!sendContext) return;
-    const workspace = buildTurnWorkspaceInput(workspaceStaging, conversation?.engine);
+    const workspace = buildTurnWorkspaceInput(workspaceStaging, conversationWorkspaceEngine);
+    const model =
+      buildTurnModelInput(
+        workspaceStaging,
+        conversationWorkspaceEngine,
+        conversation.model,
+        workspaceEngineOptions,
+      ) ?? null;
     const attachments = await prepareProjectTurnAttachments({
       images: sendContext.images,
       persistedImages: sendContext.persistedImages,
@@ -881,6 +912,7 @@ export function AgentConversationChatView({
       attachments,
       composerImages: [...sendContext.images],
       workspace: workspace ?? null,
+      model,
     });
   };
 
@@ -893,6 +925,7 @@ export function AgentConversationChatView({
         attachments: turn.attachments ?? [],
         composerImages: turn.composerImages ?? [],
         workspace: turn.workspaceInput ?? null,
+        model: turn.modelInput ?? null,
       },
       { existingTurnId: localTurnId },
     );

@@ -134,9 +134,16 @@ it.effect("fixture client exposes a v1 run snapshot and paginated details", () =
   Effect.gen(function* () {
     const client = makeJarvisFixtureClient();
     const fixtureSnapshot = yield* client.getSnapshot();
-    const fixtureSession = fixtureSnapshot.sessions[0];
+    const fixtureSession = fixtureSnapshot.sessions.find(
+      (session) => session.session_id === "sess_fixture_codex",
+    );
     assert.strictEqual(fixtureSnapshot.api_version, "v1");
-    assert.strictEqual(fixtureSnapshot.runs.length, 1);
+    assert.strictEqual(fixtureSnapshot.runs.length, 2);
+    assert.ok(
+      fixtureSnapshot.sessions.some(
+        (session) => session.session_id === "sess_fixture_completed_codex",
+      ),
+    );
     assert.strictEqual(fixtureSession?.provider, "codex");
 
     const events = yield* client.getSessionEvents(fixtureSession?.session_ref ?? "");
@@ -387,6 +394,7 @@ it.effect("fixture client records project conversation workspace escalation", ()
 
     yield* client.sendProjectThreadTurn("jarvis-cockpit", thread.thread_id, {
       text: "Inspect runtime.",
+      model: "gpt-5.6",
       idempotency_key: "fixture-workspace-escalation",
       workspace: {
         repos: [{ name: "runtime", base_ref: "origin/main" }],
@@ -396,6 +404,7 @@ it.effect("fixture client records project conversation workspace escalation", ()
     const detail = yield* client.getProjectThread("jarvis-cockpit", thread.thread_id);
 
     assert.strictEqual(detail.workspace?.engine, "codex");
+    assert.strictEqual(detail.model, "gpt-5.6");
     assert.strictEqual(detail.workspace?.worktrees[0]?.name, "runtime");
     assert.strictEqual(detail.workspace?.worktrees[0]?.base_ref, "origin/main");
   }),
@@ -747,6 +756,7 @@ it.effect("cockpit client decodes JSON project thread turn responses", () =>
 
     const result = yield* client.sendProjectThreadTurn("dogfood", "thread-1", {
       text: "What changed?",
+      model: "gpt-5.6",
       idempotency_key: "turn-1",
       workspace: {
         repos: [{ name: "runtime", base_ref: "origin/main" }],
@@ -759,6 +769,7 @@ it.effect("cockpit client decodes JSON project thread turn responses", () =>
     assert.strictEqual(result.events[0]?.event, "thread.reply");
     assert.deepStrictEqual(requests[0]?.body, {
       text: "What changed?",
+      model: "gpt-5.6",
       idempotency_key: "turn-1",
       workspace: {
         repos: [{ name: "runtime", base_ref: "origin/main" }],
