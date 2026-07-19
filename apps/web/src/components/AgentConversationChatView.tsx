@@ -101,7 +101,6 @@ import {
   type ProjectConversationWorkspaceStaging,
 } from "./projectConversationWorkspace.logic";
 import { projectConversationCapabilities } from "./composer/composerCapabilities";
-import { BrainWorkspaceStrip } from "./composer/BrainWorkspaceStrip";
 import {
   buildProjectConversationRenameInput,
   buildProjectConversationTitleGenerationContext,
@@ -410,8 +409,9 @@ export function AgentConversationChatView({
       projectConversationCapabilities({
         catalog: null,
         engine: conversation?.engine,
+        hasWorkspace: conversationWorkspace !== null,
       }),
-    [conversation?.engine],
+    [conversation?.engine, conversationWorkspace],
   );
   const composerDisabledReason =
     conversation === null
@@ -1509,17 +1509,13 @@ export function AgentConversationChatView({
                     resolvedTheme={resolvedTheme}
                     settings={settings}
                     keybindings={keybindings}
-                    idlePlaceholder="Send a project conversation turn"
-                    belowComposer={
-                      <BrainWorkspaceStrip
-                        compact={false}
-                        project={project}
-                        workspace={conversationWorkspace}
-                        staging={workspaceStaging}
-                        disabled={conversation === null || archived || sendBusy}
-                        onStagingChange={setWorkspaceStaging}
-                      />
-                    }
+                    brainWorkspace={{
+                      project,
+                      workspace: conversationWorkspace,
+                      staging: workspaceStaging,
+                      disabled: conversation === null || archived || sendBusy,
+                      onStagingChange: setWorkspaceStaging,
+                    }}
                     terminalOpen={false}
                     gitCwd={null}
                     promptRef={promptRef}

@@ -23,18 +23,18 @@ describe("composer capabilities", () => {
         maxDecodedBytes: PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
         mimeTypes: ["image/*"],
       },
-      engineControl: true,
+      picker: "provider-model",
       approvalControl: true,
       interactionControl: true,
       mentions: true,
       slashCommands: true,
-      jarvisRouting: true,
+      contextStrip: "jarvis-routing",
       enterToSend: true,
     });
   });
 
   it("allows draft Jarvis routing to be disabled by caller context", () => {
-    expect(draftComposerCapabilities({ jarvisRouting: false }).jarvisRouting).toBe(false);
+    expect(draftComposerCapabilities({ jarvisRouting: false }).contextStrip).toBe(null);
   });
 
   it("builds running-thread composer capabilities with fixed routing and engine", () => {
@@ -44,12 +44,12 @@ describe("composer capabilities", () => {
         maxDecodedBytes: PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
         mimeTypes: ["image/*"],
       },
-      engineControl: false,
+      picker: null,
       approvalControl: true,
       interactionControl: true,
       mentions: true,
       slashCommands: true,
-      jarvisRouting: false,
+      contextStrip: null,
       enterToSend: true,
     });
   });
@@ -68,14 +68,31 @@ describe("composer capabilities", () => {
         maxDecodedBytes: PROJECT_TURN_ATTACHMENT_MAX_DECODED_BYTES,
         mimeTypes: PROJECT_TURN_ATTACHMENT_IMAGE_MIME_TYPES,
       },
-      engineControl: false,
+      picker: "workspace-engine",
       approvalControl: false,
       interactionControl: false,
       mentions: false,
-      slashCommands: false,
-      jarvisRouting: false,
+      slashCommands: true,
+      contextStrip: "brain-workspace",
       enterToSend: true,
     });
     expect(projectConversationCapabilities({ catalog, engine: "claude" }).attachments).toBe(null);
+  });
+
+  it("enables file mentions on project conversations only once a workspace exists", () => {
+    const input = { catalog: null, engine: "codex" };
+
+    expect(projectConversationCapabilities(input).mentions).toBe(false);
+    expect(projectConversationCapabilities({ ...input, hasWorkspace: false }).mentions).toBe(false);
+    expect(projectConversationCapabilities({ ...input, hasWorkspace: true }).mentions).toBe(true);
+  });
+
+  it("routes each surface to its own context strip and picker", () => {
+    expect(draftComposerCapabilities().contextStrip).toBe("jarvis-routing");
+    expect(draftComposerCapabilities().picker).toBe("provider-model");
+
+    const project = projectConversationCapabilities({ catalog: null, engine: "codex" });
+    expect(project.contextStrip).toBe("brain-workspace");
+    expect(project.picker).toBe("workspace-engine");
   });
 });
