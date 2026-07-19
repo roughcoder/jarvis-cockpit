@@ -2074,23 +2074,28 @@ const makeWsRpcLayer = (
         [WS_METHODS.serverPruneJarvisWorkerWorktrees]: ({ input }) =>
           observeRpcEffect(
             WS_METHODS.serverPruneJarvisWorkerWorktrees,
-            jarvisClient.pruneWorkerWorktrees(input.workerId).pipe(
-              Effect.map((result) => ({
-                ok: result.ok,
-                result,
-              })),
-              Effect.catch((error) =>
-                Effect.succeed({
-                  ok: false,
-                  error: {
-                    message:
-                      error instanceof Error && error.message.trim().length > 0
-                        ? error.message
-                        : "Jarvis worker worktree prune failed.",
-                  },
-                }),
+            jarvisClient
+              .pruneWorkerWorktrees({
+                workerId: input.workerId,
+                idempotencyKey: input.idempotencyKey,
+              })
+              .pipe(
+                Effect.map((result) => ({
+                  ok: result.ok,
+                  result,
+                })),
+                Effect.catch((error) =>
+                  Effect.succeed({
+                    ok: false,
+                    error: {
+                      message:
+                        error instanceof Error && error.message.trim().length > 0
+                          ? error.message
+                          : "Jarvis worker worktree prune failed.",
+                    },
+                  }),
+                ),
               ),
-            ),
             {
               "rpc.aggregate": "server",
             },

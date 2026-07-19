@@ -113,7 +113,13 @@ describe("workerIdentityAccessSummary", () => {
         rows: [],
         reported: false,
       },
-      worktreeInventory: NOT_REPORTED,
+      worktreeInventory: {
+        summary: NOT_REPORTED,
+        root: NOT_REPORTED,
+        status: NOT_REPORTED,
+        detail: NOT_REPORTED,
+        reported: false,
+      },
     });
   });
 
@@ -140,7 +146,14 @@ describe("workerIdentityAccessSummary", () => {
               reason: "Worker identity cannot read this repo.",
             },
           ],
-          worktree_inventory: { count: 3, disk_bytes: 123456, stale_count: 1 },
+          worktree_inventory: {
+            root: "/tmp/worker/worktrees",
+            count: 3,
+            disk_bytes: 123456,
+            stale_count: 1,
+            orphan_count: 2,
+            status: "measured",
+          },
         }),
       ),
     ).toEqual({
@@ -169,7 +182,36 @@ describe("workerIdentityAccessSummary", () => {
         ],
         reported: true,
       },
-      worktreeInventory: "3 worktrees / 121 KB / 1 stale",
+      worktreeInventory: {
+        summary: "Measured: 3 worktrees / 121 KB / 1 stale / 2 orphans",
+        root: "/tmp/worker/worktrees",
+        status: "measured",
+        detail: "Measured: 3 worktrees / 121 KB / 1 stale / 2 orphans",
+        reported: true,
+      },
+    });
+  });
+
+  it("renders null worktree inventory counts as not measured with the scan root", () => {
+    expect(
+      workerIdentityAccessSummary(
+        worker({
+          worktree_inventory: {
+            root: "/tmp/worker/worktrees",
+            count: null,
+            disk_bytes: null,
+            stale_count: null,
+            orphan_count: null,
+            status: "refreshing",
+          },
+        }),
+      ).worktreeInventory,
+    ).toEqual({
+      summary: "Refreshing: not measured",
+      root: "/tmp/worker/worktrees",
+      status: "refreshing",
+      detail: "Refreshing: not measured",
+      reported: true,
     });
   });
 });
@@ -184,7 +226,27 @@ describe("formatWorkerWorktreePruneResult", () => {
         pruned: [{ name: "old", bytes: 1536 }],
         refused: [],
       }),
-    ).toBe("Pruned 1 worktree, reclaimed 1.5 KB.");
+    ).toBe("Removed 1 worktree, reclaimed 1.5 KB; 0 kept.");
+  });
+
+  it("formats new prune reclamation packets with the kept inventory count", () => {
+    expect(
+      formatWorkerWorktreePruneResult({
+        ok: true,
+        worker_id: JarvisWorkerId.make("mac-mini-worker"),
+        reclamation: { records: 0, events: 0, worktrees: 2, bytes: 8192 },
+        pruned: [{ name: "old", bytes: 4096 }],
+        refused: [],
+        worktree_inventory: {
+          root: "/tmp/worker/worktrees",
+          count: 1,
+          disk_bytes: 4096,
+          stale_count: 0,
+          orphan_count: 0,
+          status: "measured",
+        },
+      }),
+    ).toBe("Removed 2 worktrees, reclaimed 8.0 KB; 1 kept.");
   });
 
   it("keeps refused worktrees visible in the summary", () => {
@@ -196,7 +258,7 @@ describe("formatWorkerWorktreePruneResult", () => {
         pruned: [],
         refused: [{ target: "live", reason: "live session uses this worktree" }],
       }),
-    ).toBe("Pruned 0 worktrees, reclaimed 0 B; 1 refused.");
+    ).toBe("Removed 0 worktrees, reclaimed 0 B; 1 kept (1 refused).");
   });
 });
 

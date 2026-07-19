@@ -38,7 +38,7 @@ export interface WorkerWarmCheckout {
 export interface WorkerIdentityAccessSummary {
   readonly gitIdentity: WorkerGitIdentityPresentation;
   readonly repoAccess: WorkerRepoAccessPresentation;
-  readonly worktreeInventory: string;
+  readonly worktreeInventory: WorkerWorktreeInventoryPresentation;
 }
 
 export type WorkerGitAuthStatePresentation = "valid" | "expired" | "unconfigured" | "not-reported";
@@ -60,6 +60,14 @@ export interface WorkerRepoAccessRow {
 export interface WorkerRepoAccessPresentation {
   readonly summary: string;
   readonly rows: ReadonlyArray<WorkerRepoAccessRow>;
+  readonly reported: boolean;
+}
+
+export interface WorkerWorktreeInventoryPresentation {
+  readonly summary: string;
+  readonly root: string;
+  readonly status: string;
+  readonly detail: string;
   readonly reported: boolean;
 }
 
@@ -203,12 +211,15 @@ export function workerIdentityAccessSummary(
 }
 
 export function formatWorkerWorktreePruneResult(result: JarvisWorkerWorktreePruneResponse): string {
-  const reclaimed = formatBytes(result.bytes);
-  const pruned = `${result.worktrees} worktree${result.worktrees === 1 ? "" : "s"}`;
-  if (result.refused.length > 0) {
-    return `Pruned ${pruned}, reclaimed ${reclaimed}; ${result.refused.length} refused.`;
-  }
-  return `Pruned ${pruned}, reclaimed ${reclaimed}.`;
+  const removedCount = worktreePruneRemovedCount(result);
+  const reclaimed = formatBytes(worktreePruneBytes(result));
+  const removed = `${removedCount} worktree${removedCount === 1 ? "" : "s"}`;
+  const keptCount = worktreePruneKeptCount(result);
+  const kept =
+    keptCount === null
+      ? "kept not measured"
+      : `${keptCount} kept${result.refused.length > 0 ? ` (${result.refused.length} refused)` : ""}`;
+  return `Removed ${removed}, reclaimed ${reclaimed}; ${kept}.`;
 }
 
 export function selectWorkerTestJobRepo(worker: JarvisWorkerProfile): string | null {
@@ -455,24 +466,63 @@ function metadataValue(worker: JarvisWorkerProfile, keys: ReadonlyArray<string>)
   return null;
 }
 
-function formatWorktreeInventory(value: unknown): string {
-  if (!isRecord(value)) return NOT_REPORTED;
+function formatWorktreeInventory(value: unknown): WorkerWorktreeInventoryPresentation {
+  if (!isRecord(value)) {
+    return {
+      summary: NOT_REPORTED,
+      root: NOT_REPORTED,
+      status: NOT_REPORTED,
+      detail: NOT_REPORTED,
+      reported: false,
+    };
+  }
   const count = numberValue(value["count"]);
   const diskBytes = numberValue(value["disk_bytes"]) ?? numberValue(value["diskBytes"]);
-  const disk =
-    (diskBytes !== null ? formatBytes(diskBytes) : null) ??
-    stringValue(value["disk"]) ??
-    stringValue(value["disk_usage"]) ??
-    stringValue(value["diskUsage"]);
+  const disk = diskBytes !== null ? formatBytes(diskBytes) : null;
   const stale =
     numberValue(value["stale"]) ??
     numberValue(value["stale_count"]) ??
     numberValue(value["staleCount"]);
-  const parts: string[] = [];
-  if (count !== null) parts.push(`${count} worktree${count === 1 ? "" : "s"}`);
-  if (disk) parts.push(disk);
+  const orphan =
+    numberValue(value["orphan"]) ??
+    numberValue(value["orphan_count"]) ??
+    numberValue(value["orphanCount"]);
+  const status = stringValue(value["status"]) ?? (count !== null ? "measured" : "unknown");
+  const root = stringValue(value["root"]) ?? NOT_REPORTED;
+  const statusLabel = status.replaceAll("_", " ");
+  const countLabel = count !== null ? `${count} worktree${count === 1 ? "" : "s"}` : "not measured";
+  const parts = [countLabel];
+  if (disk !== null) parts.push(disk);
   if (stale !== null) parts.push(`${stale} stale`);
-  return parts.length > 0 ? parts.join(" / ") : NOT_REPORTED;
+  if (orphan !== null) parts.push(`${orphan} orphan${orphan === 1 ? "" : "s"}`);
+  const summary = `${titleCase(statusLabel)}: ${parts.join(" / ")}`;
+  const error = stringValue(value["error"]);
+  return {
+    summary,
+    root,
+    status: statusLabel,
+    detail: error ? `${summary}. ${error}` : summary,
+    reported: true,
+  };
+}
+
+function worktreePruneRemovedCount(result: JarvisWorkerWorktreePruneResponse): number {
+  return result.reclamation?.worktrees ?? result.worktrees ?? result.pruned.length;
+}
+
+function worktreePruneBytes(result: JarvisWorkerWorktreePruneResponse): number {
+  return (
+    result.reclamation?.bytes ??
+    result.bytes ??
+    result.pruned.reduce((total, item) => total + item.bytes, 0)
+  );
+}
+
+function worktreePruneKeptCount(result: JarvisWorkerWorktreePruneResponse): number | null {
+  const inventoryCount = result.worktree_inventory?.count;
+  if (typeof inventoryCount === "number") return inventoryCount;
+  if (result.refused.length > 0) return result.refused.length;
+  return result.worktree_inventory ? null : 0;
 }
 
 function formatBytes(bytes: number): string {
@@ -506,4 +556,9 @@ function numberValue(value: unknown): number | null {
 
 function booleanValue(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
+}
+
+function titleCase(value: string): string {
+  if (value.length === 0) return value;
+  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
 }

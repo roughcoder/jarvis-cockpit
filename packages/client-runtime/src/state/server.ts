@@ -246,6 +246,14 @@ export function createServerEnvironmentAtoms<R, E>(
       // mounted panel shares this visible-state reconciliation cadence.
       refreshIntervalMs: 10_000,
     }),
+    refreshJarvisSnapshot: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:refresh-jarvis-snapshot",
+      tag: WS_METHODS.serverGetJarvisSnapshot,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
     jarvisMcpStatus: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:jarvis-mcp-status",
       tag: WS_METHODS.serverGetJarvisMcpStatus,

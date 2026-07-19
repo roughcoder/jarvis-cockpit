@@ -27,6 +27,7 @@ import {
   JarvisStartWorkValidationResult,
   JarvisTurnInput,
   JarvisUserInputInput,
+  JarvisWorkerWorktreePruneResponse,
 } from "./jarvis.ts";
 
 const decodeCatalog = Schema.decodeUnknownEffect(JarvisCockpitCatalog);
@@ -53,6 +54,9 @@ const decodeProjectThreadDetail = Schema.decodeUnknownEffect(JarvisProjectThread
 const decodeProjectThreads = Schema.decodeUnknownEffect(JarvisProjectThreadsResponse);
 const decodeProjectThreadTurn = Schema.decodeUnknownEffect(JarvisProjectThreadTurnInput);
 const decodeProjectThreadControl = Schema.decodeUnknownEffect(JarvisProjectThreadControlResponse);
+const decodeWorkerWorktreePruneResponse = Schema.decodeUnknownEffect(
+  JarvisWorkerWorktreePruneResponse,
+);
 const encodeProjectThreadDetail = Schema.encodeEffect(JarvisProjectThreadDetailResponse);
 const encodeProjectThreadTurn = Schema.encodeEffect(JarvisProjectThreadTurnInput);
 
@@ -1316,6 +1320,14 @@ it.effect(
               detail: "",
             },
             repo_access: [{ repo: "roughcoder/jarvis", accessible: null, cached: null }],
+            worktree_inventory: {
+              root: "/tmp/worker/worktrees",
+              count: null,
+              disk_bytes: null,
+              stale_count: null,
+              orphan_count: null,
+              status: "refreshing",
+            },
             public_metadata: {},
           },
         ],
@@ -1327,7 +1339,41 @@ it.effect(
       assert.strictEqual(parsed.sessions[0]?.supported_controls.includes("unarchive"), true);
       assert.strictEqual(parsed.workers[0]?.git_identity?.authenticated, null);
       assert.strictEqual(parsed.workers[0]?.repo_access?.at(0)?.accessible, null);
+      assert.strictEqual(parsed.workers[0]?.worktree_inventory?.count, null);
+      assert.strictEqual(parsed.workers[0]?.worktree_inventory?.status, "refreshing");
+      assert.strictEqual(parsed.workers[0]?.worktree_inventory?.root, "/tmp/worker/worktrees");
     }),
+);
+
+it.effect("decodes worker worktree prune responses with reclamation and fresh inventory", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeWorkerWorktreePruneResponse({
+      ok: true,
+      worker_id: "macbook-worker",
+      cursor: "cursor_prune_1",
+      reclamation: {
+        records: 0,
+        events: 0,
+        worktrees: 2,
+        bytes: 8192,
+      },
+      pruned: [{ name: "old-a", bytes: 4096 }],
+      refused: [{ target: "live", reason: "live session uses this worktree" }],
+      worktree_inventory: {
+        root: "/tmp/worker/worktrees",
+        count: 1,
+        disk_bytes: 4096,
+        stale_count: 0,
+        orphan_count: 0,
+        status: "measured",
+      },
+    });
+
+    assert.strictEqual(parsed.reclamation?.worktrees, 2);
+    assert.strictEqual(parsed.reclamation?.bytes, 8192);
+    assert.strictEqual(parsed.worktree_inventory?.count, 1);
+    assert.strictEqual(parsed.refused.length, 1);
+  }),
 );
 
 it.effect("decodes root project threads that report empty parent_chat_id", () =>
