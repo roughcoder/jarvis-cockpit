@@ -81,7 +81,7 @@ function createProviderServiceHarness(
   providerName: ProviderSession["provider"] = ProviderDriverKind.make("codex"),
 ) {
   const now = "2026-01-01T00:00:00.000Z";
-  const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
+  const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>({ replay: 16 }));
   const rollbackConversation = vi.fn(
     (_input: { readonly threadId: ThreadId; readonly numTurns: number }) => Effect.void,
   );

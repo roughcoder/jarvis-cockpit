@@ -1944,8 +1944,11 @@ it.effect("snapshotWithValidSessions drops only individually-invalid session row
       sessions: [session, malformed],
     });
     assert.isNotNull(sanitized);
-    assert.strictEqual(sanitized?.dropped, 1);
-    const kept = (sanitized?.candidate as { sessions: ReadonlyArray<unknown> }).sessions;
+    if (sanitized === null) {
+      assert.fail("Expected malformed sessions to produce a sanitized snapshot.");
+    }
+    assert.strictEqual(sanitized.dropped, 1);
+    const kept = (sanitized.candidate as { sessions: ReadonlyArray<unknown> }).sessions;
     assert.strictEqual(kept.length, 1);
     assert.strictEqual(kept[0], session);
   }),

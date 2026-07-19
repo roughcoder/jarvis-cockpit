@@ -25,7 +25,7 @@ const makeRuntimeReceiptBus = Effect.succeed({
 } satisfies RuntimeReceiptBusShape);
 
 const makeRuntimeReceiptBusTest = Effect.gen(function* () {
-  const pubSub = yield* PubSub.unbounded<OrchestrationRuntimeReceipt>();
+  const pubSub = yield* PubSub.unbounded<OrchestrationRuntimeReceipt>({ replay: 128 });
 
   return {
     publish: (receipt) => PubSub.publish(pubSub, receipt).pipe(Effect.asVoid),
