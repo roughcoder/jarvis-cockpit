@@ -2014,7 +2014,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       ...message,
       message_id: `msg_fixture_${String(sequence).padStart(4, "0")}`,
       sequence,
-      observed_at: new Date(fixtureMessageEpochMs + sequence * 1000).toISOString(),
+      observed_at: DateTime.formatIso(DateTime.makeUnsafe(fixtureMessageEpochMs + sequence * 1000)),
     };
   };
   const sessionRef = JarvisSessionRef.make("sessref_macbook-worker_sess_fixture_codex");
