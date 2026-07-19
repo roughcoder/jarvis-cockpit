@@ -184,6 +184,23 @@ describe("environmentBootstrap", () => {
     });
   });
 
+  it("uses the vite proxy when the raw dev origin host differs from the configured loopback host", async () => {
+    vi.stubEnv("VITE_DEV_SERVER_URL", "http://localhost:4311/");
+    vi.stubEnv("VITE_HTTP_URL", "http://localhost:13773");
+    vi.stubEnv("VITE_WS_URL", "ws://localhost:13773");
+    installTestBrowser("http://127.0.0.1:4311/");
+    await installDescriptorApi();
+
+    await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
+    expect(resolvePrimaryEnvironmentHttpUrl("/.well-known/t3/environment")).toBe(
+      "http://127.0.0.1:4311/.well-known/t3/environment",
+    );
+    expect(getPrimaryKnownEnvironment()?.target).toEqual({
+      httpBaseUrl: "http://127.0.0.1:4311/",
+      wsBaseUrl: "ws://127.0.0.1:4311/",
+    });
+  });
+
   it("uses the vite proxy for configured local HTTPS dev domains during local dev", async () => {
     vi.stubEnv("VITE_DEV_SERVER_URL", "https://cockpit.local/");
     vi.stubEnv("VITE_HTTP_URL", "http://localhost:13773");

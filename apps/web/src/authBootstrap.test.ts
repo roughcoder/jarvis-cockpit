@@ -451,20 +451,53 @@ describe("resolveInitialServerAuthGateState", () => {
     expect(testApi.calls.browserSession).toEqual([{ credential: "bad-token" }]);
   });
 
-  it("derives primary request messages from structural request context", async () => {
-    const cause = new Error("private transport detail");
+  it("derives HTTP primary request messages from structural request context", async () => {
+    const cause = new EnvironmentAuthInvalidError({
+      code: "auth_invalid",
+      reason: "missing_credential",
+      traceId: "trace-missing-session",
+    });
     const { PrimaryEnvironmentRequestError } = await import("./environments/primary");
     const error = PrimaryEnvironmentRequestError.fromCause({
       operation: "list-pairing-links",
       cause,
     });
 
-    expect(error.status).toBe(500);
+    expect(error.failure).toEqual({
+      kind: "http-status",
+      status: 401,
+    });
     expect(error.cause).toBe(cause);
     expect(error.message).toBe(
-      "Primary environment request failed during list-pairing-links (HTTP 500).",
+      "Primary environment request failed during list-pairing-links (HTTP 401).",
     );
-    expect(error.message).not.toContain(cause.message);
+    expect(error.message).not.toContain(cause.traceId);
+  });
+
+  it("derives transport primary request messages without fabricating HTTP status", async () => {
+    const request = HttpClientRequest.get("http://localhost:13773/api/auth/session");
+    const cause = new HttpClientError.HttpClientError({
+      reason: new HttpClientError.TransportError({
+        request,
+        cause: new TypeError("Failed to fetch"),
+      }),
+    });
+    const { PrimaryEnvironmentRequestError } = await import("./environments/primary");
+    const error = PrimaryEnvironmentRequestError.fromCause({
+      operation: "fetch-session-state",
+      cause,
+    });
+
+    expect(error.failure).toEqual({
+      kind: "transport",
+      requestUrl: "http://localhost:13773/api/auth/session",
+    });
+    expect(error.cause).toBe(cause);
+    expect(error.message).toBe(
+      "Primary environment request failed during fetch-session-state: could not reach the server at http://localhost:13773/api/auth/session - network/CORS error.",
+    );
+    expect(error.message).not.toContain("HTTP 500");
+    expect(error.message).not.toContain("Failed to fetch");
   });
 
   it("waits for the authenticated session to become observable after silent desktop bootstrap", async () => {
