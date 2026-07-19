@@ -48,7 +48,13 @@ it.effect("loads Jarvis fixture data as orchestration shell and read-model snaps
       "jarvis-session_sessref_macbook-worker_sess_fixture_codex",
     );
     assert.strictEqual(readModel.projects[0]?.deletedAt, null);
-    assert.strictEqual(readModel.threads[0]?.activities.length, 2);
+    // The fixture session emits two events (session.created, input.requested) but the activity
+    // rail suppresses lifecycle events, so only the input request is presented.
+    assert.strictEqual(readModel.threads[0]?.activities.length, 1);
+    assert.strictEqual(
+      readModel.threads[0]?.activities[0]?.summary,
+      "Choose the next worker action.",
+    );
   }),
 );
 
@@ -539,7 +545,8 @@ it.effect("loads Jarvis thread detail only for Jarvis-provenance thread ids", ()
     assert.strictEqual(Option.isSome(detail), true);
     assert.strictEqual(Option.isNone(nonJarvisDetail), true);
     if (Option.isSome(detail)) {
-      assert.strictEqual(detail.value.activities[1]?.summary, "Choose the next worker action.");
+      // session.created is filtered out of the activity rail, so the input request is first.
+      assert.strictEqual(detail.value.activities[0]?.summary, "Choose the next worker action.");
     }
   }),
 );

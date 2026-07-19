@@ -188,7 +188,7 @@ describe("getStartedThreadModelChangeBlockReason", () => {
       instanceId: ProviderInstanceId.make("codex"),
     },
     {
-      instanceId: ProviderInstanceId.make("grok"),
+      instanceId: ProviderInstanceId.make("claudeAgent"),
       requiresNewThreadForModelChange: true,
     },
   ];
@@ -199,12 +199,12 @@ describe("getStartedThreadModelChangeBlockReason", () => {
         providers,
         hasStartedSession: false,
         currentModelSelection: {
-          instanceId: ProviderInstanceId.make("grok"),
-          model: "grok-build",
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-sonnet-5",
         },
         nextModelSelection: {
-          instanceId: ProviderInstanceId.make("grok"),
-          model: "grok-other",
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-opus-4-8",
         },
       }),
     ).toBeNull();
@@ -216,12 +216,12 @@ describe("getStartedThreadModelChangeBlockReason", () => {
         providers,
         hasStartedSession: true,
         currentModelSelection: {
-          instanceId: ProviderInstanceId.make("grok"),
-          model: "grok-build",
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-sonnet-5",
         },
         nextModelSelection: {
-          instanceId: ProviderInstanceId.make("grok"),
-          model: "grok-build",
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-sonnet-5",
         },
       }),
     ).toBeNull();
@@ -237,8 +237,8 @@ describe("getStartedThreadModelChangeBlockReason", () => {
           model: "gpt-5.4",
         },
         nextModelSelection: {
-          instanceId: ProviderInstanceId.make("grok"),
-          model: "grok-build",
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-sonnet-5",
         },
       }),
     ).toEqual({

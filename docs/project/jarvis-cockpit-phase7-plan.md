@@ -16,7 +16,7 @@ Build the T3 fork as an agentic cockpit over Jarvis, not as a separate orchestra
 - Worker/provider selectors come from Jarvis worker registry and worker health, not from T3 provider instances for Jarvis-managed work.
 - Branches, PRs, reports, and verification evidence come from Jarvis artifacts.
 - T3 sends turns, input responses, approvals, interrupt, stop, and resume commands to Jarvis.
-- T3 must not spawn Codex, Claude, Cursor, or OpenCode directly for Jarvis-managed work.
+- T3 must not spawn Codex or Claude directly for Jarvis-managed work.
 - T3 must not persist a second canonical project graph for Jarvis work.
 - T3 must not make final authority decisions in UI-only code; it can request/relay approval decisions, but Jarvis validates them.
 

@@ -61,7 +61,7 @@ describe("AcpRuntimeModel", () => {
     expect(modelConfigId).toBe("model");
   });
 
-  it("detects Grok session replay updates from _meta.isReplay", () => {
+  it("detects session replay updates from _meta.isReplay", () => {
     expect(
       sessionUpdateIsReplay({
         _meta: { isReplay: true },
@@ -88,13 +88,13 @@ describe("AcpRuntimeModel", () => {
       protocolVersion: 1,
       _meta: {
         modelState: {
-          currentModelId: "grok-build",
-          availableModels: [{ modelId: "grok-build", name: "Grok Build" }],
+          currentModelId: "gpt-5.4",
+          availableModels: [{ modelId: "gpt-5.4", name: "GPT-5.4" }],
         },
       },
     } satisfies EffectAcpSchema.InitializeResponse);
 
-    expect(response.models?.currentModelId).toBe("grok-build");
+    expect(response.models?.currentModelId).toBe("gpt-5.4");
     expect(response._meta).toMatchObject({ t3SessionLoadReady: "replay_idle" });
   });
 
@@ -103,8 +103,8 @@ describe("AcpRuntimeModel", () => {
       protocolVersion: 1,
       _meta: {
         modelState: {
-          currentModelId: "grok-build",
-          availableModels: [{ modelId: "grok-build", name: "Grok Build", description: null }],
+          currentModelId: "gpt-5.4",
+          availableModels: [{ modelId: "gpt-5.4", name: "GPT-5.4", description: null }],
         },
       },
     } satisfies EffectAcpSchema.InitializeResponse);
@@ -117,7 +117,7 @@ describe("AcpRuntimeModel", () => {
       protocolVersion: 1,
       _meta: {
         modelState: {
-          currentModelId: "grok-build",
+          currentModelId: "gpt-5.4",
           availableModels: [null],
         },
         modeState: {

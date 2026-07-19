@@ -329,6 +329,5 @@ jarvis work next --start --engine-strategy ensemble --engine codex,claude
 jarvis runs --report run_1760000000_abcd1234 --public-comment
 ```
 
-Provider adapters are expected to map Codex app-server JSON-RPC, Claude stream
-JSON / Claude Agent SDK events, Cursor, and OpenCode into this canonical event
-stream.
+Provider adapters are expected to map Codex app-server JSON-RPC and Claude stream
+JSON / Claude Agent SDK events into this canonical event stream.

@@ -1,7 +1,7 @@
 # Universal Durable Agent Conversations — Slice 2 Delivery Plan
 
-Status: in progress  
-Date: 2026-07-12  
+Status: in progress — increments 1-6 complete; increment 7 partial; headed dogfood outstanding  
+Date: 2026-07-12 (updated 2026-07-19)  
 Normative source: `universal-durable-agent-conversations-spec.md`  
 Slice: Unified Cockpit runtime
 
@@ -40,7 +40,9 @@ showing committed history, or accepting its next turn.
 - Route project conversations through the standard `ChatView`, `MessagesTimeline`, and
   `ChatComposer` contracts.
 - Remove `ProjectConversationMessage` and the duplicate timeline/composer orchestration once the
-  adapter covers the compatibility fixtures.
+  adapter covers the compatibility fixtures. **Done.** `ProjectConversationMessage` and its test
+  were deleted in `c9f98b588`; `ProjectConversationView` became `AgentConversationChatView` in
+  `3a3698d47`. No second conversation rendering implementation remains.
 - Keep project context as a standard right-panel contribution rather than a route-specific shell.
 
 ## Compatibility window
@@ -63,14 +65,56 @@ showing committed history, or accepting its next turn.
 
 ## Implementation increments
 
-1. Decouple project-conversation routing from the global orchestration snapshot.
-2. Define golden Jarvis conversation fixtures and the client-runtime adapter.
-3. Feed adapted messages and semantic activities to `MessagesTimeline`.
+1. Decouple project-conversation routing from the global orchestration snapshot. — **done**
+2. Define golden Jarvis conversation fixtures and the client-runtime adapter. — **done**
+3. Feed adapted messages and semantic activities to `MessagesTimeline`. — **done**
 4. Feed project turns, steering, pending input/approval, and attachments through the standard
-   `ChatComposer` command surface.
-5. Move project/memory/workspace/hierarchy data into standard right-panel contributions.
-6. Delete the duplicate project-conversation timeline, message, composer, and status code.
+   `ChatComposer` command surface. — **done**
+5. Move project/memory/workspace/hierarchy data into standard right-panel contributions. — **done**
+   (contribution API is standard; the surface set is context-only, terminal/preview resolve to
+   `null` and are fed constant stubs)
+6. Delete the duplicate project-conversation timeline, message, composer, and status code. — **done**
 7. Bound and degrade global snapshot reconciliation so diagnostics cannot block conversation reads.
+   — **partial**, see below
+
+### Notes on increment 6
+
+The remaining `projectConversation*.logic.ts` modules are **not** a second code path. Each one is
+consumed by the unified path (`AgentConversationChatView`, `Sidebar`, `composerCapabilities`,
+`BrainWorkspaceStrip`) or by the adapter itself, and `projectConversationRuntime.logic.ts` already
+operates on the post-adapter `AgentConversation` model. What survives is a stale name prefix, not
+duplicated orchestration. Renaming them to `agentConversation*` is deferred so this slice does not
+mix a large mechanical rename into behavioural work.
+
+### Notes on increment 7 (outstanding)
+
+The decoupling half of this increment holds: conversation reads are structurally independent of the
+global snapshot. `ws.ts` `subscribeJarvisProjectThread` calls `getProjectThread` directly and uses
+`jarvisEvents.changes` only as a poll trigger, never awaiting `appliedShellSnapshot` or
+`reconcileSnapshot`. Reads are bounded by a default `JARVIS_JSON_REQUEST_TIMEOUT_MS` of 30s, SSE by a
+45s idle timeout, and reconciliation failures degrade — `restRefresh`/`reconciliationRefresh` both
+end in `orElseSucceed(Option.none)`, and a stale `appliedShellSnapshot` falls back to a fresh REST
+read.
+
+The degrade-to-partial half is **not** implemented. `subscribeShell` hard-fails into
+`OrchestrationGetSnapshotError` on both the hub and native-projection branches, with no
+`Effect.timeout*`, no last-known-good fallback, and no partial snapshot; the only bound is the 30s
+HTTP timeout, which is far from "bounded partial diagnostics". `reconcileSnapshot` also holds the
+`appliedLock` semaphore across a full `getSnapshot()` with no timeout or retry cap of its own — only
+its `ws.ts` call sites swallow the error. Completing this requires a bounded snapshot read with an
+explicit partial/stale projection, and is deliberately left outside this PR because it is
+server-side snapshot work that overlaps the in-flight live-updates change.
+
+### Fixture-mode parity
+
+Fixture mode was never a separate rendering path — `makeJarvisFixtureClient` implements the same
+`JarvisClient` interface, so fixture threads already reached `adaptJarvisProjectThread` through the
+same stream plumbing as live data. The real gap was durable message identity: fixture messages
+carried no `message_id`/`sequence` and shared one frozen `observed_at`, so `projectThreadMessageKey`
+fell back to a `legacy:` hash of `(role, peer_id, observed_at, content)`. That made repeated
+identical prompts deduplicate away in the adapter, and made transcript ordering fall through to a
+content-hash tiebreak instead of chronology. Fixture messages now carry a deterministic
+`message_id`, a monotonic `sequence`, and an advancing `observed_at`.
 
 ## Tests
 

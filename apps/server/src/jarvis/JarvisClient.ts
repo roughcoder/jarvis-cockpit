@@ -38,6 +38,7 @@ import {
   JarvisProjectThreadDetailResponse,
   JarvisProjectThreadId,
   type JarvisProjectThreadInterruptInput,
+  type JarvisProjectThreadMessage,
   JarvisProjectThreadsResponse,
   JarvisProjectThreadTurnInput,
   JarvisProjectThreadTurnResult,
@@ -1998,6 +1999,24 @@ function fixtureProjectThreadControlResponse(
 export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): JarvisClient {
   const emptyProjects = options?.emptyProjects === true;
   const now = "2026-07-01T12:00:00+00:00";
+  // Fixture messages must carry durable identity like live Jarvis messages do. Without a
+  // message_id/sequence the client replay key degrades to a hash of (role, peer_id, observed_at,
+  // content), so repeating a prompt silently deduplicates the turn away and a tied observed_at
+  // sorts the transcript by content hash instead of chronologically. Counting from a fixed epoch
+  // keeps fixtures deterministic while still advancing.
+  const fixtureMessageEpochMs = Date.parse(now);
+  let fixtureMessageCount = 0;
+  const fixtureMessage = <M extends Omit<JarvisProjectThreadMessage, "observed_at">>(
+    message: M,
+  ): M & Pick<JarvisProjectThreadMessage, "message_id" | "sequence" | "observed_at"> => {
+    const sequence = fixtureMessageCount++;
+    return {
+      ...message,
+      message_id: `msg_fixture_${String(sequence).padStart(4, "0")}`,
+      sequence,
+      observed_at: DateTime.formatIso(DateTime.makeUnsafe(fixtureMessageEpochMs + sequence * 1000)),
+    };
+  };
   const sessionRef = JarvisSessionRef.make("sessref_macbook-worker_sess_fixture_codex");
   const runId = JarvisRunId.make("run_fixture_dashboard");
   const session: JarvisWorkerSession = {
@@ -2113,18 +2132,16 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
     [
       `${cockpitProjectId}/thread_fixture_cockpit_plan`,
       [
-        {
+        fixtureMessage({
           role: "user",
           peer_id: "neil",
           content: "What should Cockpit make primary?",
-          observed_at: now,
-        },
-        {
+        }),
+        fixtureMessage({
           role: "assistant",
           peer_id: "jarvis",
           content: "Make Jarvis projects the main operating surface.",
-          observed_at: now,
-        },
+        }),
       ],
     ],
   ]);
@@ -3440,8 +3457,8 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       const key = projectThreadKey(candidateProjectId, threadId);
       projectThreadMessages.set(key, [
         ...(projectThreadMessages.get(key) ?? []),
-        { role: "user", peer_id: "fixture", content: input.text, observed_at: now },
-        { role: "assistant", peer_id: "jarvis", content: text, observed_at: now },
+        fixtureMessage({ role: "user", peer_id: "fixture", content: input.text }),
+        fixtureMessage({ role: "assistant", peer_id: "jarvis", content: text }),
       ]);
       return Effect.succeed({
         ok: true,
