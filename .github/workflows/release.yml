@@ -5,8 +5,13 @@ on:
     tags:
       - "v*.*.*"
       - "!v*-nightly.*"
-  schedule:
-    - cron: "0 */3 * * *"
+  # Nightly cron is upstream-only. This fork must never cron-fire the release
+  # lane: it would build on billed runners (2x macOS at 10x minutes), publish
+  # the CLI to npm, and cut GitHub Releases against the fork -- none of which
+  # it has the secrets or the intent to do. Tag pushes and manual dispatch
+  # remain available. Restore for upstream merges:
+  #   schedule:
+  #     - cron: "0 */3 * * *"
   workflow_dispatch:
     inputs:
       channel:
@@ -30,7 +35,7 @@ jobs:
   check_changes:
     name: Check for changes since last nightly
     if: github.event_name == 'schedule'
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04 # upstream: blacksmith-8vcpu-ubuntu-2404
     outputs:
       has_changes: ${{ steps.check.outputs.has_changes }}
     steps:
@@ -66,7 +71,7 @@ jobs:
     if: |
       !failure() && !cancelled() &&
       (github.event_name != 'schedule' || needs.check_changes.outputs.has_changes == 'true')
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04 # upstream: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
       release_channel: ${{ steps.release_meta.outputs.release_channel }}
@@ -176,7 +181,7 @@ jobs:
     name: Build WSL node-pty (linux-x64)
     needs: [preflight]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04 # upstream: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -231,22 +236,22 @@ jobs:
       matrix:
         include:
           - label: macOS arm64
-            runner: blacksmith-12vcpu-macos-26
+            runner: macos-15 # upstream: blacksmith-12vcpu-macos-26
             platform: mac
             target: dmg
             arch: arm64
           - label: macOS x64
-            runner: blacksmith-12vcpu-macos-26
+            runner: macos-15 # upstream: blacksmith-12vcpu-macos-26
             platform: mac
             target: dmg
             arch: x64
           - label: Linux x64
-            runner: blacksmith-32vcpu-ubuntu-2404
+            runner: ubuntu-24.04 # upstream: blacksmith-32vcpu-ubuntu-2404
             platform: linux
             target: AppImage
             arch: x64
           - label: Windows x64
-            runner: blacksmith-32vcpu-windows-2025
+            runner: windows-2025 # upstream: blacksmith-32vcpu-windows-2025
             platform: win
             target: nsis
             arch: x64
@@ -503,7 +508,7 @@ jobs:
     name: Publish CLI to npm
     needs: [preflight, build]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' }}
-    runs-on: ubuntu-24.04 # blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04 # upstream: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     permissions:
       contents: read
@@ -541,7 +546,7 @@ jobs:
     name: Publish GitHub Release
     needs: [preflight, build, publish_cli]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && needs.publish_cli.result == 'success' }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04 # upstream: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - id: app_token
@@ -658,7 +663,7 @@ jobs:
     name: Deploy hosted web app
     needs: [preflight, release]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04 # upstream: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -747,7 +752,7 @@ jobs:
     name: Finalize release
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' }}
     needs: [preflight, release]
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04 # upstream: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - id: app_token
@@ -827,7 +832,7 @@ jobs:
       needs.deploy_web.result == 'success' &&
       (needs.finalize.result == 'success' || needs.finalize.result == 'skipped')
     needs: [preflight, release, deploy_web, finalize]
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04 # upstream: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - name: Checkout

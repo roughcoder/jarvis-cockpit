@@ -9,7 +9,7 @@ on:
 jobs:
   check:
     name: Check
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04 # upstream: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -29,7 +29,10 @@ jobs:
         run: vp check
 
       - name: Typecheck
-        run: vpr typecheck
+        # `vpr` is not a binary shipped by vite-plus (it exposes only vp/oxfmt/oxlint)
+        # nor a package script, so this step could never have run. Matches the root
+        # "typecheck" script in package.json.
+        run: vp run -r --concurrency-limit 2 typecheck
 
       - name: Build desktop pipeline
         run: vp run build:desktop
@@ -41,7 +44,7 @@ jobs:
 
   test:
     name: Test
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04 # upstream: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -62,7 +65,7 @@ jobs:
 
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis
-    runs-on: blacksmith-12vcpu-macos-26
+    runs-on: macos-15 # upstream: blacksmith-12vcpu-macos-26
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -83,7 +86,7 @@ jobs:
 
   release_smoke:
     name: Release Smoke
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04 # upstream: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - name: Checkout
