@@ -5,7 +5,7 @@ import { useFocusEffect } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
-import { useClerkSettingsSheetDetent } from "../cloud/ClerkSettingsSheetDetent";
+import { useSettingsSheetDetent } from "../settings-sheet/SettingsSheetDetent";
 import { useArchivedThreadListActions } from "../home/useThreadListActions";
 import {
   ArchivedThreadsScreen,
@@ -18,7 +18,7 @@ import {
 } from "./useArchivedThreadSnapshots";
 
 export function ArchivedThreadsRouteScreen() {
-  const { expand } = useClerkSettingsSheetDetent();
+  const { expand } = useSettingsSheetDetent();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(null);
