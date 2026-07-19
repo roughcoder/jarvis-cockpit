@@ -32,7 +32,7 @@ The fork should expose Jarvis runs, worker sessions, timelines, approvals/input,
 
 - Replacing Jarvis orchestration.
 - T3-native durable project model for Jarvis-managed work.
-- Direct T3 spawning of Codex/Claude/Cursor/OpenCode for Jarvis-managed work.
+- Direct T3 spawning of Codex/Claude for Jarvis-managed work.
 - UI-only final authority decisions.
 - Guessing missing Jarvis contracts.
 

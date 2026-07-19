@@ -163,12 +163,6 @@ describe("orchestrator model selection", () => {
       displayName: "Codex",
       models: [{ slug: "gpt-5.5", name: "GPT-5.5" }],
     }),
-    provider({
-      instanceId: "cursor",
-      driver: "cursor",
-      displayName: "Cursor",
-      models: [{ slug: "composer", name: "Composer" }],
-    }),
   ];
 
   it("offers only code-agent engines that can host an orchestrator", () => {
