@@ -401,6 +401,50 @@ it.effect("fixture client records project conversation workspace escalation", ()
   }),
 );
 
+it.effect("fixture client gives repeated project turns distinct durable message identity", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisFixtureClient();
+    const thread = yield* client.createProjectThread("jarvis-cockpit", {
+      title: "Repeated prompts",
+    });
+
+    // The same prompt twice is the case that used to collapse: with no message_id and a frozen
+    // observed_at the client replay key was byte-identical, so the adapter deduplicated the
+    // second turn out of the timeline entirely.
+    yield* client.sendProjectThreadTurn("jarvis-cockpit", thread.thread_id, {
+      text: "Say the same thing.",
+      idempotency_key: "fixture-repeat-1",
+    });
+    yield* client.sendProjectThreadTurn("jarvis-cockpit", thread.thread_id, {
+      text: "Say the same thing.",
+      idempotency_key: "fixture-repeat-2",
+    });
+    const detail = yield* client.getProjectThread("jarvis-cockpit", thread.thread_id);
+
+    const messageIds = detail.messages.map((message) => message.message_id);
+    assert.strictEqual(detail.messages.length, 4);
+    assert.strictEqual(new Set(messageIds).size, 4, "every fixture message needs a unique id");
+    assert.isTrue(
+      messageIds.every((messageId) => typeof messageId === "string" && messageId.length > 0),
+    );
+
+    // Ordering must come from real identity, not a content hash tiebreak.
+    const sequences = detail.messages.map((message) => message.sequence ?? -1);
+    assert.deepStrictEqual(
+      sequences,
+      [...sequences].sort((left, right) => left - right),
+    );
+    assert.strictEqual(new Set(sequences).size, 4);
+
+    const observedAt = detail.messages.map((message) => Date.parse(message.observed_at));
+    assert.deepStrictEqual(
+      observedAt,
+      [...observedAt].sort((left, right) => left - right),
+    );
+    assert.strictEqual(new Set(observedAt).size, 4, "timestamps must advance, not tie");
+  }),
+);
+
 it.effect("cockpit client accepts project conversation detail and archive response shapes", () =>
   Effect.gen(function* () {
     const workspace = {
