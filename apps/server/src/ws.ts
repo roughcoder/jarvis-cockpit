@@ -147,8 +147,21 @@ import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import { importProjectSourceFromUrl } from "./projectSourceImport.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
+
+class ProjectSourceImportError extends Schema.TaggedErrorClass<ProjectSourceImportError>()(
+  "ProjectSourceImportError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return this.cause instanceof Error && this.cause.message.trim().length > 0
+      ? this.cause.message
+      : "Project source import failed.";
+  }
+}
+
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -673,6 +686,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverValidateJarvisWork, AuthOrchestrationReadScope],
   [WS_METHODS.serverPruneJarvisWorkerWorktrees, AuthOrchestrationOperateScope],
   [WS_METHODS.serverCloseJarvisSession, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverArchiveJarvisSession, AuthOrchestrationOperateScope],
   [WS_METHODS.serverDeleteJarvisSession, AuthOrchestrationOperateScope],
   [WS_METHODS.serverDeleteJarvisRun, AuthOrchestrationOperateScope],
   [WS_METHODS.serverCreateJarvisProject, AuthOrchestrationOperateScope],
@@ -684,6 +698,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverForgetJarvisProjectMemory, AuthOrchestrationOperateScope],
   [WS_METHODS.serverCorrectJarvisProjectMemory, AuthOrchestrationOperateScope],
   [WS_METHODS.serverUploadJarvisProjectFile, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverImportJarvisProjectSource, AuthOrchestrationOperateScope],
   [WS_METHODS.serverRetractJarvisProjectFile, AuthOrchestrationOperateScope],
   [WS_METHODS.serverCreateJarvisProjectThread, AuthOrchestrationOperateScope],
   [WS_METHODS.serverArchiveJarvisProjectThread, AuthOrchestrationOperateScope],
@@ -691,6 +706,9 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverGenerateThreadTitle, AuthOrchestrationOperateScope],
   [WS_METHODS.serverUnarchiveJarvisProjectThread, AuthOrchestrationOperateScope],
   [WS_METHODS.serverSendJarvisProjectThreadTurn, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverRespondJarvisProjectThreadApproval, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverRespondJarvisProjectThreadInput, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverInterruptJarvisProjectThread, AuthOrchestrationOperateScope],
   [WS_METHODS.serverDiscoverSourceControl, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetTraceDiagnostics, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetProcessDiagnostics, AuthOrchestrationReadScope],
@@ -1789,26 +1807,28 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
-        [WS_METHODS.serverGetJarvisSnapshot]: (_input) =>
+        [WS_METHODS.serverGetJarvisSnapshot]: (input) =>
           observeRpcEffect(
             WS_METHODS.serverGetJarvisSnapshot,
-            jarvisClient.getSnapshot().pipe(
-              Effect.map((snapshot) => ({
-                ok: true,
-                snapshot,
-              })),
-              Effect.catch((error) =>
-                Effect.succeed({
-                  ok: false,
-                  error: {
-                    message:
-                      error instanceof Error && error.message.trim().length > 0
-                        ? error.message
-                        : "Jarvis cockpit snapshot request failed.",
-                  },
-                }),
+            jarvisClient
+              .getSnapshot(input.sync === undefined ? undefined : { sync: input.sync })
+              .pipe(
+                Effect.map((snapshot) => ({
+                  ok: true,
+                  snapshot,
+                })),
+                Effect.catch((error) =>
+                  Effect.succeed({
+                    ok: false,
+                    error: {
+                      message:
+                        error instanceof Error && error.message.trim().length > 0
+                          ? error.message
+                          : "Jarvis cockpit snapshot request failed.",
+                    },
+                  }),
+                ),
               ),
-            ),
             {
               "rpc.aggregate": "server",
             },
@@ -2147,6 +2167,28 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.serverArchiveJarvisSession]: ({ sessionRef, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverArchiveJarvisSession,
+            jarvisClient.archiveSession(sessionRef, input).pipe(
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    code: "internal_error" as const,
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis session archive failed.",
+                    recoverable: true,
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.serverDeleteJarvisSession]: ({ sessionRef, input }) =>
           observeRpcEffect(
             WS_METHODS.serverDeleteJarvisSession,
@@ -2363,6 +2405,119 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.serverImportJarvisProjectSource]: ({ projectId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverImportJarvisProjectSource,
+            Effect.tryPromise({
+              try: (signal) => importProjectSourceFromUrl(input, undefined, signal),
+              catch: (cause) => new ProjectSourceImportError({ cause }),
+            }).pipe(
+              Effect.flatMap((source) =>
+                jarvisClient.getProjectFiles(projectId).pipe(
+                  Effect.flatMap((files) => {
+                    const sourcePrefix = `src-${source.sourceIdentity.slice(0, 16)}-`;
+                    const currentVersions = files.filter(
+                      (file) => file.retracted !== true && file.doc_id.startsWith(sourcePrefix),
+                    );
+                    const unchanged = currentVersions.find(
+                      (file) =>
+                        file.doc_id === source.docId ||
+                        file.content_hash === `sha256:${source.contentSha256}`,
+                    );
+                    if (unchanged) {
+                      return Effect.succeed({
+                        status: "unchanged",
+                        provider: source.provider,
+                        canonical_url: source.canonicalUrl,
+                        doc_id: unchanged.doc_id,
+                        content_sha256: source.contentSha256,
+                      });
+                    }
+                    return jarvisClient
+                      .uploadProjectFile(projectId, {
+                        doc_id: source.docId,
+                        filename: source.filename,
+                        content_base64: source.contentBase64,
+                        title: source.title,
+                        artifact_type: `${source.provider}-source`,
+                        mime_type: source.mimeType,
+                        idempotency_key: `url-import:${source.sourceIdentity}:${source.contentSha256}`,
+                        metadata: {
+                          surface: "jarvis-cockpit",
+                          source: "url",
+                          source_provider: source.provider,
+                          source_url: source.requestedUrl,
+                          source_canonical_url: source.canonicalUrl,
+                          source_final_url: source.finalUrl,
+                          fetched_at: source.fetchedAt,
+                          content_sha256: source.contentSha256,
+                        },
+                      })
+                      .pipe(
+                        Effect.flatMap((result) =>
+                          Effect.all(
+                            currentVersions.map((file) =>
+                              jarvisClient
+                                .retractProjectFile(projectId, file.doc_id, {
+                                  reason: "Replaced by refreshed source",
+                                  idempotency_key: `url-replace:${source.sourceIdentity}:${file.doc_id}:${source.contentSha256}`,
+                                })
+                                .pipe(
+                                  Effect.map(() => ({ ok: true as const, docId: file.doc_id })),
+                                  Effect.catch((error) =>
+                                    Effect.succeed({
+                                      ok: false as const,
+                                      docId: file.doc_id,
+                                      message:
+                                        error instanceof Error
+                                          ? error.message
+                                          : "The previous source version could not be retired.",
+                                    }),
+                                  ),
+                                ),
+                            ),
+                            { concurrency: 1 },
+                          ).pipe(
+                            Effect.map((retractions) => ({
+                              status: "imported",
+                              provider: source.provider,
+                              canonical_url: source.canonicalUrl,
+                              doc_id: source.docId,
+                              content_sha256: source.contentSha256,
+                              result,
+                              replaced: retractions
+                                .filter((entry) => entry.ok)
+                                .map((entry) => entry.docId),
+                              warnings: retractions
+                                .filter((entry) => !entry.ok)
+                                .map((entry) => `${entry.docId}: ${entry.message}`),
+                            })),
+                          ),
+                        ),
+                      );
+                  }),
+                ),
+              ),
+              Effect.map((result) => ({
+                ok: true,
+                result,
+              })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Project source import failed.",
+                  },
+                }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.serverRetractJarvisProjectFile]: ({ projectId, docId, input }) =>
           observeRpcEffect(
             WS_METHODS.serverRetractJarvisProjectFile,
@@ -2519,6 +2674,63 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "server",
             },
+          ),
+        [WS_METHODS.serverRespondJarvisProjectThreadApproval]: ({ projectId, threadId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverRespondJarvisProjectThreadApproval,
+            jarvisClient.respondProjectThreadApproval(projectId, threadId, input).pipe(
+              Effect.map((result) => ({ ok: true, result })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project conversation approval failed.",
+                  },
+                }),
+              ),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverRespondJarvisProjectThreadInput]: ({ projectId, threadId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverRespondJarvisProjectThreadInput,
+            jarvisClient.respondProjectThreadInput(projectId, threadId, input).pipe(
+              Effect.map((result) => ({ ok: true, result })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project conversation input failed.",
+                  },
+                }),
+              ),
+            ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverInterruptJarvisProjectThread]: ({ projectId, threadId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverInterruptJarvisProjectThread,
+            jarvisClient.interruptProjectThread(projectId, threadId, input).pipe(
+              Effect.map((result) => ({ ok: true, result })),
+              Effect.catch((error) =>
+                Effect.succeed({
+                  ok: false,
+                  error: {
+                    message:
+                      error instanceof Error && error.message.trim().length > 0
+                        ? error.message
+                        : "Jarvis project conversation interrupt failed.",
+                  },
+                }),
+              ),
+            ),
+            { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
           observeRpcEffect(

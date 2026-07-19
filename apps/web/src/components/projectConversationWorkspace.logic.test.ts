@@ -5,6 +5,7 @@ import {
   clearProjectConversationWorkspaceRepos,
   createProjectConversationWorkspaceStaging,
   deriveWorkspaceProvisionSteps,
+  projectConversationWorkspaceMatchesSubmission,
   setProjectConversationWorkspaceEngine,
   setProjectConversationWorkspaceRepoBaseRef,
   shouldPollProjectConversationWorkspace,
@@ -36,6 +37,19 @@ describe("project conversation workspace staging", () => {
     });
   });
 
+  it("sends an engine-only workspace when the picker differs from the live engine", () => {
+    let staging = createProjectConversationWorkspaceStaging("codex");
+    staging = setProjectConversationWorkspaceEngine(staging, "claude");
+
+    // No live engine (or a brain thread) never produces an engine-only escalation.
+    expect(buildTurnWorkspaceInput(staging)).toBeUndefined();
+    expect(buildTurnWorkspaceInput(staging, "jarvis")).toBeUndefined();
+    expect(buildTurnWorkspaceInput(staging, null)).toBeUndefined();
+
+    expect(buildTurnWorkspaceInput(staging, "codex")).toEqual({ engine: "claude" });
+    expect(buildTurnWorkspaceInput(staging, "claude")).toBeUndefined();
+  });
+
   it("toggles repos and clears only repo selections", () => {
     let staging = createProjectConversationWorkspaceStaging("claude");
     staging = toggleProjectConversationWorkspaceRepo(staging, "runtime");
@@ -47,6 +61,25 @@ describe("project conversation workspace staging", () => {
       engine: "claude",
       repos: [],
     });
+  });
+
+  it("clears staged workspace only when it still matches the submitted snapshot", () => {
+    const submitted = {
+      engine: "codex" as const,
+      repos: [{ name: "runtime", base_ref: "origin/main" }],
+    };
+    expect(projectConversationWorkspaceMatchesSubmission(submitted, submitted)).toBe(true);
+    expect(projectConversationWorkspaceMatchesSubmission(undefined, null)).toBe(true);
+    expect(projectConversationWorkspaceMatchesSubmission(submitted, null)).toBe(false);
+    expect(
+      projectConversationWorkspaceMatchesSubmission(
+        { ...submitted, repos: [{ name: "cockpit", base_ref: "origin/main" }] },
+        submitted,
+      ),
+    ).toBe(false);
+    expect(
+      projectConversationWorkspaceMatchesSubmission({ ...submitted, engine: "claude" }, submitted),
+    ).toBe(false);
   });
 });
 

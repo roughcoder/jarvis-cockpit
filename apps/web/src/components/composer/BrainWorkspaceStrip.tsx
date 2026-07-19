@@ -15,7 +15,6 @@ import {
   toggleProjectConversationWorkspaceRepo,
   workspaceRepoNames,
 } from "../projectConversationWorkspace.logic";
-import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import {
@@ -88,6 +87,12 @@ export const BrainWorkspaceStrip = memo(function BrainWorkspaceStrip(
         </>
       ) : (
         <>
+          <WorkspaceEngineMenu
+            staging={props.staging}
+            disabled={props.disabled}
+            onStagingChange={props.onStagingChange}
+          />
+          <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
           <WorkspaceLiveSummary workspace={workspace} />
           <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
           <WorkspaceRepoMenu
@@ -248,14 +253,10 @@ function WorkspaceEngineMenu(props: {
 }
 
 function WorkspaceLiveSummary({ workspace }: { readonly workspace: JarvisConversationWorkspace }) {
-  const engine = workspace.engine?.trim() || "workspace";
   const worker = workspace.worker_id?.trim() || "auto worker";
   const worktreeCount = workspace.worktrees.length;
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2 text-[11px] text-muted-foreground">
-      <Badge variant="outline" className="max-w-24 truncate">
-        {engine}
-      </Badge>
       <span className="flex min-w-0 items-center gap-1 truncate">
         <ServerIcon className="size-3.5 shrink-0" />
         <span className="truncate">{worker}</span>

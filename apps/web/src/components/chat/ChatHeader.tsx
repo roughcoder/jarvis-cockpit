@@ -9,7 +9,6 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
@@ -17,6 +16,7 @@ import ProjectScriptsControl, {
 import { OpenInPicker } from "./OpenInPicker";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { cn } from "~/lib/utils";
+import { ChatHeaderTitle } from "./ChatHeaderTitle";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -79,19 +79,7 @@ export const ChatHeader = memo(function ChatHeader({
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <h2
-                aria-label={activeThreadTitle}
-                className="min-w-0 flex-1 truncate text-sm font-medium text-foreground"
-              >
-                {activeThreadTitle}
-              </h2>
-            }
-          />
-          <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
-        </Tooltip>
+        <ChatHeaderTitle title={activeThreadTitle} />
       </div>
       <div
         data-chat-header-actions

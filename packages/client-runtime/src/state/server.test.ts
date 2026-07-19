@@ -6,12 +6,16 @@ import {
   type ServerLifecycleWelcomePayload,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import { Atom } from "effect/unstable/reactivity";
 
+import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { THREAD_DETAIL_RETENTION } from "./retention.ts";
 import {
   applyJarvisProjectThreadStreamItem,
   applyServerConfigProjection,
+  createServerEnvironmentAtoms,
   projectServerWelcome,
 } from "./server.ts";
 
@@ -44,6 +48,26 @@ const THREAD: JarvisProjectThreadDetail = {
 };
 
 describe("server state projection", () => {
+  it("exposes environment-scoped project conversation control commands", () => {
+    const runtime = Atom.runtime(Layer.empty) as unknown as Atom.AtomRuntime<
+      EnvironmentRegistry,
+      never
+    >;
+    const server = createServerEnvironmentAtoms(runtime, {
+      initialConfigValueAtom: () => Atom.make<ServerConfig | null>(null),
+    });
+
+    expect(server.respondJarvisProjectThreadApproval.label).toBe(
+      "environment-data:server:respond-jarvis-project-thread-approval",
+    );
+    expect(server.respondJarvisProjectThreadInput.label).toBe(
+      "environment-data:server:respond-jarvis-project-thread-input",
+    );
+    expect(server.interruptJarvisProjectThread.label).toBe(
+      "environment-data:server:interrupt-jarvis-project-thread",
+    );
+  });
+
   it("applies every config category to the projected snapshot", () => {
     const snapshot = applyServerConfigProjection(Option.none(), {
       version: 1,

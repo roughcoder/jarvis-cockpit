@@ -406,6 +406,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
     isComplete: boolean;
   } | null;
   isRunning: boolean;
+  allowSendWhileRunning?: boolean;
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -432,6 +433,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         compact={props.compact}
         pendingAction={props.pendingAction}
         isRunning={props.isRunning}
+        allowSendWhileRunning={props.allowSendWhileRunning ?? false}
         showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
         promptHasText={props.promptHasText}
         isSendBusy={props.isSendBusy}
@@ -489,6 +491,7 @@ export interface ChatComposerHandle {
     selectedModel: string;
     selectedProviderModels: ReadonlyArray<ServerProvider["models"][number]>;
     selectedJarvisWorkerOverrideId: string | null;
+    selectedJarvisProjectId: string | null;
     selectedJarvisRepo: string | null;
     selectedJarvisEngine: string | null;
   };
@@ -502,7 +505,7 @@ export interface ChatComposerProps {
   capabilities: ComposerCapabilities;
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
-  routeKind: "server" | "draft";
+  routeKind: "server" | "draft" | "agent";
   routeThreadRef: ScopedThreadRef;
   draftId: DraftId | null;
 
@@ -517,6 +520,7 @@ export interface ChatComposerProps {
 
   // Session phase
   phase: SessionPhase;
+  allowSendWhileRunning?: boolean;
   isConnecting: boolean;
   isSendBusy: boolean;
   isPreparingWorktree: boolean;
@@ -631,6 +635,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isServerThread: _isServerThread,
     phase,
     isConnecting,
+    allowSendWhileRunning = false,
     isSendBusy,
     isPreparingWorktree,
     composerDisabledReason = null,
@@ -1276,6 +1281,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       prompt,
     ],
   );
+  // Durable project queues currently accept text/context only; raw image payloads
+  // remain local to the live gateway request until a blob-reference spool exists.
+  const canQueueCurrentDraft = allowSendWhileRunning && composerImages.length === 0;
 
   // ------------------------------------------------------------------
   // Derived: composer trigger / menu
@@ -1533,12 +1541,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [activePendingIsResponding, activePendingProgress, activePendingResolvedAnswers],
   );
   const collapsedComposerPrimaryActionDisabled =
-    phase === "running" ||
+    (phase === "running" && !canQueueCurrentDraft) ||
     isSendBusy ||
     isConnecting ||
     composerDisabled ||
     !composerSendState.hasSendableContent;
-  const collapsedComposerPrimaryActionLabel = "Send message";
+  const collapsedComposerPrimaryActionLabel =
+    phase === "running" && canQueueCurrentDraft ? "Queue message" : "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -2462,6 +2471,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         selectedJarvisWorkerOverrideId: canRouteJarvisStart
           ? selectedWorkerOverrideIdForDispatch
           : null,
+        selectedJarvisProjectId: canRouteJarvisStart ? (selectedJarvisProject?.id ?? null) : null,
         selectedJarvisRepo: canRouteJarvisStart ? selectedJarvisRepo : null,
         selectedJarvisEngine: canRouteJarvisStart ? selectedJarvisEngine : null,
       }),
@@ -2496,6 +2506,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedProvider,
       selectedProviderModels,
       selectedJarvisEngine,
+      selectedJarvisProject,
       selectedJarvisRepo,
       selectedWorkerOverrideIdForDispatch,
       canRouteJarvisStart,
@@ -3026,6 +3037,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     activeThreadProviderDisplayName={activeThreadProviderDisplayName}
                     pendingAction={pendingPrimaryAction}
                     isRunning={phase === "running"}
+                    allowSendWhileRunning={canQueueCurrentDraft}
                     showPlanFollowUpPrompt={
                       pendingUserInputs.length === 0 && showPlanFollowUpPrompt
                     }

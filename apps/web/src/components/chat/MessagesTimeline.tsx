@@ -25,10 +25,12 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { FileDiff } from "@pierre/diffs/react";
 import {
   deriveTimelineEntries,
+  type WorkLogEntry,
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolNeutralStatus,
   workEntryIndicatesToolSuccess,
   workLogEntryIsToolLike,
+  workLogEntryIsSemanticActivity,
 } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
@@ -39,10 +41,17 @@ import {
 } from "../../lib/diffRendering";
 import ChatMarkdown from "../ChatMarkdown";
 import {
+  ChatAssistantMessage,
+  ChatUserMessage,
+  ChatUserMessageBubble,
+  ChatWorkingIndicator,
+} from "./ChatMessagePrimitives";
+import {
   ChevronDownIcon,
   ChevronRightIcon,
   MousePointerClickIcon,
   PaintbrushIcon,
+  RotateCcwIcon,
   Undo2Icon,
 } from "lucide-react";
 import { Button } from "../ui/button";
@@ -51,6 +60,7 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { MessageDisclosure } from "./MessageDisclosure";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
@@ -125,6 +135,8 @@ interface TimelineRowSharedState {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorElement?: HTMLElement) => void;
+  onRecoveryAction: (actionId: string) => void;
+  recoveryActionsDisabled: boolean;
 }
 
 interface TimelineRowActivityState {
@@ -170,6 +182,8 @@ interface MessagesTimelineProps {
   contentInsetEndAdjustment: number;
   onIsAtEndChange: (isAtEnd: boolean) => void;
   onManualNavigation: () => void;
+  onRecoveryAction?: (actionId: string) => void;
+  recoveryActionsDisabled?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -203,6 +217,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   contentInsetEndAdjustment,
   onIsAtEndChange,
   onManualNavigation,
+  onRecoveryAction = NOOP_RECOVERY_ACTION,
+  recoveryActionsDisabled = false,
 }: MessagesTimelineProps) {
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
@@ -412,6 +428,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
+      onRecoveryAction,
+      recoveryActionsDisabled,
     }),
     [
       timestampFormat,
@@ -426,6 +444,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenTurnDiff,
       onToggleTurnFold,
       onToggleWorkGroup,
+      onRecoveryAction,
+      recoveryActionsDisabled,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -839,8 +859,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
 
   return (
-    <div className="group flex flex-col items-end gap-1">
-      <div className="relative max-w-[80%] rounded-2xl border border-border bg-secondary p-3">
+    <ChatUserMessage>
+      <ChatUserMessageBubble>
         {regularImages.length > 0 && (
           <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
             {regularImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
@@ -897,7 +917,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           skills={ctx.skills}
           markdownCwd={ctx.markdownCwd}
         />
-      </div>
+        {row.message.disclosure ? (
+          <MessageDisclosure
+            label={row.message.disclosure.label}
+            text={row.message.disclosure.text}
+            cwd={ctx.markdownCwd}
+          />
+        ) : null}
+      </ChatUserMessageBubble>
       <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
         <div className="flex shrink-0 items-center gap-2">
           <Tooltip>
@@ -916,7 +943,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           </div>
         </div>
       </div>
-    </div>
+    </ChatUserMessage>
   );
 }
 
@@ -971,7 +998,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
 
   return (
     <>
-      <div className="relative min-w-0 px-1 py-0.5">
+      <ChatAssistantMessage>
         <ChatMarkdown
           text={messageText}
           cwd={ctx.markdownCwd}
@@ -1002,7 +1029,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             )}
           </div>
         ) : null}
-      </div>
+      </ChatAssistantMessage>
     </>
   );
 }
@@ -1043,14 +1070,9 @@ function ProposedPlanTimelineRow({
 
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
   return (
-    <div className="py-0.5 pl-1.5">
-      <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70 tabular-nums">
-        <span className="inline-flex items-center gap-[3px]">
-          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
-          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
-          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
-        </span>
-        <span>
+    <ChatWorkingIndicator
+      label={
+        <>
           {row.createdAt ? (
             <>
               Working for <WorkingTimer createdAt={row.createdAt} />
@@ -1058,9 +1080,9 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
           ) : (
             "Working..."
           )}
-        </span>
-      </div>
-    </div>
+        </>
+      }
+    />
   );
 }
 
@@ -1105,7 +1127,11 @@ const WorkGroupSection = memo(function WorkGroupSection({
 }) {
   const { workspaceRoot } = use(TimelineRowCtx);
   const nonEmptyEntries = useMemo(
-    () => groupedEntries.filter((entry) => !workEntryIndicatesToolNeutralStatus(entry)),
+    () =>
+      groupedEntries.filter(
+        (entry) =>
+          workLogEntryIsSemanticActivity(entry) || !workEntryIndicatesToolNeutralStatus(entry),
+      ),
     [groupedEntries],
   );
   const onlyToolEntries = nonEmptyEntries.every((entry) => workLogEntryIsToolLike(entry));
@@ -1848,6 +1874,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workspaceRoot: string | undefined;
 }) {
   const { workEntry, workspaceRoot } = props;
+  const timeline = use(TimelineRowCtx);
   const activity = use(TimelineRowActivityCtx);
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
@@ -1885,29 +1912,66 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const showSuccessIndicator =
     workEntryIndicatesToolSuccess(workEntry) ||
     (turnSettled && workEntryIndicatesToolNeutralStatus(workEntry));
-  const status: ToolCallTimelineStatus = showFailedIndicator
-    ? "failed"
-    : showSuccessIndicator
-      ? "completed"
-      : showNeutralIndicator
-        ? "empty"
-        : null;
+  const status: ToolCallTimelineStatus = workEntry.semanticActivityStatus
+    ? semanticActivityRowStatus(workEntry.semanticActivityStatus)
+    : showFailedIndicator
+      ? "failed"
+      : showSuccessIndicator
+        ? "completed"
+        : showNeutralIndicator
+          ? "empty"
+          : null;
 
   return (
-    <ToolCallTimelineRow
-      heading={heading}
-      preview={preview}
-      expandedBody={
-        expandedBody ? (
-          <pre className="max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground select-text">
-            {expandedBody}
-          </pre>
-        ) : null
-      }
-      iconName={entryIconName}
-      iconClassName={iconWrapperClass}
-      headingClassName={headingClass}
-      status={status}
-    />
+    <div>
+      <ToolCallTimelineRow
+        heading={heading}
+        preview={preview}
+        expandedBody={
+          expandedBody ? (
+            <pre className="max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-muted-foreground select-text">
+              {expandedBody}
+            </pre>
+          ) : null
+        }
+        iconName={entryIconName}
+        iconClassName={iconWrapperClass}
+        headingClassName={headingClass}
+        status={status}
+      />
+      {workEntry.recoveryAction ? (
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          className="ms-6 mt-1"
+          aria-label={workEntry.recoveryAction.label}
+          disabled={timeline.recoveryActionsDisabled}
+          onClick={() => timeline.onRecoveryAction(workEntry.recoveryAction!.id)}
+        >
+          <RotateCcwIcon className="size-3.5" />
+          {workEntry.recoveryAction.label}
+        </Button>
+      ) : null}
+    </div>
   );
 });
+
+const NOOP_RECOVERY_ACTION = () => {};
+
+function semanticActivityRowStatus(
+  status: NonNullable<WorkLogEntry["semanticActivityStatus"]>,
+): ToolCallTimelineStatus {
+  switch (status) {
+    case "requested":
+    case "running":
+    case "waiting":
+      return "pending";
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "cancelled":
+      return null;
+  }
+}

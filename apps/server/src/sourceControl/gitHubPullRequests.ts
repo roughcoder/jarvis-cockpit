@@ -18,6 +18,11 @@ export interface NormalizedGitHubPullRequestRecord {
   readonly createdAt?: Option.Option<DateTime.Utc>;
   readonly isDraft?: boolean;
   readonly authorLogin?: string | null;
+  readonly commentCount?: number;
+  readonly reviewCount?: number;
+  readonly reviewDecision?: "approved" | "changes_requested" | "review_required" | "not_reported";
+  readonly checksStatus?: "passing" | "failing" | "pending" | "not_reported";
+  readonly checksCount?: number;
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;
@@ -39,6 +44,20 @@ const GitHubPullRequestSchema = Schema.Struct({
       Schema.Struct({
         login: Schema.String,
       }),
+    ),
+  ),
+  comments: Schema.optional(Schema.Array(Schema.Unknown)),
+  reviews: Schema.optional(Schema.Array(Schema.Unknown)),
+  reviewDecision: Schema.optional(Schema.NullOr(Schema.String)),
+  statusCheckRollup: Schema.optional(
+    Schema.NullOr(
+      Schema.Array(
+        Schema.Struct({
+          status: Schema.optional(Schema.NullOr(Schema.String)),
+          conclusion: Schema.optional(Schema.NullOr(Schema.String)),
+          state: Schema.optional(Schema.NullOr(Schema.String)),
+        }),
+      ),
     ),
   ),
   isCrossRepository: Schema.optional(Schema.Boolean),
@@ -80,6 +99,54 @@ function normalizeGitHubPullRequestState(input: {
   return "open";
 }
 
+function normalizeReviewDecision(value: string | null | undefined) {
+  if (value === "APPROVED") return "approved" as const;
+  if (value === "CHANGES_REQUESTED") return "changes_requested" as const;
+  if (value === "REVIEW_REQUIRED") return "review_required" as const;
+  return "not_reported" as const;
+}
+
+function normalizeChecksStatus(
+  checks:
+    | ReadonlyArray<{
+        readonly status?: string | null | undefined;
+        readonly conclusion?: string | null | undefined;
+        readonly state?: string | null | undefined;
+      }>
+    | null
+    | undefined,
+) {
+  if (!checks || checks.length === 0) return "not_reported" as const;
+  const values = checks.map((check) =>
+    (check.conclusion ?? check.state ?? check.status ?? "").toUpperCase(),
+  );
+  if (
+    values.some((value) =>
+      [
+        "FAILURE",
+        "ERROR",
+        "CANCELLED",
+        "TIMED_OUT",
+        "ACTION_REQUIRED",
+        "STARTUP_FAILURE",
+        "STALE",
+      ].includes(value),
+    )
+  ) {
+    return "failing" as const;
+  }
+  if (
+    values.some((value) =>
+      ["PENDING", "QUEUED", "IN_PROGRESS", "EXPECTED", "WAITING"].includes(value),
+    )
+  ) {
+    return "pending" as const;
+  }
+  return values.every((value) => ["SUCCESS", "NEUTRAL", "SKIPPED"].includes(value))
+    ? ("passing" as const)
+    : ("pending" as const);
+}
+
 function normalizeGitHubPullRequestRecord(
   raw: Schema.Schema.Type<typeof GitHubPullRequestSchema>,
 ): NormalizedGitHubPullRequestRecord {
@@ -101,6 +168,17 @@ function normalizeGitHubPullRequestRecord(
     ...(raw.createdAt !== undefined ? { createdAt: raw.createdAt } : {}),
     ...(typeof raw.isDraft === "boolean" ? { isDraft: raw.isDraft } : {}),
     ...(raw.author !== undefined ? { authorLogin: trimOptionalString(raw.author?.login) } : {}),
+    ...(raw.comments !== undefined ? { commentCount: raw.comments.length } : {}),
+    ...(raw.reviews !== undefined ? { reviewCount: raw.reviews.length } : {}),
+    ...(raw.reviewDecision !== undefined
+      ? { reviewDecision: normalizeReviewDecision(raw.reviewDecision) }
+      : {}),
+    ...(raw.statusCheckRollup !== undefined
+      ? {
+          checksStatus: normalizeChecksStatus(raw.statusCheckRollup),
+          checksCount: raw.statusCheckRollup?.length ?? 0,
+        }
+      : {}),
     ...(typeof raw.isCrossRepository === "boolean"
       ? { isCrossRepository: raw.isCrossRepository }
       : {}),

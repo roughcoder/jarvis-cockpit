@@ -11,6 +11,7 @@ import {
   JarvisDeleteInput,
   JarvisLifecycleResult,
   JarvisProjectThreadDetailResponse,
+  JarvisProjectThreadControlResponse,
   JarvisProjectThreadsResponse,
   JarvisProjectThreadTurnInput,
   JarvisRestoreCheckpointInput,
@@ -49,7 +50,9 @@ const decodeControlResult = Schema.decodeUnknownEffect(JarvisControlResult);
 const decodeLifecycleResult = Schema.decodeUnknownEffect(JarvisLifecycleResult);
 const decodeSseEvent = Schema.decodeUnknownEffect(JarvisCockpitEvent);
 const decodeProjectThreadDetail = Schema.decodeUnknownEffect(JarvisProjectThreadDetailResponse);
+const decodeProjectThreads = Schema.decodeUnknownEffect(JarvisProjectThreadsResponse);
 const decodeProjectThreadTurn = Schema.decodeUnknownEffect(JarvisProjectThreadTurnInput);
+const decodeProjectThreadControl = Schema.decodeUnknownEffect(JarvisProjectThreadControlResponse);
 const encodeProjectThreadDetail = Schema.encodeEffect(JarvisProjectThreadDetailResponse);
 const encodeProjectThreadTurn = Schema.encodeEffect(JarvisProjectThreadTurnInput);
 
@@ -233,6 +236,128 @@ it.effect("decodes project conversation detail with archived state and history",
     assert.strictEqual(parsed.thread.messages[0]?.role, "user");
     assert.strictEqual(parsed.thread.messages[1]?.content, "Continue Phase 5.");
     assert.strictEqual(parsed.thread.workspace, undefined);
+  }),
+);
+
+it.effect("decodes additive project conversation execution state", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectThreadDetail({
+      api_version: "v1",
+      schema_version: 1,
+      project_id: "jarvis",
+      thread: {
+        thread_id: "thread_active",
+        project_id: "jarvis",
+        session_id: "project:jarvis:orchestrator:thread_active",
+        title: "Active review",
+        created_at: generatedAt,
+        updated_at: generatedAt,
+        execution: {
+          available: true,
+          status: "waiting_approval",
+          active_turn: {
+            turn_id: "turn_active",
+            status: "waiting_approval",
+            started_at: generatedAt,
+          },
+          pending_requests: [
+            {
+              request_id: "approval_turn_active",
+              kind: "approval",
+              status: "pending",
+              title: "Approve action",
+              detail: "Run verification",
+              created_at: generatedAt,
+              request_kind: "command",
+              questions: [],
+            },
+          ],
+          supported_controls: ["turn", "approval", "interrupt"],
+          supports: { steer: false, queue: false },
+          diagnostic: null,
+        },
+        messages: [],
+      },
+    });
+
+    assert.deepStrictEqual(parsed.thread.execution?.active_turn, {
+      turn_id: "turn_active",
+      status: "waiting_approval",
+      started_at: generatedAt,
+    });
+    assert.strictEqual(parsed.thread.execution?.pending_requests[0]?.kind, "approval");
+    assert.deepStrictEqual(parsed.thread.execution?.supported_controls, [
+      "turn",
+      "approval",
+      "interrupt",
+    ]);
+    assert.deepStrictEqual(parsed.thread.execution?.supports, { steer: false, queue: false });
+  }),
+);
+
+it.effect("decodes the bounded public project conversation turn queue", () =>
+  Effect.gen(function* () {
+    const thread = {
+      thread_id: "thread_queued",
+      project_id: "jarvis",
+      session_id: "project:jarvis:orchestrator:thread_queued",
+      title: "Queued work",
+      created_at: generatedAt,
+      updated_at: generatedAt,
+      messages: [],
+    };
+    const parsed = yield* decodeProjectThreadDetail({
+      api_version: "v1",
+      schema_version: 1,
+      project_id: "jarvis",
+      thread: {
+        ...thread,
+        queued_turns: [
+          {
+            queue_id: "queuedturn_1",
+            text: "Run the focused tests.",
+            queued_at: generatedAt,
+            status: "queued",
+          },
+          {
+            queue_id: "queuedturn_2",
+            text: "Then summarize the result.",
+            queued_at: generatedAt,
+            status: "claimed",
+          },
+        ],
+      },
+    });
+
+    assert.deepStrictEqual(parsed.thread.queued_turns, [
+      {
+        queue_id: "queuedturn_1",
+        text: "Run the focused tests.",
+        queued_at: generatedAt,
+        status: "queued",
+      },
+      {
+        queue_id: "queuedturn_2",
+        text: "Then summarize the result.",
+        queued_at: generatedAt,
+        status: "claimed",
+      },
+    ]);
+
+    yield* decodeProjectThreadDetail({
+      api_version: "v1",
+      schema_version: 1,
+      project_id: "jarvis",
+      thread: {
+        ...thread,
+        queued_turns: Array.from({ length: 33 }, (_, index) => ({
+          queue_id: `queuedturn_${index}`,
+          text: `Queued turn ${index}`,
+          queued_at: generatedAt,
+          status: "queued",
+        })),
+      },
+    }).pipe(Effect.flip);
   }),
 );
 
@@ -503,6 +628,41 @@ it.effect("retains worker-local sessions that are not linked to a run", () =>
 
     assert.strictEqual(parsed.sessions.length, 1);
     assert.strictEqual(parsed.sessions[0]?.run_id, null);
+  }),
+);
+
+it.effect("decodes string and object snapshot sync diagnostics", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeSnapshot({
+      api_version: "v1",
+      schema_version: 1,
+      cursor: "evt_sync_error",
+      generated_at: generatedAt,
+      sync: {
+        mode: "probe",
+        status: "stale",
+        synced_at: null,
+        errors: [
+          "worker probe failed: connection refused",
+          {
+            worker_id: "macbook-worker",
+            message: "worker probe timed out",
+          },
+        ],
+      },
+      runs: [],
+      sessions: [],
+      workers: [],
+      artifacts: [],
+    });
+
+    assert.deepStrictEqual(parsed.sync.errors, [
+      "worker probe failed: connection refused",
+      {
+        worker_id: "macbook-worker",
+        message: "worker probe timed out",
+      },
+    ]);
   }),
 );
 
@@ -956,10 +1116,12 @@ it.effect("decodes project thread turns with optional image attachments", () =>
   Effect.gen(function* () {
     const textOnly = yield* decodeProjectThreadTurn({
       text: "Continue the project conversation.",
+      idempotency_key: "turn-text-only",
     });
     const encodedTextOnly = yield* encodeProjectThreadTurn(textOnly);
     const withAttachment = yield* decodeProjectThreadTurn({
       text: "Use this screenshot.",
+      idempotency_key: "turn-with-attachment",
       attachments: [
         {
           kind: "image",
@@ -971,18 +1133,23 @@ it.effect("decodes project thread turns with optional image attachments", () =>
     });
     const withWorkspace = yield* decodeProjectThreadTurn({
       text: "Inspect the runtime repo and summarize the failing tests.",
+      idempotency_key: "turn-with-workspace",
       workspace: {
         repos: [{ name: "runtime", base_ref: "origin/main" }],
         engine: "codex",
       },
     });
     const encodedWithWorkspace = yield* encodeProjectThreadTurn(withWorkspace);
+    const missingIdempotencyKey = yield* decodeProjectThreadTurn({
+      text: "This must not dispatch twice.",
+    }).pipe(Effect.flip);
 
     assert.strictEqual(textOnly.attachments, undefined);
     assert.strictEqual("workspace" in encodedTextOnly, false);
     assert.strictEqual(withAttachment.attachments?.[0]?.kind, "image");
     assert.strictEqual(withAttachment.attachments?.[0]?.mime_type, "image/png");
     assert.strictEqual(withAttachment.metadata?.surface, "jarvis-cockpit");
+    assert.match(String(missingIdempotencyKey), /idempotency_key/u);
     assert.deepStrictEqual(encodedWithWorkspace.workspace, {
       repos: [{ name: "runtime", base_ref: "origin/main" }],
       engine: "codex",
@@ -1165,7 +1332,7 @@ it.effect(
 
 it.effect("decodes root project threads that report empty parent_chat_id", () =>
   Effect.gen(function* () {
-    const parsed = yield* Schema.decodeUnknownEffect(JarvisProjectThreadsResponse)({
+    const parsed = yield* decodeProjectThreads({
       api_version: "v1",
       schema_version: 1,
       project_id: "jarvis",
@@ -1185,5 +1352,116 @@ it.effect("decodes root project threads that report empty parent_chat_id", () =>
     });
 
     assert.strictEqual(parsed.threads[0]?.parent_chat_id, "");
+  }),
+);
+
+it.effect("decodes universal durable conversation lifecycle fields", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectThreads({
+      api_version: "v1",
+      schema_version: 1,
+      project_id: "jarvis",
+      threads: [
+        {
+          conversation_id: "thread_durable",
+          thread_id: "thread_durable",
+          project_id: "jarvis",
+          session_id: "project:jarvis:orchestrator:thread_durable",
+          title: "Durable project conversation",
+          lifecycle: "open",
+          operational_state: "idle",
+          status: "idle",
+          ended_reason: null,
+          last_turn_at: generatedAt,
+          created_at: generatedAt,
+          updated_at: generatedAt,
+        },
+      ],
+    });
+
+    const conversation = parsed.threads[0];
+    assert.strictEqual(conversation?.conversation_id, "thread_durable");
+    assert.strictEqual(conversation?.lifecycle, "open");
+    assert.strictEqual(conversation?.operational_state, "idle");
+    assert.strictEqual(conversation?.status, "idle");
+    assert.strictEqual(conversation?.ended_reason, null);
+    assert.strictEqual(conversation?.last_turn_at, generatedAt);
+  }),
+);
+
+it.effect("preserves durable project-conversation message and activity identities", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectThreadDetail({
+      api_version: "v1",
+      schema_version: 1,
+      project_id: "jarvis",
+      thread: {
+        thread_id: "thread_durable",
+        project_id: "jarvis",
+        session_id: "project:jarvis:orchestrator:thread_durable",
+        title: "Durable project conversation",
+        created_at: generatedAt,
+        updated_at: generatedAt,
+        messages: [
+          {
+            event_id: "event-tool-result",
+            message_id: "message-tool-result",
+            call_id: "call-1",
+            correlation_id: "correlation-1",
+            sequence: 42,
+            role: "assistant",
+            content: "repository search",
+            observed_at: generatedAt,
+            type: "tool.result",
+          },
+        ],
+      },
+    });
+
+    assert.deepStrictEqual(parsed.thread.messages[0], {
+      event_id: "event-tool-result",
+      message_id: "message-tool-result",
+      call_id: "call-1",
+      correlation_id: "correlation-1",
+      sequence: 42,
+      role: "assistant",
+      content: "repository search",
+      observed_at: generatedAt,
+      type: "tool.result",
+    });
+  }),
+);
+
+it.effect("decodes conversation-scoped project thread control results", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectThreadControl({
+      ok: true,
+      api_version: "v1",
+      schema_version: 1,
+      project_id: "jarvis",
+      thread_id: "thread_durable",
+      control: {
+        action: "interrupt",
+        accepted: true,
+        turn_id: "turn-42",
+      },
+      execution: {
+        available: true,
+        status: "running",
+        active_turn: null,
+        pending_requests: [],
+        supported_controls: ["turn", "input", "approval", "interrupt", "stop"],
+        supports: { steer: false, queue: false },
+        diagnostic: null,
+      },
+    });
+
+    assert.deepStrictEqual(parsed.control, {
+      action: "interrupt",
+      accepted: true,
+      turn_id: "turn-42",
+    });
+    assert.strictEqual(parsed.execution.available, true);
+    assert.ok(!("session_ref" in parsed));
   }),
 );

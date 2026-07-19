@@ -6,8 +6,14 @@ import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchema
 const JsonObject = Schema.Record(Schema.String, Schema.Json);
 export type JsonObject = typeof JsonObject.Type;
 
+const JarvisSyncDiagnostic = Schema.Union([Schema.String, JsonObject]);
+
 export const JarvisWriteMetadata = JsonObject;
 export type JarvisWriteMetadata = typeof JarvisWriteMetadata.Type;
+
+// Marks internal diagnostics work (worker readiness probes) so projections can
+// hide it from user-facing project/work lists.
+export const JARVIS_WORK_PURPOSE_WORKER_READINESS = "worker-readiness-test";
 
 const makeJarvisId = <Brand extends string>(brand: Brand) =>
   TrimmedNonEmptyString.pipe(Schema.brand(brand));
@@ -423,6 +429,7 @@ export type JarvisProjectUpdateInput = typeof JarvisProjectUpdateInput.Type;
 
 export const JarvisArchiveInputBase = Schema.Struct({
   reason: Schema.optional(TrimmedNonEmptyString),
+  idempotency_key: Schema.optional(TrimmedNonEmptyString),
   metadata: Schema.optionalKey(JarvisWriteMetadata).pipe(
     Schema.withDecodingDefault(Effect.succeed({ surface: "jarvis-cockpit" })),
   ),
@@ -527,6 +534,7 @@ export const JarvisProjectFilesResponse = Schema.Struct({
 export type JarvisProjectFilesResponse = typeof JarvisProjectFilesResponse.Type;
 
 export const JarvisProjectFileUploadInput = Schema.Struct({
+  doc_id: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(96))),
   filename: TrimmedNonEmptyString,
   content_base64: TrimmedNonEmptyString,
   title: Schema.optional(TrimmedNonEmptyString),
@@ -539,20 +547,58 @@ export const JarvisProjectFileUploadInput = Schema.Struct({
 });
 export type JarvisProjectFileUploadInput = typeof JarvisProjectFileUploadInput.Type;
 
+export const JarvisProjectSourceImportInput = Schema.Struct({
+  url: TrimmedNonEmptyString.check(Schema.isMaxLength(2_048)),
+  title: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
+});
+export type JarvisProjectSourceImportInput = typeof JarvisProjectSourceImportInput.Type;
+
 export const JarvisProjectFileRetractInput = JarvisArchiveInputBase;
 export type JarvisProjectFileRetractInput = typeof JarvisProjectFileRetractInput.Type;
 
 export const JarvisProjectFileUploadResponse = JsonObject;
 export type JarvisProjectFileUploadResponse = typeof JarvisProjectFileUploadResponse.Type;
 
-// Project-thread lifecycle status (brain conversation). See COCKPIT_API.md.
+// Compatibility status vocabulary. New brains project durable conversation
+// operational state; terminal values remain accepted for older deployments.
 export const JarvisProjectThreadStatus = Schema.Literals([
   "created",
   "running",
   "completed",
   "failed",
+  "idle",
+  "starting",
+  "working",
+  "waiting_for_input",
+  "waiting_for_approval",
+  "waiting_for_children",
+  "joining",
+  "waiting_for_event",
+  "blocked",
+  "degraded",
+  "paused",
+  "archived",
 ]);
 export type JarvisProjectThreadStatus = typeof JarvisProjectThreadStatus.Type;
+
+export const JarvisConversationLifecycle = Schema.Literals(["open", "archived"]);
+export type JarvisConversationLifecycle = typeof JarvisConversationLifecycle.Type;
+
+export const JarvisConversationOperationalState = Schema.Literals([
+  "idle",
+  "starting",
+  "working",
+  "waiting_for_input",
+  "waiting_for_approval",
+  "waiting_for_children",
+  "joining",
+  "waiting_for_event",
+  "blocked",
+  "degraded",
+  "paused",
+  "archived",
+]);
+export type JarvisConversationOperationalState = typeof JarvisConversationOperationalState.Type;
 
 // Why a conversation/session ended; null while active.
 export const JarvisEndedReason = Schema.Literals([
@@ -600,7 +646,81 @@ export const JarvisConversationWorkspace = Schema.Struct({
 });
 export type JarvisConversationWorkspace = typeof JarvisConversationWorkspace.Type;
 
+export const JarvisConversationExecutionControl = Schema.Literals([
+  "turn",
+  "input",
+  "approval",
+  "interrupt",
+  "stop",
+]);
+export type JarvisConversationExecutionControl = typeof JarvisConversationExecutionControl.Type;
+
+export const JarvisConversationActiveTurn = Schema.Struct({
+  turn_id: TrimmedNonEmptyString,
+  status: TrimmedNonEmptyString,
+  started_at: OptionalPossiblyEmptyPublicString,
+});
+export type JarvisConversationActiveTurn = typeof JarvisConversationActiveTurn.Type;
+
+export const JarvisConversationPendingQuestion = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  header: OptionalPossiblyEmptyPublicString,
+  question: TrimmedNonEmptyString,
+  options: Schema.Array(
+    Schema.Struct({
+      label: TrimmedNonEmptyString,
+      description: OptionalPossiblyEmptyPublicString,
+    }),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  multi_select: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+});
+export type JarvisConversationPendingQuestion = typeof JarvisConversationPendingQuestion.Type;
+
+export const JarvisConversationPendingRequest = Schema.Struct({
+  request_id: TrimmedNonEmptyString,
+  kind: Schema.Literals(["approval", "input"]),
+  status: TrimmedNonEmptyString,
+  title: OptionalPossiblyEmptyPublicString,
+  detail: OptionalPossiblyEmptyPublicString,
+  created_at: OptionalPossiblyEmptyPublicString,
+  request_kind: Schema.optional(Schema.Literals(["command", "file-read", "file-change"])),
+  questions: Schema.optional(
+    Schema.Array(JarvisConversationPendingQuestion).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+    ),
+  ),
+});
+export type JarvisConversationPendingRequest = typeof JarvisConversationPendingRequest.Type;
+
+export const JarvisConversationExecutionDiagnostic = Schema.Struct({
+  code: TrimmedNonEmptyString,
+  message: OptionalPossiblyEmptyPublicString,
+});
+export type JarvisConversationExecutionDiagnostic =
+  typeof JarvisConversationExecutionDiagnostic.Type;
+
+export const JarvisConversationExecution = Schema.Struct({
+  available: Schema.Boolean,
+  status: TrimmedNonEmptyString,
+  active_turn: Schema.NullOr(JarvisConversationActiveTurn),
+  pending_requests: Schema.Array(JarvisConversationPendingRequest).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  supported_controls: Schema.Array(JarvisConversationExecutionControl).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  supports: Schema.Struct({
+    steer: Schema.Boolean,
+    queue: Schema.Boolean,
+  }),
+  diagnostic: Schema.NullOr(JarvisConversationExecutionDiagnostic),
+});
+export type JarvisConversationExecution = typeof JarvisConversationExecution.Type;
+
 export const JarvisProjectThread = Schema.Struct({
+  // Stable universal-conversation identity. Optional during the v1 compatibility
+  // window; when absent it is identical to thread_id.
+  conversation_id: Schema.optional(JarvisProjectThreadId),
   thread_id: JarvisProjectThreadId,
   project_id: JarvisProjectId,
   // Root threads report `parent_chat_id: ""` (not null) on the wire; accept the
@@ -620,6 +740,10 @@ export const JarvisProjectThread = Schema.Struct({
   host: OptionalPossiblyEmptyPublicString,
   status: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   ended_reason: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  lifecycle: Schema.optional(JarvisConversationLifecycle),
+  operational_state: Schema.optional(JarvisConversationOperationalState),
+  diagnostic_reason: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  last_turn_at: Schema.optional(Schema.NullOr(IsoDateTime)),
   created_at: IsoDateTime,
   updated_at: IsoDateTime,
   created_by: OptionalPossiblyEmptyPublicString,
@@ -627,10 +751,18 @@ export const JarvisProjectThread = Schema.Struct({
   archived_by: OptionalPossiblyEmptyPublicString,
   archive_reason: OptionalPossiblyEmptyPublicString,
   workspace: Schema.optional(Schema.NullOr(JarvisConversationWorkspace)),
+  execution: Schema.optional(JarvisConversationExecution),
 });
 export type JarvisProjectThread = typeof JarvisProjectThread.Type;
 
 export const JarvisProjectThreadMessage = Schema.Struct({
+  // Durable public identities are optional during the compatibility window.
+  // Consumers fall back to the complete legacy semantic envelope when absent.
+  event_id: OptionalPossiblyEmptyPublicString,
+  message_id: OptionalPossiblyEmptyPublicString,
+  call_id: OptionalPossiblyEmptyPublicString,
+  correlation_id: OptionalPossiblyEmptyPublicString,
+  sequence: Schema.optional(NonNegativeInt),
   // Tolerant string (not a strict Literal) so an unknown role (e.g. a future "system"/"tool"
   // message) cannot fail the whole thread-detail decode and drop all history; the UI maps
   // "user" to the user side and everything else to the assistant side.
@@ -638,11 +770,33 @@ export const JarvisProjectThreadMessage = Schema.Struct({
   peer_id: OptionalPossiblyEmptyPublicString,
   content: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   observed_at: IsoDateTime,
+  type: OptionalPossiblyEmptyPublicString,
+  watch_id: OptionalPossiblyEmptyPublicString,
+  child_chat_ids: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  child_chat_id: OptionalPossiblyEmptyPublicString,
+  title: OptionalPossiblyEmptyPublicString,
+  phase: OptionalPossiblyEmptyPublicString,
+  status: OptionalPossiblyEmptyPublicString,
+  error: OptionalPossiblyEmptyPublicString,
+  completed_at: OptionalPossiblyEmptyPublicString,
 });
 export type JarvisProjectThreadMessage = typeof JarvisProjectThreadMessage.Type;
 
+export const JarvisProjectThreadQueuedTurn = Schema.Struct({
+  queue_id: TrimmedNonEmptyString,
+  text: TrimmedNonEmptyString,
+  queued_at: IsoDateTime,
+  status: Schema.Literals(["queued", "claimed"]),
+});
+export type JarvisProjectThreadQueuedTurn = typeof JarvisProjectThreadQueuedTurn.Type;
+
 export const JarvisProjectThreadDetail = Schema.Struct({
   ...JarvisProjectThread.fields,
+  // The Jarvis queue is capped at 32 entries. Keep the same public bound at the
+  // trust boundary so a malformed detail response cannot expand client state.
+  queued_turns: Schema.optional(
+    Schema.Array(JarvisProjectThreadQueuedTurn).check(Schema.isMaxLength(32)),
+  ),
   messages: Schema.Array(JarvisProjectThreadMessage).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -722,7 +876,7 @@ export const JarvisProjectThreadTurnInput = Schema.Struct({
   text: TrimmedNonEmptyString,
   attachments: Schema.optionalKey(Schema.Array(JarvisTurnAttachment)),
   workspace: Schema.optionalKey(JarvisTurnWorkspaceInput),
-  idempotency_key: Schema.optional(TrimmedNonEmptyString),
+  idempotency_key: TrimmedNonEmptyString,
   metadata: Schema.optionalKey(JarvisWriteMetadata).pipe(
     Schema.withDecodingDefault(Effect.succeed({ surface: "jarvis-cockpit" })),
   ),
@@ -735,6 +889,52 @@ export const JarvisProjectThreadTurnResult = Schema.Struct({
   events: Schema.Array(JsonObject).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type JarvisProjectThreadTurnResult = typeof JarvisProjectThreadTurnResult.Type;
+
+export const JarvisProjectThreadApprovalInput = Schema.Struct({
+  request_id: JarvisRequestId,
+  decision: JarvisApprovalDecision,
+  idempotency_key: Schema.optional(TrimmedNonEmptyString),
+});
+export type JarvisProjectThreadApprovalInput = typeof JarvisProjectThreadApprovalInput.Type;
+
+export const JarvisProjectThreadUserInputInput = Schema.Struct({
+  request_id: JarvisRequestId,
+  answers: Schema.optional(JsonObject),
+  text: Schema.optional(TrimmedNonEmptyString),
+  idempotency_key: Schema.optional(TrimmedNonEmptyString),
+});
+export type JarvisProjectThreadUserInputInput = typeof JarvisProjectThreadUserInputInput.Type;
+
+export const JarvisProjectThreadInterruptInput = Schema.Struct({
+  turn_id: TrimmedNonEmptyString,
+  idempotency_key: Schema.optional(TrimmedNonEmptyString),
+});
+export type JarvisProjectThreadInterruptInput = typeof JarvisProjectThreadInterruptInput.Type;
+
+export const JarvisProjectThreadControl = Schema.Union([
+  Schema.Struct({
+    action: Schema.Literals(["approval", "input"]),
+    accepted: Schema.Literal(true),
+    request_id: JarvisRequestId,
+  }),
+  Schema.Struct({
+    action: Schema.Literal("interrupt"),
+    accepted: Schema.Literal(true),
+    turn_id: TrimmedNonEmptyString,
+  }),
+]);
+export type JarvisProjectThreadControl = typeof JarvisProjectThreadControl.Type;
+
+export const JarvisProjectThreadControlResponse = Schema.Struct({
+  ok: Schema.Literal(true),
+  api_version: Schema.Literal("v1"),
+  schema_version: Schema.Number,
+  project_id: JarvisProjectId,
+  thread_id: JarvisProjectThreadId,
+  control: JarvisProjectThreadControl,
+  execution: JarvisConversationExecution,
+});
+export type JarvisProjectThreadControlResponse = typeof JarvisProjectThreadControlResponse.Type;
 
 export const JarvisWorkerEngine = Schema.Struct({
   engine: JarvisEngineId,
@@ -998,7 +1198,7 @@ export const JarvisCockpitSnapshot = Schema.Struct({
     mode: JarvisSyncMode,
     status: JarvisSyncStatus,
     synced_at: Schema.optional(Schema.NullOr(IsoDateTime)),
-    errors: Schema.Array(JsonObject),
+    errors: Schema.Array(JarvisSyncDiagnostic),
   }),
   runs: Schema.Array(JarvisRun),
   sessions: Schema.Array(JarvisWorkerSession),
@@ -1108,6 +1308,13 @@ export const JarvisProjectThreadTurnRpcResult = Schema.Struct({
 });
 export type JarvisProjectThreadTurnRpcResult = typeof JarvisProjectThreadTurnRpcResult.Type;
 
+export const JarvisProjectThreadControlRpcResult = Schema.Struct({
+  ok: Schema.Boolean,
+  result: Schema.optionalKey(JarvisProjectThreadControlResponse),
+  error: Schema.optionalKey(JarvisReadError),
+});
+export type JarvisProjectThreadControlRpcResult = typeof JarvisProjectThreadControlRpcResult.Type;
+
 export const JarvisWorkerWorktreePruneInput = Schema.Struct({
   workerId: JarvisWorkerId,
 });
@@ -1202,6 +1409,7 @@ export type JarvisArtifactsPage = typeof JarvisArtifactsPage.Type;
 export const JarvisStartWorkInput = Schema.Struct({
   phrase: Schema.optional(TrimmedNonEmptyString),
   source: Schema.optional(TrimmedNonEmptyString),
+  project_id: Schema.optional(JarvisProjectId),
   repo: Schema.optional(TrimmedNonEmptyString),
   worker_id: Schema.optional(JarvisWorkerId),
   engine: Schema.optional(JarvisEngineId),

@@ -51,9 +51,12 @@ describe("buildPrReviewOrchestratorPrompt", () => {
     expect(prompt).toContain("not the ordinal line number of `gh pr diff` output");
     expect(prompt).toContain("verify every proposed inline anchor");
     expect(prompt).toContain('`line_kind="FILE"`');
-    expect(prompt).toContain("non-empty hexadecimal `headRefOid` values identify the same commit");
-    expect(prompt).toContain("7-39 character hexadecimal prefix");
-    expect(prompt).toContain("prefix exactly matches the full SHA");
+    expect(prompt).toContain(
+      "Each child must report a full 40-character hexadecimal `headRefOid`, and both values must be identical",
+    );
+    expect(prompt).toContain("reported an abbreviated or malformed SHA");
+    expect(prompt).not.toContain("7-39 character hexadecimal prefix");
+    expect(prompt).not.toContain("accept it only when");
     expect(prompt).toContain("Correctness:");
     expect(prompt).toContain("Security:");
     expect(prompt).not.toContain("Performance:");
@@ -89,6 +92,44 @@ describe("buildPrReviewOrchestratorPrompt", () => {
     expect(prompt).toContain("Claude · Claude Opus 4.7");
     expect(prompt).toContain("Codex · GPT-5.5");
     expect(prompt).toContain("reconcile and deduplicate");
+    expect(prompt).toContain(
+      "Each child must report a full 40-character hexadecimal `headRefOid`, and both values must be identical",
+    );
+    expect(prompt).not.toContain("7-39 character hexadecimal prefix");
+    expect(prompt).not.toContain("accept it only when");
+  });
+
+  it("publishes every finding at every severity instead of silently dropping them", () => {
+    const prompt = buildPrReviewOrchestratorPrompt({
+      repo: "acme/widgets",
+      prNumber: 1,
+      dimensions: ["correctness"],
+      reviewers: [
+        {
+          providerInstanceId: "claudeAgent",
+          engine: "claude",
+          model: "claude-opus-4-7",
+          label: "Claude · Claude Opus 4.7",
+        },
+        {
+          providerInstanceId: "codex",
+          engine: "codex",
+          model: "gpt-5.5",
+          label: "Codex · GPT-5.5",
+        },
+      ],
+      post: true,
+    });
+
+    // The orchestrator kept only the finding it could re-verify and dropped the
+    // rest, so a joined review of six findings published one comment.
+    expect(prompt).toContain("You are a reconciler, not a gatekeeper");
+    expect(prompt).toContain("never silently omitted");
+    expect(prompt).toContain("Publish every finding both reviewers reported, at every severity");
+    expect(prompt).toContain("Severity sets a finding's priority, never whether it is published");
+    expect(prompt).toContain("being unable to re-verify it yourself is not grounds to drop it");
+    expect(prompt).toContain("Account for every finding both children reported");
+    expect(prompt).not.toContain("discard findings that are unsupported by the changed code");
   });
 
   it("falls back to correctness when no dimensions are selected", () => {

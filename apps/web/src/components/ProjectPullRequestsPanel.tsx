@@ -3,8 +3,12 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { useEffect, useRef, useState } from "react";
 import {
+  CircleCheckIcon,
+  CircleDashedIcon,
+  CircleXIcon,
   GitPullRequestIcon,
   LoaderIcon,
+  MessageSquareTextIcon,
   RefreshCwIcon,
   ScanEyeIcon,
   TriangleAlertIcon,
@@ -30,6 +34,19 @@ interface ProjectPullRequestsPanelProps {
 function pullRequestUpdatedLabel(pullRequest: ProjectPullRequest): string | null {
   const updatedAt = Option.getOrNull(pullRequest.updatedAt);
   return updatedAt === null ? null : formatRelativeTimeLabel(DateTime.formatIso(updatedAt));
+}
+
+function reviewDecisionLabel(pullRequest: ProjectPullRequest): string {
+  if (pullRequest.reviewDecision === "approved") return "Approved";
+  if (pullRequest.reviewDecision === "changes_requested") return "Changes requested";
+  if (pullRequest.reviewDecision === "review_required") return "Review required";
+  return "Review not reported";
+}
+
+function CheckStatusIcon({ status }: { readonly status: ProjectPullRequest["checksStatus"] }) {
+  if (status === "passing") return <CircleCheckIcon className="size-3.5 text-emerald-500" />;
+  if (status === "failing") return <CircleXIcon className="size-3.5 text-destructive" />;
+  return <CircleDashedIcon className="size-3.5 text-muted-foreground" />;
 }
 
 export function ProjectPullRequestsPanel({
@@ -60,6 +77,14 @@ export function ProjectPullRequestsPanel({
   const repoErrors = result?.ok === true ? (result.errors ?? []) : [];
   const requestError =
     pullRequestsQuery.error ?? (result?.ok === false ? (result.error?.message ?? null) : null);
+  const commentCount = pullRequests.reduce(
+    (total, pullRequest) => total + (pullRequest.commentCount ?? 0),
+    0,
+  );
+  const reviewCount = pullRequests.reduce(
+    (total, pullRequest) => total + (pullRequest.reviewCount ?? 0),
+    0,
+  );
 
   const seenKeysRef = useRef<ReadonlySet<string> | null>(null);
   useEffect(() => {
@@ -78,14 +103,19 @@ export function ProjectPullRequestsPanel({
   }, [result]);
 
   return (
-    <div className="rounded-lg border border-border/70 bg-muted/20 p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <section className="project-control-deck-enter overflow-hidden rounded-xl border border-border/70 bg-card shadow-xs">
+      <header className="flex flex-wrap items-start justify-between gap-4 border-b border-border/70 px-5 py-4 sm:px-6">
         <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-foreground">Open pull requests</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            Review surface
+          </p>
+          <h2 className="mt-1 text-lg font-semibold tracking-tight text-foreground">
+            Open pull requests
+          </h2>
+          <p className="mt-1 text-xs text-muted-foreground">
             {pullRequests.length === 0
               ? "No open pull requests across the linked repositories."
-              : `${pullRequests.length} open across the linked repositories.`}
+              : `${pullRequests.length} open · ${commentCount} comments · ${reviewCount} reviews`}
           </p>
         </div>
         <Button
@@ -101,17 +131,17 @@ export function ProjectPullRequestsPanel({
           )}
           Refresh
         </Button>
-      </div>
+      </header>
 
       {requestError ? (
-        <p className="mt-3 flex items-center gap-2 text-sm text-destructive">
+        <p className="flex items-center gap-2 border-b border-border/60 bg-destructive/5 px-5 py-3 text-sm text-destructive sm:px-6">
           <TriangleAlertIcon className="size-4 shrink-0" />
           {requestError}
         </p>
       ) : null}
 
       {repoErrors.length > 0 ? (
-        <div className="mt-3 space-y-1">
+        <div className="space-y-1 border-b border-border/60 bg-amber-500/5 px-5 py-3 sm:px-6">
           {repoErrors.map((error) => (
             <p key={error.repo} className="flex items-center gap-2 text-xs text-muted-foreground">
               <TriangleAlertIcon className="size-3 shrink-0 text-amber-500" />
@@ -122,16 +152,16 @@ export function ProjectPullRequestsPanel({
       ) : null}
 
       {pullRequests.length > 0 ? (
-        <ul className="mt-4 space-y-2">
+        <ul className="divide-y divide-border/60">
           {pullRequests.map((pullRequest) => {
             const updatedLabel = pullRequestUpdatedLabel(pullRequest);
             const key = pullRequestKey(pullRequest);
             return (
               <li
                 key={key}
-                className="rounded-md border border-border/70 bg-background/70 p-3 transition-colors hover:bg-accent/20"
+                className="grid gap-4 px-5 py-4 transition-colors hover:bg-muted/15 sm:px-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center"
               >
-                <div className="flex items-start gap-3">
+                <div className="flex min-w-0 items-start gap-3">
                   <button
                     type="button"
                     onClick={(event) => openPrLink(event, pullRequest.url)}
@@ -149,13 +179,42 @@ export function ProjectPullRequestsPanel({
                           </Badge>
                         ) : null}
                       </span>
-                      <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                      <span className="mt-1 block truncate text-xs text-muted-foreground">
                         {pullRequest.repo} #{pullRequest.number}
                         {pullRequest.author ? ` · ${pullRequest.author}` : ""}
                         {updatedLabel ? ` · ${updatedLabel}` : ""}
                       </span>
+                      <span className="mt-2 flex flex-wrap items-center gap-2">
+                        <Badge variant="outline" className="gap-1.5 font-normal">
+                          <MessageSquareTextIcon className="size-3" />
+                          {pullRequest.commentCount ?? 0} comments
+                        </Badge>
+                        <Badge variant="outline" className="font-normal">
+                          {pullRequest.reviewCount ?? 0} reviews
+                        </Badge>
+                        <Badge
+                          variant={
+                            pullRequest.reviewDecision === "approved" ? "success" : "outline"
+                          }
+                          className="font-normal"
+                        >
+                          {reviewDecisionLabel(pullRequest)}
+                        </Badge>
+                        <Badge variant="outline" className="gap-1.5 font-normal">
+                          <CheckStatusIcon status={pullRequest.checksStatus} />
+                          {pullRequest.checksStatus === "passing"
+                            ? `${pullRequest.checksCount ?? 0} checks passing`
+                            : pullRequest.checksStatus === "failing"
+                              ? "Checks failing"
+                              : pullRequest.checksStatus === "pending"
+                                ? "Checks pending"
+                                : "Checks not reported"}
+                        </Badge>
+                      </span>
                     </span>
                   </button>
+                </div>
+                <div className="flex justify-end">
                   <Button
                     size="xs"
                     variant="outline"
@@ -172,6 +231,10 @@ export function ProjectPullRequestsPanel({
             );
           })}
         </ul>
+      ) : requestError === null ? (
+        <div className="px-5 py-8 text-sm text-muted-foreground sm:px-6">
+          Nothing is waiting for review.
+        </div>
       ) : null}
 
       {reviewTarget ? (
@@ -188,6 +251,6 @@ export function ProjectPullRequestsPanel({
           prNumber={reviewTarget.prNumber}
         />
       ) : null}
-    </div>
+    </section>
   );
 }

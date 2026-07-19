@@ -32,6 +32,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { toastManager } from "./ui/toast";
+import { useDefaultOrchestratorTarget } from "../hooks/useDefaultOrchestrator";
 
 export function NoActiveThreadState() {
   const navigate = useNavigate();
@@ -72,6 +73,18 @@ export function NoActiveThreadState() {
   const createProjectThread = useAtomCommand(serverEnvironment.createJarvisProjectThread, {
     reportFailure: false,
   });
+  const snapshotQuery = useEnvironmentQuery(
+    primaryEnvironment
+      ? serverEnvironment.jarvisSnapshot({
+          environmentId: primaryEnvironment.environmentId,
+          input: {},
+        })
+      : null,
+  );
+  const orchestratorTarget = useDefaultOrchestratorTarget(
+    primaryEnvironment?.environmentId ?? null,
+    snapshotQuery.data?.snapshot?.workers ?? [],
+  );
   const registryFailed =
     isJarvisCockpitMode &&
     !fixtureMode &&
@@ -145,14 +158,24 @@ export function NoActiveThreadState() {
           });
           return;
         }
-        if (!primaryEnvironment || !firstRegistryProject) {
+        if (!primaryEnvironment || !firstRegistryProject || !orchestratorTarget) {
+          if (primaryEnvironment && firstRegistryProject) {
+            toastManager.add({
+              type: "error",
+              title: "Could not create orchestrator",
+              description: "No orchestrator model is configured for this environment.",
+            });
+          }
           return;
         }
         void createProjectThread({
           environmentId: primaryEnvironment.environmentId,
           input: {
             projectId: firstRegistryProject.id,
-            input: { title: `Conversation for ${firstRegistryProject.name}` },
+            input: {
+              title: `Conversation for ${firstRegistryProject.name}`,
+              ...orchestratorTarget,
+            },
           },
         }).then((result) => {
           if (result._tag === "Failure") {

@@ -1,12 +1,10 @@
-import { ProjectId } from "@t3tools/contracts";
+import { ApprovalRequestId, JarvisRequestId, ProjectId } from "@t3tools/contracts";
 import type {
   EnvironmentId,
-  JarvisConversationWorkspace,
-  JarvisProject,
-  JarvisProjectFile,
-  JarvisProjectMemoryResult,
+  JarvisApprovalDecision,
   JarvisTurnAttachment,
   JarvisTurnWorkspaceInput,
+  ProviderApprovalDecision,
   ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
@@ -14,24 +12,22 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  adaptJarvisProjectThread,
+  enrichAgentConversationWithJarvisContext,
+} from "@t3tools/client-runtime/conversation";
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import * as Schema from "effect/Schema";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
-  BrainIcon,
   CheckIcon,
-  FileTextIcon,
-  GitBranchIcon,
   MessageSquareIcon,
   PanelRightCloseIcon,
   PanelRightOpenIcon,
   PencilIcon,
   RefreshCwIcon,
-  RotateCcwIcon,
-  ServerIcon,
   SparklesIcon,
   TriangleAlertIcon,
   XIcon,
@@ -43,15 +39,15 @@ import {
   primaryServerProvidersAtom,
   serverEnvironment,
 } from "../state/server";
-import { type EnvironmentQueryView, useEnvironmentQuery } from "../state/query";
+import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
 import { cn, randomUUID } from "../lib/utils";
 import { readFileAsDataUrl } from "../lib/fileAttachments";
-import { useLocalStorage } from "../hooks/useLocalStorage";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useEnvironmentSettings } from "../hooks/useSettings";
 import { useTheme } from "../hooks/useTheme";
-import { formatRelativeTimeLabel } from "../timestampFormat";
+import { useComposerHandleContext } from "../composerHandleContext";
 import {
   type ComposerImageAttachment,
   type PersistedComposerImageAttachment,
@@ -71,25 +67,36 @@ import {
 } from "./ui/alert-dialog";
 import {
   archivedProjectConversationSummary,
-  defaultProjectRepo,
   extractProjectConversationReply,
   formatJarvisCommandFailure,
   formatProjectConversationFailure,
   isProjectConversationArchived,
   isProjectConversationDetailRouteGap,
-  projectConversationHistoryMessages,
-  projectConversationMergedMessages,
   sortProjectConversations,
   visibleProjectFiles,
   type ProjectConversationLocalTurnView,
-  type ProjectConversationMessageView,
 } from "../jarvisProjectConversations.logic";
-import { buildProjectConversationTurnAttachments } from "./projectConversationComposer.logic";
+import {
+  LEGACY_PROJECT_CONVERSATION_CONTEXT_PANEL_COLLAPSED_KEY,
+  projectConversationContextContributions,
+  projectConversationContextPanelInitialization,
+} from "../projectConversationContext.logic";
+import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
+import {
+  selectThreadRightPanelState,
+  useRightPanelStore,
+  type RightPanelSurface,
+} from "../rightPanelStore";
+import {
+  buildProjectConversationTurnAttachments,
+  isProjectConversationComposerDraftEmpty,
+  projectConversationComposerMatchesSubmission,
+} from "./projectConversationComposer.logic";
 import {
   buildTurnWorkspaceInput,
   clearProjectConversationWorkspaceRepos,
   createProjectConversationWorkspaceStaging,
-  deriveWorkspaceProvisionSteps,
+  projectConversationWorkspaceMatchesSubmission,
   setProjectConversationWorkspaceEngine,
   type ProjectConversationWorkspaceStaging,
 } from "./projectConversationWorkspace.logic";
@@ -98,9 +105,7 @@ import { BrainWorkspaceStrip } from "./composer/BrainWorkspaceStrip";
 import {
   buildProjectConversationRenameInput,
   buildProjectConversationTitleGenerationContext,
-  PROJECT_CONTEXT_PANEL_COLLAPSED_STORAGE_KEY,
   resolveProjectConversationHeaderStatus,
-  resolveProjectContextPanelToggleState,
   resolveProjectConversationTitle,
 } from "./projectConversationHeader.logic";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
@@ -113,9 +118,26 @@ import { toastManager } from "./ui/toast";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { mergeJarvisThreadToolEventsWithReply } from "../jarvisThreadToolEvents.logic";
-import { ThreadToolCallRow } from "./chat/ThreadToolCallRow";
+import { projectConversationTimelineOverlayTurns } from "../projectConversationTimelineOverlay.logic";
+import { ChatHeaderTitle } from "./chat/ChatHeaderTitle";
+import { AgentConversationTimeline } from "./chat/AgentConversationTimeline";
+import { cloneComposerImageForRetry } from "./ChatView.logic";
+import { ConversationContextPanel } from "./ConversationContextPanel";
+import { RightPanelTabs } from "./RightPanelTabs";
+import { RightPanelSheet } from "./RightPanelSheet";
+import {
+  cachedProjectConversationControlKey,
+  projectConversationComposerRuntime,
+} from "../projectConversationRuntime.logic";
+import {
+  buildPendingUserInputAnswers,
+  derivePendingUserInputProgress,
+  setPendingUserInputCustomAnswer,
+  togglePendingUserInputOptionSelection,
+  type PendingUserInputDraftAnswer,
+} from "../pendingUserInput";
 
-interface ProjectConversationViewProps {
+interface AgentConversationChatViewProps {
   readonly environmentId: EnvironmentId;
   readonly projectId: string;
   readonly threadId: ThreadId;
@@ -123,16 +145,40 @@ interface ProjectConversationViewProps {
 
 type LocalTurn = ProjectConversationLocalTurnView;
 
+interface ProjectConversationSubmissionSnapshot {
+  readonly prompt: string;
+  readonly attachments: ReadonlyArray<JarvisTurnAttachment>;
+  readonly composerImages: ReadonlyArray<ComposerImageAttachment>;
+  readonly workspace: JarvisTurnWorkspaceInput | null;
+}
+
 const PROJECT_CONVERSATION_FILE_DATA_URL_READ_MESSAGES = {
   nonStringResult: "File reader returned a non-string data URL.",
   readFailure: "File read failed.",
 };
 
-export function ProjectConversationView({
+const EMPTY_RIGHT_PANEL_PENDING_IDS = new Set<string>();
+const EMPTY_RIGHT_PANEL_PREVIEW_SESSIONS = {};
+const EMPTY_RIGHT_PANEL_TERMINAL_LABELS = new Map<string, string>();
+
+const PROJECT_APPROVAL_DECISIONS: Record<ProviderApprovalDecision, JarvisApprovalDecision> = {
+  accept: "approved",
+  acceptForSession: "approved_for_session",
+  decline: "declined",
+  cancel: "cancelled",
+};
+
+function showControlFailure(title: string, fallback: string, error: unknown): void {
+  const description =
+    error instanceof Error && error.message.trim().length > 0 ? error.message : fallback;
+  toastManager.add({ type: "error", title, description });
+}
+
+export function AgentConversationChatView({
   environmentId,
   projectId,
   threadId,
-}: ProjectConversationViewProps) {
+}: AgentConversationChatViewProps) {
   const projectsQuery = useEnvironmentQuery(
     serverEnvironment.jarvisProjects({
       environmentId,
@@ -166,6 +212,15 @@ export function ProjectConversationView({
   const sendTurn = useAtomCommand(serverEnvironment.sendJarvisProjectThreadTurn, {
     reportFailure: false,
   });
+  const respondToApproval = useAtomCommand(serverEnvironment.respondJarvisProjectThreadApproval, {
+    reportFailure: false,
+  });
+  const respondToUserInput = useAtomCommand(serverEnvironment.respondJarvisProjectThreadInput, {
+    reportFailure: false,
+  });
+  const interruptTurn = useAtomCommand(serverEnvironment.interruptJarvisProjectThread, {
+    reportFailure: false,
+  });
   const archiveThread = useAtomCommand(serverEnvironment.archiveJarvisProjectThread, {
     reportFailure: false,
   });
@@ -194,10 +249,6 @@ export function ProjectConversationView({
     threadDetailStream.data !== null && threadDetailStream.data !== undefined
       ? threadDetailStream.data
       : (conversations.find((candidate) => candidate.thread_id === String(threadId)) ?? null);
-  const historyMessages = useMemo(
-    () => projectConversationHistoryMessages(threadDetailStream.data ?? null),
-    [threadDetailStream.data],
-  );
   const files = useMemo(
     () => visibleProjectFiles(filesQuery.data?.ok === true ? (filesQuery.data.files ?? []) : []),
     [filesQuery.data],
@@ -214,28 +265,115 @@ export function ProjectConversationView({
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
   );
+  const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
+  const rightPanelState = useRightPanelStore((state) =>
+    selectThreadRightPanelState(state.byThreadKey, routeThreadRef),
+  );
+  const activeRightPanelSurface = rightPanelState.isOpen
+    ? (rightPanelState.surfaces.find((surface) => surface.id === rightPanelState.activeSurfaceId) ??
+      null)
+    : null;
+  const shouldUseRightPanelSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
+  const initializedRightPanelThreadKeyRef = useRef<string | null>(null);
   const promptRef = useRef("");
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const composerElementContextsRef = useRef<ElementContextDraft[]>([]);
-  const composerRef = useRef<ChatComposerHandle | null>(null);
+  const localComposerRef = useRef<ChatComposerHandle | null>(null);
+  const controlIdempotencyKeysRef = useRef(new Map<string, string>());
+  const composerRef = useComposerHandleContext() ?? localComposerRef;
   const clearComposerContent = useComposerDraftStore((store) => store.clearComposerContent);
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
+  const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const [turns, setTurns] = useState<LocalTurn[]>([]);
-  const messages = useMemo(
-    () => projectConversationMergedMessages({ historyMessages, localTurns: turns }),
-    [historyMessages, turns],
+  const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
+  const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
+    ApprovalRequestId[]
+  >([]);
+  const [pendingUserInputAnswersByRequestId, setPendingUserInputAnswersByRequestId] = useState<
+    Record<string, Record<string, PendingUserInputDraftAnswer>>
+  >({});
+  const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
+    useState<Record<string, number>>({});
+  const projectedConversationDetail = useMemo(
+    () =>
+      threadDetailStream.data ?? (conversation === null ? null : { ...conversation, messages: [] }),
+    [conversation, threadDetailStream.data],
+  );
+  const agentConversation = useMemo(
+    () =>
+      projectedConversationDetail === null
+        ? null
+        : enrichAgentConversationWithJarvisContext(
+            adaptJarvisProjectThread(projectedConversationDetail),
+            {
+              project,
+              memory: memoryQuery.data?.ok === true ? (memoryQuery.data.memory ?? null) : null,
+              files,
+            },
+          ),
+    [files, memoryQuery.data, project, projectedConversationDetail],
+  );
+  const composerRuntime = useMemo(
+    () => projectConversationComposerRuntime(agentConversation),
+    [agentConversation],
+  );
+  const activePendingApproval = composerRuntime.pendingApprovals[0] ?? null;
+  const activePendingUserInput = composerRuntime.pendingUserInputs[0] ?? null;
+  const activePendingDraftAnswers = useMemo(
+    () =>
+      activePendingUserInput
+        ? (pendingUserInputAnswersByRequestId[activePendingUserInput.requestId] ?? {})
+        : {},
+    [activePendingUserInput, pendingUserInputAnswersByRequestId],
+  );
+  const activePendingQuestionIndex = activePendingUserInput
+    ? (pendingUserInputQuestionIndexByRequestId[activePendingUserInput.requestId] ?? 0)
+    : 0;
+  const activePendingProgress = useMemo(
+    () =>
+      activePendingUserInput
+        ? derivePendingUserInputProgress(
+            activePendingUserInput.questions,
+            activePendingDraftAnswers,
+            activePendingQuestionIndex,
+          )
+        : null,
+    [activePendingDraftAnswers, activePendingQuestionIndex, activePendingUserInput],
+  );
+  const activePendingResolvedAnswers = useMemo(
+    () =>
+      activePendingUserInput
+        ? buildPendingUserInputAnswers(activePendingUserInput.questions, activePendingDraftAnswers)
+        : null,
+    [activePendingDraftAnswers, activePendingUserInput],
+  );
+  const activePendingIsResponding = activePendingUserInput
+    ? respondingUserInputRequestIds.includes(activePendingUserInput.requestId)
+    : false;
+  const timelineOverlayTurns = useMemo(
+    () => projectConversationTimelineOverlayTurns(turns),
+    [turns],
+  );
+  const titleContextMessages = useMemo(
+    () => [
+      ...(agentConversation?.messages.flatMap((message) =>
+        message.role === "user" || message.role === "assistant"
+          ? [{ role: message.role, content: message.content }]
+          : [],
+      ) ?? []),
+      ...turns.flatMap((turn) => [
+        { role: "user" as const, content: turn.prompt },
+        ...(turn.response.trim() ? [{ role: "assistant" as const, content: turn.response }] : []),
+      ]),
+    ],
+    [agentConversation?.messages, turns],
   );
   const [pendingArchiveConfirmation, setPendingArchiveConfirmation] = useState(false);
   const [renamingConversation, setRenamingConversation] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const [renameBusy, setRenameBusy] = useState(false);
   const [renameGenerating, setRenameGenerating] = useState(false);
-  const [contextPanelCollapsed, setContextPanelCollapsed] = useLocalStorage(
-    PROJECT_CONTEXT_PANEL_COLLAPSED_STORAGE_KEY,
-    false,
-    Schema.Boolean,
-  );
   const workspaceStagingKey = `${environmentId}:${projectId}:${String(threadId)}`;
   const [workspaceStagingByThread, setWorkspaceStagingByThread] = useState<
     Record<string, ProjectConversationWorkspaceStaging>
@@ -252,10 +390,17 @@ export function ProjectConversationView({
     serverTitle: conversation?.title ?? "Project conversation",
   });
   const conversationStatus = resolveProjectConversationHeaderStatus({
-    status: conversation?.status,
+    status: conversation?.operational_state ?? conversation?.status,
     endedReason: conversation?.ended_reason,
   });
-  const contextPanelToggleState = resolveProjectContextPanelToggleState(contextPanelCollapsed);
+  const contextContributions = useMemo(
+    () =>
+      projectConversationContextContributions({
+        conversation: agentConversation,
+        memoryLoading: memoryQuery.isPending,
+      }),
+    [agentConversation, memoryQuery.isPending],
+  );
   // Project-thread conversations run on the brain (engine "jarvis"), which the gating treats
   // as attachment-capable without a catalog lookup — so we intentionally do NOT fetch the
   // (expensive, route-probing) capabilities here on every conversation mount. A worker-linked
@@ -303,8 +448,28 @@ export function ProjectConversationView({
     setRenamingConversation(false);
     setRenameDraft("");
     setTurns([]);
+    setRespondingRequestIds([]);
+    setRespondingUserInputRequestIds([]);
+    setPendingUserInputAnswersByRequestId({});
+    setPendingUserInputQuestionIndexByRequestId({});
+    controlIdempotencyKeysRef.current.clear();
     turnCounter.current = 0;
   }, [threadId]);
+
+  useEffect(() => {
+    if (initializedRightPanelThreadKeyRef.current === routeThreadKey) return;
+    initializedRightPanelThreadKeyRef.current = routeThreadKey;
+    const store = useRightPanelStore.getState();
+    const initialization = projectConversationContextPanelInitialization({
+      hasPersistedState: routeThreadKey in store.byThreadKey,
+      legacyCollapsedRaw: window.localStorage.getItem(
+        LEGACY_PROJECT_CONVERSATION_CONTEXT_PANEL_COLLAPSED_KEY,
+      ),
+    });
+    if (initialization === "preserve") return;
+    store.open(routeThreadRef, "context");
+    if (initialization === "closed") store.close(routeThreadRef);
+  }, [routeThreadKey, routeThreadRef]);
 
   useEffect(() => {
     const engine = conversationWorkspace?.engine?.trim().toLowerCase();
@@ -339,6 +504,59 @@ export function ProjectConversationView({
     memoryQuery.refresh();
     filesQuery.refresh();
   };
+
+  const toggleContextPanel = () => {
+    const store = useRightPanelStore.getState();
+    if (rightPanelState.isOpen) {
+      store.close(routeThreadRef);
+      return;
+    }
+    if (rightPanelState.surfaces.some((surface) => surface.kind === "context")) {
+      store.show(routeThreadRef);
+      store.activateSurface(routeThreadRef, "context");
+      return;
+    }
+    store.open(routeThreadRef, "context");
+  };
+
+  const activateRightPanelSurface = (surface: RightPanelSurface) =>
+    useRightPanelStore.getState().activateSurface(routeThreadRef, surface.id);
+  const closeRightPanelSurface = (surface: RightPanelSurface) => {
+    const store = useRightPanelStore.getState();
+    if (surface.kind === "context") {
+      store.close(routeThreadRef);
+      return;
+    }
+    store.closeSurface(routeThreadRef, surface.id);
+  };
+  const closeOtherRightPanelSurfaces = (surface: RightPanelSurface) =>
+    useRightPanelStore.getState().closeOtherSurfaces(routeThreadRef, surface.id);
+  const closeRightPanelSurfacesToRight = (surface: RightPanelSurface) =>
+    useRightPanelStore.getState().closeSurfacesToRight(routeThreadRef, surface.id);
+  const closeAllRightPanelSurfaces = () => useRightPanelStore.getState().close(routeThreadRef);
+  const openContextRightPanel = () => useRightPanelStore.getState().open(routeThreadRef, "context");
+
+  const contextRightPanel = (mode: "inline" | "sheet") => (
+    <RightPanelTabs
+      mode={mode}
+      surfaces={rightPanelState.surfaces}
+      activeSurfaceId={activeRightPanelSurface?.id ?? null}
+      pendingSurfaceIds={EMPTY_RIGHT_PANEL_PENDING_IDS}
+      previewSessions={EMPTY_RIGHT_PANEL_PREVIEW_SESSIONS}
+      terminalLabelsById={EMPTY_RIGHT_PANEL_TERMINAL_LABELS}
+      onActivate={activateRightPanelSurface}
+      onCloseSurface={closeRightPanelSurface}
+      onCloseOtherSurfaces={closeOtherRightPanelSurfaces}
+      onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
+      onCloseAllSurfaces={closeAllRightPanelSurfaces}
+      onAddContext={openContextRightPanel}
+      contextAvailable
+    >
+      {activeRightPanelSurface?.kind === "context" ? (
+        <ConversationContextPanel contributions={contextContributions} />
+      ) : null}
+    </RightPanelTabs>
+  );
 
   const startConversationRename = () => {
     if (conversation === null) return;
@@ -418,7 +636,7 @@ export function ProjectConversationView({
       input: {
         message: buildProjectConversationTitleGenerationContext({
           currentTitle: conversation.title,
-          messages,
+          messages: titleContextMessages,
         }),
       },
     });
@@ -511,19 +729,53 @@ export function ProjectConversationView({
     return result.attachments;
   };
 
+  const restoreFailedSubmission = (submission: ProjectConversationSubmissionSnapshot) => {
+    if (
+      !isProjectConversationComposerDraftEmpty({
+        prompt: promptRef.current,
+        imageCount: composerImagesRef.current.length,
+        terminalContextCount: composerTerminalContextsRef.current.length,
+        elementContextCount: composerElementContextsRef.current.length,
+      })
+    ) {
+      return;
+    }
+    const retryImages = submission.composerImages.map(cloneComposerImageForRetry);
+    promptRef.current = submission.prompt;
+    composerImagesRef.current = retryImages;
+    setComposerDraftPrompt(composerDraftTarget, submission.prompt);
+    addComposerDraftImages(composerDraftTarget, retryImages);
+    composerRef.current?.resetCursorState({
+      cursor: submission.prompt.length,
+      prompt: submission.prompt,
+      detectTrigger: true,
+    });
+  };
+
   const sendPrompt = async (
-    prompt: string,
-    options: {
-      readonly attachments?: ReadonlyArray<JarvisTurnAttachment>;
-      readonly existingTurnId?: string;
-      readonly workspace?: JarvisTurnWorkspaceInput;
-    } = {},
+    submission: ProjectConversationSubmissionSnapshot,
+    options: { readonly existingTurnId?: string } = {},
   ) => {
-    const text = prompt.trim();
+    const text = submission.prompt.trim();
     if (text.length === 0 || sendBusy || archived) return;
     const existingTurnId = options.existingTurnId;
-    const turnAttachments = existingTurnId ? [] : (options.attachments ?? []);
-    const turnWorkspace = options.workspace;
+    const turnAttachments = submission.attachments;
+    const turnWorkspace = submission.workspace;
+    const workspaceMatchesSubmission = projectConversationWorkspaceMatchesSubmission(
+      buildTurnWorkspaceInput(workspaceStaging, conversation?.engine),
+      turnWorkspace,
+    );
+    const clearMatchingRetryDraft =
+      existingTurnId !== undefined &&
+      workspaceMatchesSubmission &&
+      projectConversationComposerMatchesSubmission({
+        draftPrompt: promptRef.current,
+        draftImageIds: composerImagesRef.current.map((image) => image.id),
+        terminalContextCount: composerTerminalContextsRef.current.length,
+        elementContextCount: composerElementContextsRef.current.length,
+        submissionPrompt: submission.prompt,
+        submissionImageIds: submission.composerImages.map((image) => image.id),
+      });
 
     const turnId = existingTurnId ?? `project-turn-${Date.now()}-${turnCounter.current++}`;
     if (existingTurnId) {
@@ -536,15 +788,19 @@ export function ProjectConversationView({
           prompt: text,
           response: "",
           toolItems: [],
-          workspaceInput: turnWorkspace ?? null,
+          workspaceInput: turnWorkspace,
+          attachments: turnAttachments,
+          composerImages: submission.composerImages,
           status: "pending",
           error: null,
           createdAt: new Date().toISOString(),
         },
       ]);
     }
-    if (!existingTurnId) {
-      setComposerDraftPrompt(composerDraftTarget, "");
+    if (!existingTurnId || clearMatchingRetryDraft) {
+      promptRef.current = "";
+      composerImagesRef.current = [];
+      clearComposerContent(composerDraftTarget);
       composerRef.current?.resetCursorState({ cursor: 0, prompt: "" });
     }
 
@@ -555,19 +811,20 @@ export function ProjectConversationView({
         threadId: String(threadId),
         input: {
           text,
+          idempotency_key: `project-thread-turn-${turnId}`,
           ...(turnAttachments.length > 0 ? { attachments: turnAttachments } : {}),
-          ...(turnWorkspace !== undefined ? { workspace: turnWorkspace } : {}),
+          ...(turnWorkspace !== null ? { workspace: turnWorkspace } : {}),
         },
       },
     });
     if (result._tag === "Failure") {
-      if (!isAtomCommandInterrupted(result)) {
-        const message = formatProjectConversationSendFailure(squashAtomCommandFailure(result));
-        markTurn(turnId, { status: "failed", error: message });
-        if (!existingTurnId) {
-          setComposerDraftPrompt(composerDraftTarget, text);
-          composerRef.current?.resetCursorState({ cursor: text.length, prompt: text });
-        }
+      const interrupted = isAtomCommandInterrupted(result);
+      const message = interrupted
+        ? "Project conversation send interrupted."
+        : formatProjectConversationSendFailure(squashAtomCommandFailure(result));
+      markTurn(turnId, { status: "failed", error: message });
+      if (!existingTurnId || clearMatchingRetryDraft) restoreFailedSubmission(submission);
+      if (!interrupted) {
         toastManager.add({
           type: "error",
           title: "Could not send project turn",
@@ -581,10 +838,7 @@ export function ProjectConversationView({
         result.value.error?.message ?? "Jarvis did not return a project conversation turn result.",
       );
       markTurn(turnId, { status: "failed", error: message });
-      if (!existingTurnId) {
-        setComposerDraftPrompt(composerDraftTarget, text);
-        composerRef.current?.resetCursorState({ cursor: text.length, prompt: text });
-      }
+      if (!existingTurnId || clearMatchingRetryDraft) restoreFailedSubmission(submission);
       toastManager.add({
         type: "error",
         title: "Could not send project turn",
@@ -601,14 +855,9 @@ export function ProjectConversationView({
       .trim();
     const reply = mergedReply || extractProjectConversationReply(result.value.result);
     markTurn(turnId, { status: "completed", response: reply, toolItems, error: null });
-    if (!existingTurnId) {
-      clearComposerContent(composerDraftTarget);
-      composerRef.current?.resetCursorState({ cursor: 0, prompt: "" });
-    }
-    // Clear staged repos on ANY successful turn that carried a workspace —
-    // including retries via `existingTurnId` — so the strip stops showing the
-    // repo as staged and the next follow-up doesn't re-send it.
-    if (turnWorkspace !== undefined) {
+    // Clear only the workspace snapshot that actually succeeded. A replacement
+    // staged while this request was in flight remains available for the next turn.
+    if (turnWorkspace !== null && workspaceMatchesSubmission) {
       clearWorkspaceRepoStaging();
     }
     refreshConversationData();
@@ -619,7 +868,7 @@ export function ProjectConversationView({
     if (sendBusy || archived || conversation === null) return;
     const sendContext = composerRef.current?.getSendContext();
     if (!sendContext) return;
-    const workspace = buildTurnWorkspaceInput(workspaceStaging);
+    const workspace = buildTurnWorkspaceInput(workspaceStaging, conversation?.engine);
     const attachments = await prepareProjectTurnAttachments({
       images: sendContext.images,
       persistedImages: sendContext.persistedImages,
@@ -627,24 +876,260 @@ export function ProjectConversationView({
     if (attachments === null) {
       return;
     }
-    await sendPrompt(sendContext.prompt, {
+    await sendPrompt({
+      prompt: sendContext.prompt,
       attachments,
-      ...(workspace !== undefined ? { workspace } : {}),
+      composerImages: [...sendContext.images],
+      workspace: workspace ?? null,
     });
   };
 
-  const retryMessage = (message: ProjectConversationMessageView): (() => void) | undefined => {
-    const retryPrompt = message.retryPrompt;
-    const localTurnId = message.localTurnId;
-    if (!retryPrompt || !localTurnId) {
-      return undefined;
-    }
-    return () =>
-      void sendPrompt(retryPrompt, {
-        existingTurnId: localTurnId,
-        ...(message.retryWorkspace !== null ? { workspace: message.retryWorkspace } : {}),
-      });
+  const retryTurn = (localTurnId: string) => {
+    const turn = turns.find((candidate) => candidate.id === localTurnId);
+    if (!turn) return;
+    void sendPrompt(
+      {
+        prompt: turn.prompt,
+        attachments: turn.attachments ?? [],
+        composerImages: turn.composerImages ?? [],
+        workspace: turn.workspaceInput ?? null,
+      },
+      { existingTurnId: localTurnId },
+    );
   };
+
+  const onRespondToApproval = useCallback(
+    async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
+      setRespondingRequestIds((existing) =>
+        existing.includes(requestId) ? existing : [...existing, requestId],
+      );
+      const result = await respondToApproval({
+        environmentId,
+        input: {
+          projectId,
+          threadId: String(threadId),
+          input: {
+            request_id: JarvisRequestId.make(String(requestId)),
+            decision: PROJECT_APPROVAL_DECISIONS[decision],
+            idempotency_key: cachedProjectConversationControlKey(
+              controlIdempotencyKeysRef.current,
+              `approval:${String(requestId)}`,
+              decision,
+              () => `project-thread-approval-${String(requestId)}-${randomUUID()}`,
+            ),
+          },
+        },
+      });
+      setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          showControlFailure(
+            "Could not submit approval",
+            "Jarvis rejected the approval decision.",
+            squashAtomCommandFailure(result),
+          );
+        }
+        return result;
+      }
+      if (!result.value.ok || !result.value.result) {
+        showControlFailure(
+          "Could not submit approval",
+          result.value.error?.message ?? "Jarvis rejected the approval decision.",
+          result.value.error?.message,
+        );
+        return result;
+      }
+      threadDetailStream.refresh();
+      return result;
+    },
+    [environmentId, projectId, respondToApproval, threadDetailStream, threadId],
+  );
+
+  const onRespondToUserInput = useCallback(
+    async (requestId: ApprovalRequestId, answers: Record<string, unknown>) => {
+      setRespondingUserInputRequestIds((existing) =>
+        existing.includes(requestId) ? existing : [...existing, requestId],
+      );
+      const result = await respondToUserInput({
+        environmentId,
+        input: {
+          projectId,
+          threadId: String(threadId),
+          input: {
+            request_id: JarvisRequestId.make(String(requestId)),
+            answers,
+            idempotency_key: cachedProjectConversationControlKey(
+              controlIdempotencyKeysRef.current,
+              `input:${String(requestId)}`,
+              JSON.stringify(answers),
+              () => `project-thread-input-${String(requestId)}-${randomUUID()}`,
+            ),
+          },
+        },
+      });
+      setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          showControlFailure(
+            "Could not submit input",
+            "Jarvis rejected the conversation input.",
+            squashAtomCommandFailure(result),
+          );
+        }
+        return result;
+      }
+      if (!result.value.ok || !result.value.result) {
+        showControlFailure(
+          "Could not submit input",
+          result.value.error?.message ?? "Jarvis rejected the conversation input.",
+          result.value.error?.message,
+        );
+        return result;
+      }
+      setPendingUserInputAnswersByRequestId((existing) => {
+        const next = { ...existing };
+        delete next[String(requestId)];
+        return next;
+      });
+      threadDetailStream.refresh();
+      return result;
+    },
+    [environmentId, projectId, respondToUserInput, threadDetailStream, threadId],
+  );
+
+  const setActivePendingUserInputQuestionIndex = useCallback(
+    (nextQuestionIndex: number) => {
+      if (!activePendingUserInput) return;
+      setPendingUserInputQuestionIndexByRequestId((existing) => ({
+        ...existing,
+        [activePendingUserInput.requestId]: nextQuestionIndex,
+      }));
+    },
+    [activePendingUserInput],
+  );
+
+  const onSelectActivePendingUserInputOption = useCallback(
+    (questionId: string, optionLabel: string) => {
+      if (!activePendingUserInput) return;
+      setPendingUserInputAnswersByRequestId((existing) => {
+        const question =
+          (activePendingProgress?.activeQuestion?.id === questionId
+            ? activePendingProgress.activeQuestion
+            : undefined) ??
+          activePendingUserInput.questions.find((entry) => entry.id === questionId);
+        if (!question) return existing;
+        return {
+          ...existing,
+          [activePendingUserInput.requestId]: {
+            ...existing[activePendingUserInput.requestId],
+            [questionId]: togglePendingUserInputOptionSelection(
+              question,
+              existing[activePendingUserInput.requestId]?.[questionId],
+              optionLabel,
+            ),
+          },
+        };
+      });
+      promptRef.current = "";
+      composerRef.current?.resetCursorState({ cursor: 0 });
+    },
+    [activePendingProgress?.activeQuestion, activePendingUserInput, composerRef],
+  );
+
+  const onChangeActivePendingUserInputCustomAnswer = useCallback(
+    (questionId: string, value: string, nextCursor: number, expandedCursor: number) => {
+      if (!activePendingUserInput) return;
+      promptRef.current = value;
+      setPendingUserInputAnswersByRequestId((existing) => ({
+        ...existing,
+        [activePendingUserInput.requestId]: {
+          ...existing[activePendingUserInput.requestId],
+          [questionId]: setPendingUserInputCustomAnswer(
+            existing[activePendingUserInput.requestId]?.[questionId],
+            value,
+          ),
+        },
+      }));
+      const snapshot = composerRef.current?.readSnapshot();
+      if (
+        snapshot?.value !== value ||
+        snapshot.cursor !== nextCursor ||
+        snapshot.expandedCursor !== expandedCursor
+      ) {
+        composerRef.current?.focusAt(nextCursor);
+      }
+    },
+    [activePendingUserInput, composerRef],
+  );
+
+  const onAdvanceActivePendingUserInput = useCallback(() => {
+    if (!activePendingUserInput || !activePendingProgress) return;
+    if (activePendingProgress.isLastQuestion) {
+      if (activePendingResolvedAnswers) {
+        void onRespondToUserInput(activePendingUserInput.requestId, activePendingResolvedAnswers);
+      }
+      return;
+    }
+    setActivePendingUserInputQuestionIndex(activePendingProgress.questionIndex + 1);
+  }, [
+    activePendingProgress,
+    activePendingResolvedAnswers,
+    activePendingUserInput,
+    onRespondToUserInput,
+    setActivePendingUserInputQuestionIndex,
+  ]);
+
+  const onPreviousActivePendingUserInputQuestion = useCallback(() => {
+    if (!activePendingProgress) return;
+    setActivePendingUserInputQuestionIndex(Math.max(activePendingProgress.questionIndex - 1, 0));
+  }, [activePendingProgress, setActivePendingUserInputQuestionIndex]);
+
+  const onInterrupt = useCallback(async () => {
+    if (!composerRuntime.activeTurnId || !composerRuntime.canInterrupt) return;
+    const result = await interruptTurn({
+      environmentId,
+      input: {
+        projectId,
+        threadId: String(threadId),
+        input: {
+          turn_id: composerRuntime.activeTurnId,
+          idempotency_key: cachedProjectConversationControlKey(
+            controlIdempotencyKeysRef.current,
+            `interrupt:${composerRuntime.activeTurnId}`,
+            "interrupt",
+            () => `project-thread-interrupt-${composerRuntime.activeTurnId}-${randomUUID()}`,
+          ),
+        },
+      },
+    });
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        showControlFailure(
+          "Could not stop turn",
+          "Jarvis could not interrupt the active turn.",
+          squashAtomCommandFailure(result),
+        );
+      }
+      return;
+    }
+    if (!result.value.ok || !result.value.result) {
+      showControlFailure(
+        "Could not stop turn",
+        result.value.error?.message ?? "Jarvis could not interrupt the active turn.",
+        result.value.error?.message,
+      );
+      return;
+    }
+    threadDetailStream.refresh();
+  }, [
+    composerRuntime.activeTurnId,
+    composerRuntime.canInterrupt,
+    environmentId,
+    interruptTurn,
+    projectId,
+    threadDetailStream,
+    threadId,
+  ]);
 
   const writeArchiveState = async (action: "archive" | "unarchive") => {
     if (conversation === null) {
@@ -807,9 +1292,7 @@ export function ProjectConversationView({
                     disabled={conversation === null}
                     title="Rename conversation"
                   >
-                    <h2 className="truncate text-sm font-medium text-foreground">
-                      {conversationTitle.title}
-                    </h2>
+                    <ChatHeaderTitle title={conversationTitle.title} />
                     {conversation !== null ? (
                       <PencilIcon className="size-3 shrink-0 text-muted-foreground/0 transition-colors group-hover/title:text-muted-foreground group-focus-visible/title:text-muted-foreground" />
                     ) : null}
@@ -837,20 +1320,26 @@ export function ProjectConversationView({
                     <Button
                       size="icon-xs"
                       variant="outline"
-                      aria-label={contextPanelToggleState.ariaLabel}
-                      onClick={() =>
-                        setContextPanelCollapsed(contextPanelToggleState.nextCollapsed)
+                      aria-label={
+                        rightPanelState.isOpen
+                          ? "Hide conversation context panel"
+                          : "Show conversation context panel"
                       }
+                      onClick={toggleContextPanel}
                     >
-                      {contextPanelCollapsed ? (
-                        <PanelRightOpenIcon className="size-3.5" />
-                      ) : (
+                      {rightPanelState.isOpen ? (
                         <PanelRightCloseIcon className="size-3.5" />
+                      ) : (
+                        <PanelRightOpenIcon className="size-3.5" />
                       )}
                     </Button>
                   }
                 />
-                <TooltipPopup side="bottom">{contextPanelToggleState.tooltip}</TooltipPopup>
+                <TooltipPopup side="bottom">
+                  {rightPanelState.isOpen
+                    ? "Hide conversation context"
+                    : "Show conversation context"}
+                </TooltipPopup>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger
@@ -926,54 +1415,49 @@ export function ProjectConversationView({
           </div>
         ) : null}
 
-        <div
-          className={cn(
-            "grid min-h-0 flex-1 grid-cols-1 overflow-hidden",
-            contextPanelCollapsed ? "lg:grid-cols-1" : "lg:grid-cols-[minmax(0,1fr)_20rem]",
-          )}
-        >
-          <main className="relative flex min-h-0 flex-col overflow-hidden">
-            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-5">
-              <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 pb-4">
-                {loadingProject ? (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Spinner className="size-4" />
-                    Loading project conversation
-                  </div>
-                ) : null}
-                {!loadingProject && conversation === null ? (
-                  <Empty className="min-h-80">
-                    <EmptyHeader>
-                      <EmptyTitle>Conversation not found</EmptyTitle>
-                      <EmptyDescription>
-                        Jarvis did not return this project conversation for {projectName}.
-                      </EmptyDescription>
-                    </EmptyHeader>
-                  </Empty>
-                ) : null}
-                {conversation !== null && messages.length === 0 ? (
-                  <Empty className="min-h-80">
-                    <EmptyHeader>
-                      <MessageSquareIcon className="mb-4 size-7 text-muted-foreground" />
-                      <EmptyTitle>{conversation.title}</EmptyTitle>
-                      <EmptyDescription>
-                        {conversation.workspace
-                          ? `Updated ${formatRelativeTimeLabel(conversation.updated_at)}. Continue the workspace conversation from this surface.`
-                          : "Planning conversation - no repo access. Attach a repo to let it inspect code."}
-                      </EmptyDescription>
-                    </EmptyHeader>
-                  </Empty>
-                ) : null}
-                {messages.map((message) => (
-                  <ProjectConversationMessageRow
-                    key={message.id}
-                    message={message}
-                    workspaceProvisionPhase={conversationWorkspace?.provision_phase ?? null}
-                    onRetry={retryMessage(message)}
-                    retryDisabled={sendBusy}
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            <div
+              className={cn(
+                "min-h-0 flex-1",
+                agentConversation
+                  ? "flex flex-col overflow-hidden"
+                  : "overflow-y-auto px-3 py-4 sm:px-5",
+              )}
+            >
+              {agentConversation ? (
+                <div className="min-h-0 flex-1">
+                  <AgentConversationTimeline
+                    conversation={agentConversation}
+                    environmentId={environmentId}
+                    routeThreadKey={`${environmentId}:${String(threadId)}`}
+                    resolvedTheme={resolvedTheme}
+                    timestampFormat={settings.timestampFormat}
+                    overlayTurns={timelineOverlayTurns}
+                    onRecoveryAction={retryTurn}
+                    recoveryActionsDisabled={sendBusy}
                   />
-                ))}
-              </div>
+                </div>
+              ) : (
+                <div className="mx-auto flex w-full max-w-3xl flex-col pb-4">
+                  {loadingProject ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Spinner className="size-4" />
+                      Loading project conversation
+                    </div>
+                  ) : null}
+                  {!loadingProject && conversation === null ? (
+                    <Empty className="min-h-80">
+                      <EmptyHeader>
+                        <EmptyTitle>Conversation not found</EmptyTitle>
+                        <EmptyDescription>
+                          Jarvis did not return this project conversation for {projectName}.
+                        </EmptyDescription>
+                      </EmptyHeader>
+                    </Empty>
+                  ) : null}
+                </div>
+              )}
             </div>
             <div className="border-t border-border/40 bg-background pt-2">
               <div className="mx-auto w-full max-w-3xl px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:px-5">
@@ -983,31 +1467,32 @@ export function ProjectConversationView({
                     composerRef={composerRef}
                     composerDraftTarget={composerDraftTarget}
                     environmentId={environmentId}
-                    routeKind="draft"
+                    routeKind="agent"
                     routeThreadRef={routeThreadRef}
-                    draftId={composerDraftTarget}
+                    draftId={null}
                     activeThreadId={conversation === null ? null : threadId}
                     activeThreadEnvironmentId={environmentId}
                     activeThread={undefined}
-                    isServerThread={false}
+                    isServerThread={true}
                     isLocalDraftThread={false}
                     isJarvisCockpitEnvironment={true}
                     showJarvisResumeSendHint={false}
-                    phase="ready"
+                    phase={composerRuntime.phase}
+                    allowSendWhileRunning={composerRuntime.canQueue}
                     isConnecting={false}
                     isSendBusy={sendBusy}
                     isPreparingWorktree={false}
                     composerDisabledReason={composerDisabledReason}
                     environmentUnavailable={null}
-                    activePendingApproval={null}
-                    pendingApprovals={[]}
-                    pendingUserInputs={[]}
-                    activePendingProgress={null}
-                    activePendingResolvedAnswers={null}
-                    activePendingIsResponding={false}
-                    activePendingDraftAnswers={{}}
-                    activePendingQuestionIndex={0}
-                    respondingRequestIds={[]}
+                    activePendingApproval={activePendingApproval}
+                    pendingApprovals={composerRuntime.pendingApprovals}
+                    pendingUserInputs={composerRuntime.pendingUserInputs}
+                    activePendingProgress={activePendingProgress}
+                    activePendingResolvedAnswers={activePendingResolvedAnswers}
+                    activePendingIsResponding={activePendingIsResponding}
+                    activePendingDraftAnswers={activePendingDraftAnswers}
+                    activePendingQuestionIndex={activePendingQuestionIndex}
+                    respondingRequestIds={respondingRequestIds}
                     showPlanFollowUpPrompt={false}
                     activeProposedPlan={null}
                     activePlan={null}
@@ -1042,13 +1527,17 @@ export function ProjectConversationView({
                     composerTerminalContextsRef={composerTerminalContextsRef}
                     composerElementContextsRef={composerElementContextsRef}
                     onSend={(event) => void handleComposerSend(event)}
-                    onInterrupt={() => {}}
+                    onInterrupt={() => void onInterrupt()}
                     onImplementPlanInNewThread={() => {}}
-                    onRespondToApproval={async () => undefined}
-                    onSelectActivePendingUserInputOption={() => {}}
-                    onAdvanceActivePendingUserInput={() => {}}
-                    onPreviousActivePendingUserInputQuestion={() => {}}
-                    onChangeActivePendingUserInputCustomAnswer={() => {}}
+                    onRespondToApproval={onRespondToApproval}
+                    onSelectActivePendingUserInputOption={onSelectActivePendingUserInputOption}
+                    onAdvanceActivePendingUserInput={onAdvanceActivePendingUserInput}
+                    onPreviousActivePendingUserInputQuestion={
+                      onPreviousActivePendingUserInputQuestion
+                    }
+                    onChangeActivePendingUserInputCustomAnswer={
+                      onChangeActivePendingUserInputCustomAnswer
+                    }
                     onProviderModelSelect={() => {}}
                     getModelDisabledReason={() => null}
                     toggleInteractionMode={() => {}}
@@ -1070,14 +1559,12 @@ export function ProjectConversationView({
               </div>
             </div>
           </main>
-          <ProjectConversationContextPanel
-            project={project}
-            workspace={conversationWorkspace}
-            files={files}
-            memoryQuery={memoryQuery}
-            collapsed={contextPanelCollapsed}
-          />
         </div>
+        {shouldUseRightPanelSheet && rightPanelState.isOpen ? (
+          <RightPanelSheet open onClose={() => useRightPanelStore.getState().close(routeThreadRef)}>
+            {contextRightPanel("sheet")}
+          </RightPanelSheet>
+        ) : null}
         <AlertDialog
           open={pendingArchiveConfirmation}
           onOpenChange={(open) => {
@@ -1103,6 +1590,7 @@ export function ProjectConversationView({
           </AlertDialogPopup>
         </AlertDialog>
       </div>
+      {!shouldUseRightPanelSheet && rightPanelState.isOpen ? contextRightPanel("inline") : null}
     </div>
   );
 }
@@ -1130,252 +1618,4 @@ function formatProjectConversationSendFailure(error: unknown): string {
     return `Jarvis rejected the turn attachments: ${message}`;
   }
   return message;
-}
-
-function ProjectConversationMessageRow({
-  message,
-  workspaceProvisionPhase,
-  onRetry,
-  retryDisabled,
-}: {
-  readonly message: ProjectConversationMessageView;
-  readonly workspaceProvisionPhase: string | null;
-  readonly onRetry: (() => void) | undefined;
-  readonly retryDisabled: boolean;
-}) {
-  const isUser = message.role === "user";
-  const showProvisionStepper =
-    !isUser &&
-    message.workspaceProvisionRequested &&
-    (message.status === "pending" || message.status === "streaming");
-  return (
-    <div
-      className={cn(
-        "max-w-[85%] rounded-lg px-3 py-2 text-sm",
-        isUser
-          ? "ml-auto bg-primary text-primary-foreground"
-          : "border border-border/70 bg-card/40 text-foreground",
-      )}
-    >
-      {isUser ? <div className="whitespace-pre-wrap">{message.content}</div> : null}
-      {!isUser && (message.status === "pending" || message.status === "streaming") ? (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <Spinner className="size-4" />
-            {message.content || "Waiting for Jarvis"}
-          </div>
-          {showProvisionStepper ? (
-            <WorkspaceProvisionStepper phase={workspaceProvisionPhase} />
-          ) : null}
-        </div>
-      ) : null}
-      {!isUser && message.status === "completed" ? (
-        message.toolItems.length > 0 ? (
-          <div className="space-y-2">
-            {message.toolItems.map((item) =>
-              item.kind === "tool" ? (
-                <ThreadToolCallRow key={item.id} toolCall={item.toolCall} />
-              ) : (
-                <div key={item.id} className="whitespace-pre-wrap">
-                  {item.text}
-                </div>
-              ),
-            )}
-          </div>
-        ) : (
-          <div className="whitespace-pre-wrap">{message.content}</div>
-        )
-      ) : null}
-      {!isUser && message.status === "failed" ? (
-        <div className="space-y-2">
-          <div className="text-destructive">{message.error ?? message.content}</div>
-          {onRetry ? (
-            <Button size="xs" variant="outline" onClick={onRetry} disabled={retryDisabled}>
-              <RotateCcwIcon className="size-3.5" />
-              Retry
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function WorkspaceProvisionStepper({ phase }: { readonly phase: string | null }) {
-  const steps = deriveWorkspaceProvisionSteps(phase);
-  return (
-    <div className="rounded-md border border-border/60 bg-muted/35 px-2.5 py-2">
-      <div className="flex flex-wrap items-center gap-2">
-        {steps.map((step) => (
-          <div
-            key={step.phase}
-            className={cn(
-              "flex min-w-0 items-center gap-1.5 text-[11px]",
-              step.active
-                ? "font-medium text-foreground"
-                : step.complete
-                  ? "text-success-foreground"
-                  : "text-muted-foreground",
-            )}
-          >
-            <span
-              className={cn(
-                "flex size-4 shrink-0 items-center justify-center rounded-full border text-[9px]",
-                step.active
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : step.complete
-                    ? "border-success/40 bg-success/10 text-success-foreground"
-                    : "border-border bg-background",
-              )}
-            >
-              {step.complete ? <CheckIcon className="size-2.5" /> : null}
-            </span>
-            <span className="truncate">{step.label}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function ProjectConversationContextPanel({
-  project,
-  workspace,
-  files,
-  memoryQuery,
-  collapsed,
-}: {
-  readonly project: JarvisProject | null;
-  readonly workspace: JarvisConversationWorkspace | null;
-  readonly files: JarvisProjectFile[];
-  readonly memoryQuery: EnvironmentQueryView<JarvisProjectMemoryResult>;
-  readonly collapsed: boolean;
-}) {
-  const defaultRepo = defaultProjectRepo(project);
-  const memory = memoryQuery.data?.ok === true ? memoryQuery.data.memory : null;
-  if (collapsed) {
-    return null;
-  }
-  return (
-    <aside className="hidden min-h-0 overflow-y-auto border-l border-border/70 bg-muted/15 px-4 py-4 lg:block">
-      <div className="space-y-5">
-        <section className="space-y-2">
-          <div className="flex items-center gap-2 text-xs font-medium uppercase text-muted-foreground">
-            <GitBranchIcon className="size-3.5" />
-            Project
-          </div>
-          <div className="text-sm font-medium text-foreground">{project?.name ?? "Project"}</div>
-          {defaultRepo ? (
-            <Badge variant="outline" className="max-w-full justify-start truncate">
-              {defaultRepo.remote}
-            </Badge>
-          ) : (
-            <div className="text-xs text-muted-foreground">No default repo</div>
-          )}
-        </section>
-        {workspace ? <ProjectConversationWorkspacePanel workspace={workspace} /> : null}
-        <section className="space-y-2">
-          <div className="flex items-center gap-2 text-xs font-medium uppercase text-muted-foreground">
-            <BrainIcon className="size-3.5" />
-            Memory
-          </div>
-          {memory ? (
-            <div className="space-y-2 text-sm text-muted-foreground">
-              <p className="line-clamp-5">
-                {memory.representation || "No representation recorded."}
-              </p>
-              {memory.conclusions.slice(0, 3).map((conclusion) => (
-                <div key={conclusion.id} className="border-t border-border/60 pt-2">
-                  <div className="text-xs font-medium text-foreground">
-                    {conclusion.artifact_type}
-                  </div>
-                  <div className="line-clamp-3">{conclusion.content}</div>
-                </div>
-              ))}
-            </div>
-          ) : memoryQuery.isPending ? (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Spinner className="size-3.5" />
-              Loading memory
-            </div>
-          ) : (
-            <div className="text-xs text-muted-foreground">No memory summary available.</div>
-          )}
-        </section>
-        <section className="space-y-2">
-          <div className="flex items-center gap-2 text-xs font-medium uppercase text-muted-foreground">
-            <FileTextIcon className="size-3.5" />
-            Files
-          </div>
-          {files.length > 0 ? (
-            <div className="space-y-2">
-              {files.slice(0, 8).map((file) => (
-                <div
-                  key={file.doc_id}
-                  className="min-w-0 border-t border-border/60 pt-2 first:border-0 first:pt-0"
-                >
-                  <div className="truncate text-sm font-medium text-foreground">
-                    {file.title || file.doc_id}
-                  </div>
-                  <div className="truncate text-xs text-muted-foreground">
-                    {file.artifact_type || "file"} · {file.doc_id}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-xs text-muted-foreground">No project files recorded.</div>
-          )}
-        </section>
-      </div>
-    </aside>
-  );
-}
-
-function ProjectConversationWorkspacePanel({
-  workspace,
-}: {
-  readonly workspace: JarvisConversationWorkspace;
-}) {
-  return (
-    <section className="space-y-2">
-      <div className="flex items-center gap-2 text-xs font-medium uppercase text-muted-foreground">
-        <ServerIcon className="size-3.5" />
-        Workspace
-      </div>
-      <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-1 text-xs">
-        <span className="text-muted-foreground">Engine</span>
-        <span className="truncate text-foreground">{workspace.engine || "unknown"}</span>
-        <span className="text-muted-foreground">Worker</span>
-        <span className="truncate text-foreground">{workspace.worker_id || "auto"}</span>
-        <span className="text-muted-foreground">Status</span>
-        <span className="truncate text-foreground">{workspace.status || "unknown"}</span>
-      </div>
-      {workspace.worktrees.length > 0 ? (
-        <div className="space-y-2">
-          {workspace.worktrees.map((worktree, index) => (
-            <div
-              key={`${worktree.repo ?? "repo"}:${worktree.name ?? index}`}
-              className="min-w-0 border-t border-border/60 pt-2 first:border-0 first:pt-0"
-            >
-              <div className="truncate text-sm font-medium text-foreground">
-                {worktree.name || worktree.repo || `Worktree ${index + 1}`}
-              </div>
-              <div className="space-y-0.5 text-xs text-muted-foreground">
-                <div className="truncate">repo: {worktree.repo || "unknown"}</div>
-                <div className="truncate">branch: {worktree.branch || "unknown"}</div>
-                <div className="truncate">base: {worktree.base_ref || "default"}</div>
-                <div className="truncate">
-                  status: {worktree.status || "unknown"}
-                  {worktree.provision_phase ? ` / ${worktree.provision_phase}` : ""}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="text-xs text-muted-foreground">No worktrees projected yet.</div>
-      )}
-    </section>
-  );
 }

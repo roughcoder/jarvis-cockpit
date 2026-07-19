@@ -87,6 +87,11 @@ function projectPullRequestFromRecord(
     baseRefName: record.baseRefName,
     headRefName: record.headRefName,
     isDraft: record.isDraft ?? false,
+    commentCount: record.commentCount ?? 0,
+    reviewCount: record.reviewCount ?? 0,
+    reviewDecision: record.reviewDecision ?? "not_reported",
+    checksStatus: record.checksStatus ?? "not_reported",
+    checksCount: record.checksCount ?? 0,
     updatedAt: record.updatedAt,
     createdAt: record.createdAt ?? Option.none(),
   };

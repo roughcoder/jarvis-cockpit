@@ -1,6 +1,11 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeBuffer from "node:buffer";
-import { DEFAULT_SERVER_SETTINGS, JarvisProjectId, JarvisWorkerId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  JarvisProjectId,
+  JarvisRequestId,
+  JarvisWorkerId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
@@ -382,6 +387,7 @@ it.effect("fixture client records project conversation workspace escalation", ()
 
     yield* client.sendProjectThreadTurn("jarvis-cockpit", thread.thread_id, {
       text: "Inspect runtime.",
+      idempotency_key: "fixture-workspace-escalation",
       workspace: {
         repos: [{ name: "runtime", base_ref: "origin/main" }],
         engine: "codex",
@@ -578,6 +584,7 @@ it.effect("cockpit client calls project memory and file endpoints", () =>
       url: string;
       method: string;
       contentType: string | null;
+      idempotencyKey: string | null;
       bodyKind: "json" | "form" | "none";
       body?: unknown;
     }> = [];
@@ -593,7 +600,6 @@ it.effect("cockpit client calls project memory and file endpoints", () =>
           body = {
             title: init.body.get("title"),
             artifact_type: init.body.get("artifact_type"),
-            idempotency_key: init.body.get("idempotency_key"),
             metadata: init.body.get("metadata"),
             file: await (init.body.get("file") as Blob).text(),
           };
@@ -605,6 +611,7 @@ it.effect("cockpit client calls project memory and file endpoints", () =>
           url: String(url),
           method: init?.method ?? "GET",
           contentType: headers.get("content-type"),
+          idempotencyKey: headers.get("x-idempotency-key"),
           bodyKind,
           body,
         });
@@ -663,10 +670,10 @@ it.effect("cockpit client calls project memory and file endpoints", () =>
     );
     assert.strictEqual(requests[5]?.bodyKind, "form");
     assert.strictEqual(requests[5]?.contentType, null);
+    assert.strictEqual(requests[5]?.idempotencyKey, "upload-spec-1");
     assert.deepStrictEqual(requests[5]?.body, {
       title: "Spec",
       artifact_type: "spec",
-      idempotency_key: "upload-spec-1",
       metadata: '{"surface":"jarvis-cockpit","source":"test"}',
       file: "# Spec",
     });
@@ -715,6 +722,146 @@ it.effect("cockpit client decodes JSON project thread turn responses", () =>
       },
       metadata: { surface: "jarvis-cockpit" },
     });
+  }),
+);
+
+it.effect("cockpit client calls conversation-scoped project thread control endpoints", () =>
+  Effect.gen(function* () {
+    const requests: Array<{ url: string; method: string; body: unknown }> = [];
+    const execution = {
+      available: true,
+      status: "running",
+      active_turn: null,
+      pending_requests: [],
+      supported_controls: ["turn", "input", "approval", "interrupt", "stop"],
+      supports: { steer: false, queue: false },
+      diagnostic: null,
+    };
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async (url, init) => {
+        requests.push({
+          url: String(url),
+          method: init?.method ?? "GET",
+          body: init?.body ? JSON.parse(String(init.body)) : undefined,
+        });
+        const action = new URL(String(url)).pathname.split("/").at(-1);
+        return jsonResponse({
+          ok: true,
+          api_version: "v1",
+          schema_version: 1,
+          project_id: "dogfood/review",
+          thread_id: "thread #1",
+          control:
+            action === "interrupt"
+              ? { action, accepted: true, turn_id: "turn-1" }
+              : { action, accepted: true, request_id: `request-${action}` },
+          execution,
+        });
+      },
+    });
+
+    yield* client.respondProjectThreadApproval("dogfood/review", "thread #1", {
+      request_id: JarvisRequestId.make("request-approval"),
+      decision: "approved",
+      idempotency_key: "approval-command",
+    });
+    yield* client.respondProjectThreadInput("dogfood/review", "thread #1", {
+      request_id: JarvisRequestId.make("request-input"),
+      answers: { choice: ["ship"] },
+      text: "Ship it",
+      idempotency_key: "input-command",
+    });
+    yield* client.interruptProjectThread("dogfood/review", "thread #1", {
+      turn_id: "turn-1",
+      idempotency_key: "interrupt-command",
+    });
+
+    assert.deepStrictEqual(requests, [
+      {
+        url: "http://jarvis.local:8787/v1/projects/dogfood%2Freview/threads/thread%20%231/approval",
+        method: "POST",
+        body: {
+          request_id: "request-approval",
+          decision: "approved",
+          idempotency_key: "approval-command",
+        },
+      },
+      {
+        url: "http://jarvis.local:8787/v1/projects/dogfood%2Freview/threads/thread%20%231/input",
+        method: "POST",
+        body: {
+          request_id: "request-input",
+          answers: { choice: ["ship"] },
+          text: "Ship it",
+          idempotency_key: "input-command",
+        },
+      },
+      {
+        url: "http://jarvis.local:8787/v1/projects/dogfood%2Freview/threads/thread%20%231/interrupt",
+        method: "POST",
+        body: {
+          turn_id: "turn-1",
+          idempotency_key: "interrupt-command",
+        },
+      },
+    ]);
+  }),
+);
+
+it.effect("cockpit client preserves project thread control HTTP errors", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async () =>
+        jsonResponse(
+          { error: { code: "request_not_pending", message: "Approval is no longer pending" } },
+          { status: 409 },
+        ),
+    });
+
+    const error = yield* client
+      .respondProjectThreadApproval("dogfood", "thread-1", {
+        request_id: JarvisRequestId.make("request-approval"),
+        decision: "approved",
+        idempotency_key: "approval-command",
+      })
+      .pipe(Effect.flip);
+
+    assert.strictEqual(error.operation, "projects.threads.approval");
+    assert.strictEqual(error.status, 409);
+    assert.match(error.message, /409/u);
+  }),
+);
+
+it.effect("cockpit client fails project turns when SSE reports a turn error", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async () =>
+        new Response(
+          [
+            'event: thread.turn.started\ndata: {"type":"thread.turn.started","payload":{"thread_id":"thread-1"}}',
+            'data: {"type":"thread.turn.error","payload":{"error":{"code":"memory_unavailable","message":"orchestrator turn failed","recoverable":true},"private_detail":"must not leak"}}',
+            "",
+          ].join("\n\n"),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+    });
+
+    const error = yield* client
+      .sendProjectThreadTurn("dogfood", "thread-1", {
+        text: "Continue",
+        idempotency_key: "turn-error-redaction",
+      })
+      .pipe(Effect.flip);
+
+    assert.ok(error instanceof JarvisClientError);
+    assert.strictEqual(error.operation, "projects.threads.turn");
+    assert.match(error.message, /memory_unavailable/);
+    assert.match(error.message, /orchestrator turn failed/);
+    assert.ok(!/private_detail|must not leak/u.test(error.message));
+    assert.strictEqual(error.responseBody, null);
   }),
 );
 
@@ -774,7 +921,7 @@ it.effect("cockpit client renames project threads with a PATCH request", () =>
   }),
 );
 
-it.effect("cockpit client attaches bearer token and reads the v1 snapshot endpoint", () =>
+it.effect("cockpit client attaches bearer token and selects the snapshot sync mode", () =>
   Effect.gen(function* () {
     const requests: Array<{ url: string; authorization: string | null }> = [];
     const client = makeJarvisCockpitClient({
@@ -790,7 +937,9 @@ it.effect("cockpit client attaches bearer token and reads the v1 snapshot endpoi
     });
 
     const parsedSnapshot = yield* client.getSnapshot();
+    yield* client.getSnapshot({ sync: "probe" });
     assert.strictEqual(requests[0]?.url, "http://jarvis.local:8787/v1/cockpit/snapshot?sync=fast");
+    assert.strictEqual(requests[1]?.url, "http://jarvis.local:8787/v1/cockpit/snapshot?sync=probe");
     assert.strictEqual(requests[0]?.authorization, "Bearer worker-token");
     assert.strictEqual(parsedSnapshot.runs[0]?.run_id, "run_1");
     assert.strictEqual(parsedSnapshot.runs[0]?.objective, "Do the work");
@@ -938,6 +1087,62 @@ it.effect("cockpit client retries the legacy bearer token when OAuth is rejected
     assert.strictEqual(requests[0]?.authorization, "Bearer oauth-token");
     assert.strictEqual(requests[1]?.authorization, "Bearer legacy-token");
     assert.strictEqual(parsedSnapshot.runs[0]?.run_id, "run_1");
+  }),
+);
+
+it.effect("cockpit client times out JSON requests that never settle", () =>
+  Effect.gen(function* () {
+    let requestSignal: AbortSignal | null | undefined;
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      requestTimeoutMs: 10,
+      fetch: async (_url, init) => {
+        requestSignal = init?.signal;
+        return await new Promise<Response>(() => undefined);
+      },
+    });
+
+    const error = yield* client.getSnapshot().pipe(Effect.flip);
+
+    assert.ok(error instanceof JarvisClientError);
+    assert.strictEqual(error.operation, "cockpit.snapshot");
+    assert.strictEqual(error.status, null);
+    assert.strictEqual(error.responseBody, null);
+    assert.match(error.message, /timed out after 10 ms/u);
+    assert.strictEqual(requestSignal?.aborted, true);
+  }),
+);
+
+it.effect("cockpit client gives an auth retry one shared JSON request timeout", () =>
+  Effect.gen(function* () {
+    const requestSignals: AbortSignal[] = [];
+    const authorizations: Array<string | null> = [];
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      token: "legacy-token",
+      tokenProvider: () => Effect.succeed("oauth-token"),
+      requestTimeoutMs: 10,
+      fetch: async (_url, init) => {
+        const signal = init?.signal;
+        if (signal !== undefined && signal !== null) {
+          requestSignals.push(signal);
+        }
+        const authorization = new Headers(init?.headers).get("authorization");
+        authorizations.push(authorization);
+        if (authorization === "Bearer oauth-token") {
+          return jsonResponse({ error: "bad token" }, { status: 401 });
+        }
+        return await new Promise<Response>(() => undefined);
+      },
+    });
+
+    const error = yield* client.getSnapshot().pipe(Effect.flip);
+
+    assert.match(error.message, /timed out after 10 ms/u);
+    assert.deepStrictEqual(authorizations, ["Bearer oauth-token", "Bearer legacy-token"]);
+    assert.strictEqual(requestSignals.length, 2);
+    assert.strictEqual(requestSignals[0], requestSignals[1]);
+    assert.strictEqual(requestSignals[1]?.aborted, true);
   }),
 );
 
@@ -1695,8 +1900,11 @@ it.effect("snapshotWithValidSessions drops only individually-invalid session row
       sessions: [session, malformed],
     });
     assert.isNotNull(sanitized);
-    assert.strictEqual(sanitized?.dropped, 1);
-    const kept = (sanitized?.candidate as { sessions: ReadonlyArray<unknown> }).sessions;
+    if (sanitized === null) {
+      assert.fail("Expected malformed sessions to produce a sanitized snapshot.");
+    }
+    assert.strictEqual(sanitized.dropped, 1);
+    const kept = (sanitized.candidate as { sessions: ReadonlyArray<unknown> }).sessions;
     assert.strictEqual(kept.length, 1);
     assert.strictEqual(kept[0], session);
   }),

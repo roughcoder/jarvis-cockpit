@@ -1,5 +1,8 @@
 # Design: Hierarchical Agent Chats + Orchestration (F7)
 
+> Historical design note. The normative successor is
+> [`universal-durable-agent-conversations-spec.md`](./universal-durable-agent-conversations-spec.md).
+
 Date: 2026-07-07. Status: draft for review — implementation held until approved (Neil).
 Supersedes the initial narrow "chat that manages chats" sketch with Neil's fuller vision.
 

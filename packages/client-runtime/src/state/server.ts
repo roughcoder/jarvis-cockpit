@@ -18,15 +18,12 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import { projectThreadMessageKey } from "../conversation/jarvisMessageKey.ts";
 import { FINITE_QUERY_FAMILY_MAX_ENTRIES, THREAD_DETAIL_RETENTION } from "./retention.ts";
 
 export interface ServerConfigProjection {
   readonly config: ServerConfig;
   readonly latestEvent: ServerConfigStreamEvent;
-}
-
-function projectThreadMessageKey(message: JarvisProjectThreadDetail["messages"][number]): string {
-  return `${message.role}\u0000${message.peer_id ?? ""}\u0000${message.observed_at}\u0000${message.content}`;
 }
 
 function retainRecentProjectThreadMessages(
@@ -320,6 +317,12 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    archiveJarvisSession: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:archive-jarvis-session",
+      tag: WS_METHODS.serverArchiveJarvisSession,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     deleteJarvisSession: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:delete-jarvis-session",
       tag: WS_METHODS.serverDeleteJarvisSession,
@@ -386,6 +389,12 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    importJarvisProjectSource: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:import-jarvis-project-source",
+      tag: WS_METHODS.serverImportJarvisProjectSource,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     retractJarvisProjectFile: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:retract-jarvis-project-file",
       tag: WS_METHODS.serverRetractJarvisProjectFile,
@@ -425,6 +434,24 @@ export function createServerEnvironmentAtoms<R, E>(
     sendJarvisProjectThreadTurn: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:send-jarvis-project-thread-turn",
       tag: WS_METHODS.serverSendJarvisProjectThreadTurn,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    respondJarvisProjectThreadApproval: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:respond-jarvis-project-thread-approval",
+      tag: WS_METHODS.serverRespondJarvisProjectThreadApproval,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    respondJarvisProjectThreadInput: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:respond-jarvis-project-thread-input",
+      tag: WS_METHODS.serverRespondJarvisProjectThreadInput,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    interruptJarvisProjectThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:interrupt-jarvis-project-thread",
+      tag: WS_METHODS.serverInterruptJarvisProjectThread,
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),

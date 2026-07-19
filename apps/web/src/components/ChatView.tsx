@@ -134,6 +134,8 @@ import { closePreviewSession } from "./preview/closePreviewSession";
 import { subscribePreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 import { RightPanelTabs } from "./RightPanelTabs";
+import { ConversationContextPanel } from "./ConversationContextPanel";
+import { standardConversationContextContributions } from "../conversationContext.logic";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
@@ -145,6 +147,7 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
+import { AgentConversationChatView } from "./AgentConversationChatView";
 import {
   commandForProjectScript,
   nextProjectScriptId,
@@ -341,7 +344,7 @@ function formatOutgoingPrompt(params: {
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 
-type ChatViewProps =
+type StandardChatViewProps =
   | {
       environmentId: EnvironmentId;
       threadId: ThreadId;
@@ -357,6 +360,15 @@ type ChatViewProps =
       reserveTitleBarControlInset?: boolean;
       routeKind: "draft";
       draftId: DraftId;
+    };
+
+type ChatViewProps =
+  | StandardChatViewProps
+  | {
+      environmentId: EnvironmentId;
+      projectId: string;
+      threadId: ThreadId;
+      routeKind: "agent";
     };
 
 interface TerminalLaunchContext {
@@ -993,7 +1005,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
   );
 });
 
-function ChatViewContent(props: ChatViewProps) {
+function ChatViewContent(props: StandardChatViewProps) {
   const {
     environmentId,
     threadId,
@@ -1395,6 +1407,13 @@ function ChatViewContent(props: ChatViewProps) {
     ? scopeProjectRef(activeThread.environmentId, activeThread.projectId)
     : null;
   const activeProject = useProject(activeProjectRef);
+  const contextContributions = useMemo(
+    () =>
+      activeThread
+        ? standardConversationContextContributions({ project: activeProject, thread: activeThread })
+        : [],
+    [activeProject, activeThread],
+  );
   const activeProjectFilesystemCwd = isLocalFilesystemCwd(activeProject?.workspaceRoot)
     ? activeProject.workspaceRoot
     : null;
@@ -3027,8 +3046,20 @@ function ChatViewContent(props: ChatViewProps) {
       }
       return;
     }
-    useRightPanelStore.getState().toggleVisibility(activeThreadRef);
-  }, [activeThreadRef, closePlanSidebar, closePreviewPanel, planSidebarOpen, rightPanelOpen]);
+    const store = useRightPanelStore.getState();
+    if (rightPanelState.surfaces.length === 0) {
+      store.open(activeThreadRef, "context");
+      return;
+    }
+    store.toggleVisibility(activeThreadRef);
+  }, [
+    activeThreadRef,
+    closePlanSidebar,
+    closePreviewPanel,
+    planSidebarOpen,
+    rightPanelOpen,
+    rightPanelState.surfaces.length,
+  ]);
   const toggleRightPanelMaximized = useCallback(() => {
     if (!canMaximizeRightPanel) return;
     setMaximizedRightPanelThreadKey((threadKey) =>
@@ -3999,6 +4030,7 @@ function ChatViewContent(props: ChatViewProps) {
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
       selectedJarvisWorkerOverrideId: ctxSelectedJarvisWorkerOverrideId,
+      selectedJarvisProjectId: ctxSelectedJarvisProjectId,
       selectedJarvisRepo: ctxSelectedJarvisRepo,
       selectedJarvisEngine: ctxSelectedJarvisEngine,
     } = sendCtx;
@@ -4065,7 +4097,11 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeProject) return;
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
-    if (activeIsJarvisCockpitEnvironment && isLocalDraftThread && !ctxSelectedJarvisRepo) {
+    if (
+      activeIsJarvisCockpitEnvironment &&
+      isLocalDraftThread &&
+      (!ctxSelectedJarvisRepo || !ctxSelectedJarvisProjectId)
+    ) {
       setThreadError(
         threadIdForSend,
         "Create a Jarvis project before starting work. Jarvis Cockpit dispatches through projects, not loose repositories.",
@@ -4241,6 +4277,7 @@ function ChatViewContent(props: ChatViewProps) {
     if (failure === null && turnAttachmentsResult._tag === "Success") {
       const hasJarvisRoutingBootstrap =
         Boolean(ctxSelectedJarvisWorkerOverrideId) ||
+        Boolean(ctxSelectedJarvisProjectId) ||
         Boolean(ctxSelectedJarvisRepo) ||
         Boolean(ctxSelectedJarvisEngine);
       const bootstrap =
@@ -4273,6 +4310,9 @@ function ChatViewContent(props: ChatViewProps) {
                 : {}),
               ...(ctxSelectedJarvisWorkerOverrideId
                 ? { jarvisWorkerId: ctxSelectedJarvisWorkerOverrideId }
+                : {}),
+              ...(ctxSelectedJarvisProjectId
+                ? { jarvisProjectId: ctxSelectedJarvisProjectId }
                 : {}),
               ...(ctxSelectedJarvisRepo ? { jarvisRepo: ctxSelectedJarvisRepo } : {}),
               ...(ctxSelectedJarvisEngine ? { jarvisEngine: ctxSelectedJarvisEngine } : {}),
@@ -5053,7 +5093,7 @@ function ChatViewContent(props: ChatViewProps) {
       terminalAvailable={activeProject !== null}
       terminalOpen={terminalUiState.terminalOpen}
       terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
-      rightPanelAvailable={activeProject !== null}
+      rightPanelAvailable={activeThreadRef !== null}
       rightPanelOpen={rightPanelOpen}
       rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
       onToggleTerminal={toggleTerminalVisibility}
@@ -5072,7 +5112,9 @@ function ChatViewContent(props: ChatViewProps) {
     </div>
   );
   const rightPanelContent = activeThreadRef ? (
-    activeRightPanelSurface?.kind === "preview" ? (
+    activeRightPanelSurface?.kind === "context" ? (
+      <ConversationContextPanel contributions={contextContributions} />
+    ) : activeRightPanelSurface?.kind === "preview" ? (
       <Suspense fallback={null}>
         <PreviewPanel
           mode="embedded"
@@ -5453,6 +5495,8 @@ function ChatViewContent(props: ChatViewProps) {
           onAddTerminal={addTerminalSurface}
           onAddDiff={addDiffSurface}
           onAddFiles={addFilesSurface}
+          onAddContext={() => useRightPanelStore.getState().open(activeThreadRef, "context")}
+          contextAvailable
           browserAvailable={isPreviewSupportedInRuntime()}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
@@ -5480,6 +5524,8 @@ function ChatViewContent(props: ChatViewProps) {
             onAddTerminal={addTerminalSurface}
             onAddDiff={addDiffSurface}
             onAddFiles={addFilesSurface}
+            onAddContext={() => useRightPanelStore.getState().open(activeThreadRef, "context")}
+            contextAvailable
             browserAvailable={isPreviewSupportedInRuntime()}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
@@ -5501,6 +5547,15 @@ function ChatViewContent(props: ChatViewProps) {
 }
 
 export default function ChatView(props: ChatViewProps) {
+  if (props.routeKind === "agent") {
+    return (
+      <AgentConversationChatView
+        environmentId={props.environmentId}
+        projectId={props.projectId}
+        threadId={props.threadId}
+      />
+    );
+  }
   return (
     <DiffWorkerPoolProvider>
       <ChatViewContent {...props} />

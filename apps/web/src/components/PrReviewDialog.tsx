@@ -3,7 +3,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { PR_REVIEW_DIMENSIONS, buildPrReviewOrchestratorPrompt } from "@t3tools/shared/prReview";
 import { useNavigate } from "@tanstack/react-router";
 import { LoaderIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 
 import {
   defaultReviewerKeys,
@@ -69,7 +69,7 @@ export function PrReviewDialog({
     (settings) => settings.orchestratorModelSelection,
   );
   const snapshotQuery = useEnvironmentQuery(
-    serverEnvironment.jarvisSnapshot({ environmentId, input: {} }),
+    serverEnvironment.jarvisSnapshot({ environmentId, input: { sync: "probe" } }),
   );
   const projectThreadsQuery = useEnvironmentQuery(
     serverEnvironment.jarvisProjectThreads({
@@ -88,6 +88,7 @@ export function PrReviewDialog({
   const [post, setPost] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const attemptId = useId();
 
   useEffect(() => {
     if (!open) {
@@ -193,73 +194,96 @@ export function PrReviewDialog({
   const handleStart = async () => {
     setSubmitting(true);
     setError(null);
-    if (!orchestrator || !orchestratorWorkerId) {
-      setSubmitting(false);
-      setError("Choose an available orchestrator model with a healthy worker.");
-      return;
-    }
-
-    const created = await createThread({
-      environmentId,
-      input: {
-        projectId,
-        input: {
-          title: reviewTitle,
-          chat_type: "orchestrator",
-          engine: orchestrator.engine,
-          model: orchestrator.model,
-          worker_id: orchestratorWorkerId,
-        },
-      },
-    });
-    if (created._tag === "Failure") {
-      setSubmitting(false);
-      if (!isAtomCommandInterrupted(created)) {
-        const failure = squashAtomCommandFailure(created);
-        setError(failure instanceof Error ? failure.message : "Could not start the review.");
-      }
-      return;
-    }
-    if (created.value.ok !== true || !created.value.thread) {
-      setSubmitting(false);
-      setError(created.value.error?.message ?? "Could not create the review conversation.");
-      return;
-    }
-
-    const threadId = created.value.thread.thread_id;
-    projectThreadsQuery.refresh();
-    setSubmitting(false);
-    onOpenChange(false);
-    toastManager.add({
-      type: "info",
-      title: "PR review started",
-      description: `${repo} #${prNumber}`,
-    });
-    void navigate({
-      to: "/jarvis-project/$environmentId/$projectId/$threadId",
-      params: buildProjectConversationRouteParams({
-        environmentId,
-        projectId,
-        threadId: String(threadId),
-      }),
-    });
-    void sendTurn({
-      environmentId,
-      input: { projectId, threadId: String(threadId), input: { text: prompt } },
-    }).then((sent) => {
-      if (sent._tag === "Failure" && !isAtomCommandInterrupted(sent)) {
-        const failure = squashAtomCommandFailure(sent);
-        toastManager.add({
-          type: "error",
-          title: "PR review orchestration failed",
-          description:
-            failure instanceof Error ? failure.message : "Could not send the review prompt.",
-        });
+    try {
+      if (!orchestrator || !orchestratorWorkerId) {
+        setError("Choose an available orchestrator model with a healthy worker.");
         return;
       }
+
+      const created = await createThread({
+        environmentId,
+        input: {
+          projectId,
+          input: {
+            title: reviewTitle,
+            chat_type: "orchestrator",
+            engine: orchestrator.engine,
+            model: orchestrator.model,
+            worker_id: orchestratorWorkerId,
+            idempotency_key: `pr-review:${projectId}:${repo}:${String(prNumber)}:${attemptId}`,
+          },
+        },
+      });
+      if (created._tag === "Failure") {
+        if (!isAtomCommandInterrupted(created)) {
+          const failure = squashAtomCommandFailure(created);
+          setError(failure instanceof Error ? failure.message : "Could not start the review.");
+        }
+        return;
+      }
+      if (created.value.ok !== true || !created.value.thread) {
+        setError(created.value.error?.message ?? "Could not create the review conversation.");
+        return;
+      }
+
+      const threadId = created.value.thread.thread_id;
       projectThreadsQuery.refresh();
-      snapshotQuery.refresh();
-    });
+      onOpenChange(false);
+      toastManager.add({
+        type: "info",
+        title: "PR review started",
+        description: `${repo} #${prNumber}`,
+      });
+      void navigate({
+        to: "/jarvis-project/$environmentId/$projectId/$threadId",
+        params: buildProjectConversationRouteParams({
+          environmentId,
+          projectId,
+          threadId: String(threadId),
+        }),
+      });
+      void sendTurn({
+        environmentId,
+        input: {
+          projectId,
+          threadId: String(threadId),
+          input: { text: prompt, idempotency_key: `pr-review-${String(threadId)}` },
+        },
+      })
+        .then((sent) => {
+          if (sent._tag === "Failure" && !isAtomCommandInterrupted(sent)) {
+            const failure = squashAtomCommandFailure(sent);
+            toastManager.add({
+              type: "error",
+              title: "PR review orchestration failed",
+              description:
+                failure instanceof Error ? failure.message : "Could not send the review prompt.",
+            });
+            return;
+          }
+          if (sent._tag === "Success" && sent.value.ok !== true) {
+            toastManager.add({
+              type: "error",
+              title: "PR review orchestration failed",
+              description: sent.value.error?.message ?? "Jarvis could not run the review.",
+            });
+            return;
+          }
+          projectThreadsQuery.refresh();
+          snapshotQuery.refresh();
+        })
+        .catch((cause: unknown) => {
+          toastManager.add({
+            type: "error",
+            title: "PR review orchestration failed",
+            description: cause instanceof Error ? cause.message : "Could not run the review.",
+          });
+        });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not start the review.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (

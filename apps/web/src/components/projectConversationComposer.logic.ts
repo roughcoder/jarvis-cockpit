@@ -56,6 +56,37 @@ export type ProjectConversationTurnAttachmentsResult =
   | { readonly ok: true; readonly attachments: JarvisTurnAttachment[] }
   | { readonly ok: false; readonly message: string };
 
+export function isProjectConversationComposerDraftEmpty(input: {
+  readonly prompt: string;
+  readonly imageCount: number;
+  readonly terminalContextCount: number;
+  readonly elementContextCount: number;
+}): boolean {
+  return (
+    input.prompt.length === 0 &&
+    input.imageCount === 0 &&
+    input.terminalContextCount === 0 &&
+    input.elementContextCount === 0
+  );
+}
+
+export function projectConversationComposerMatchesSubmission(input: {
+  readonly draftPrompt: string;
+  readonly draftImageIds: ReadonlyArray<string>;
+  readonly terminalContextCount: number;
+  readonly elementContextCount: number;
+  readonly submissionPrompt: string;
+  readonly submissionImageIds: ReadonlyArray<string>;
+}): boolean {
+  return (
+    input.draftPrompt === input.submissionPrompt &&
+    input.terminalContextCount === 0 &&
+    input.elementContextCount === 0 &&
+    input.draftImageIds.length === input.submissionImageIds.length &&
+    input.draftImageIds.every((id, index) => id === input.submissionImageIds[index])
+  );
+}
+
 export const DEFAULT_PROJECT_CONVERSATION_ATTACHMENT_LIMITS: ProjectConversationAttachmentLimits = {
   maxCount: PROJECT_TURN_ATTACHMENT_MAX_COUNT,
   maxDecodedBytes: PROJECT_TURN_ATTACHMENT_MAX_DECODED_BYTES,

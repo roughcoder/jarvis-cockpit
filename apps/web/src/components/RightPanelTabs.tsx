@@ -1,6 +1,16 @@
 import type { ContextMenuItem, PreviewSessionSnapshot } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
-import { ClipboardList, FileDiff, Files, Globe2, Plus, TerminalSquare, X } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import {
+  ClipboardList,
+  FileDiff,
+  Files,
+  Globe2,
+  PanelRightIcon,
+  Plus,
+  TerminalSquare,
+  X,
+} from "lucide-react";
 import {
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
@@ -39,14 +49,16 @@ interface RightPanelTabsProps {
   onCloseOtherSurfaces: (surface: RightPanelSurface) => void;
   onCloseSurfacesToRight: (surface: RightPanelSurface) => void;
   onCloseAllSurfaces: () => void;
-  onCopyFilePath: (relativePath: string) => void;
-  onAddBrowser: () => void;
-  onAddTerminal: () => void;
-  onAddDiff: () => void;
-  onAddFiles: () => void;
-  browserAvailable: boolean;
-  diffAvailable: boolean;
-  filesAvailable: boolean;
+  onCopyFilePath?: (relativePath: string) => void;
+  onAddContext?: () => void;
+  onAddBrowser?: () => void;
+  onAddTerminal?: () => void;
+  onAddDiff?: () => void;
+  onAddFiles?: () => void;
+  contextAvailable?: boolean;
+  browserAvailable?: boolean;
+  diffAvailable?: boolean;
+  filesAvailable?: boolean;
   children: ReactNode;
 }
 
@@ -86,50 +98,71 @@ function SurfaceMenuItem(props: {
   return <DisabledReasonTooltip reason={props.disabledReason} trigger={item} />;
 }
 
-function RightPanelEmptyState(props: {
-  onAddBrowser: () => void;
-  onAddTerminal: () => void;
-  onAddDiff: () => void;
-  onAddFiles: () => void;
-  browserAvailable: boolean;
-  diffAvailable: boolean;
-  filesAvailable: boolean;
-}) {
-  const actions = [
-    {
+interface RightPanelAddAction {
+  readonly label: string;
+  readonly description: string;
+  readonly icon: LucideIcon;
+  readonly available: boolean;
+  readonly disabledReason: string | null;
+  readonly onClick: () => void;
+}
+
+function rightPanelAddActions(props: RightPanelTabsProps): RightPanelAddAction[] {
+  const actions: RightPanelAddAction[] = [];
+  if (props.onAddContext) {
+    actions.push({
+      label: "Context",
+      description: "Inspect conversation state and resources.",
+      icon: PanelRightIcon,
+      available: props.contextAvailable ?? true,
+      disabledReason: null,
+      onClick: props.onAddContext,
+    });
+  }
+  if (props.onAddBrowser) {
+    actions.push({
       label: "Browser",
       description: "Open a local app or URL.",
       icon: Globe2,
-      available: props.browserAvailable,
+      available: props.browserAvailable ?? false,
       disabledReason: SURFACE_DISABLED_REASONS.browser,
       onClick: props.onAddBrowser,
-    },
-    {
+    });
+  }
+  if (props.onAddTerminal) {
+    actions.push({
       label: "Terminal",
       description: "Start a shell in this workspace.",
       icon: TerminalSquare,
       available: true,
       disabledReason: null,
       onClick: props.onAddTerminal,
-    },
-    {
+    });
+  }
+  if (props.onAddFiles) {
+    actions.push({
       label: "Files",
       description: "Browse and read workspace files.",
       icon: Files,
-      available: props.filesAvailable,
+      available: props.filesAvailable ?? false,
       disabledReason: SURFACE_DISABLED_REASONS.files,
       onClick: props.onAddFiles,
-    },
-    {
+    });
+  }
+  if (props.onAddDiff) {
+    actions.push({
       label: "Diff",
       description: "Review changes in this thread.",
       icon: FileDiff,
-      available: props.diffAvailable,
+      available: props.diffAvailable ?? false,
       disabledReason: SURFACE_DISABLED_REASONS.diff,
       onClick: props.onAddDiff,
-    },
-  ] as const;
+    });
+  }
+  return actions;
+}
 
+function RightPanelEmptyState(props: { readonly actions: ReadonlyArray<RightPanelAddAction> }) {
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center p-6">
       <div className="w-full max-w-xl">
@@ -140,7 +173,7 @@ function RightPanelEmptyState(props: {
           </p>
         </div>
         <div className="grid grid-cols-2 gap-2">
-          {actions.map((action) => {
+          {props.actions.map((action) => {
             const Icon = action.icon;
             const content = (
               <>
@@ -172,6 +205,7 @@ function RightPanelEmptyState(props: {
                 {content}
               </button>
             );
+            if (!action.disabledReason) return disabledCard;
             return (
               <DisabledReasonTooltip
                 key={action.label}
@@ -192,6 +226,8 @@ function surfaceTitle(
   terminalLabelsById: ReadonlyMap<string, string>,
 ): string {
   switch (surface.kind) {
+    case "context":
+      return "Context";
     case "diff":
       return "Diff";
     case "files":
@@ -244,6 +280,8 @@ function SurfaceIcon({
   theme: "light" | "dark";
 }) {
   switch (surface.kind) {
+    case "context":
+      return <PanelRightIcon className="size-3.5 shrink-0" />;
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       const url = !snapshot || snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
@@ -273,6 +311,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
+  const addActions = rightPanelAddActions(props);
 
   const handleTabContextMenu = useCallback(
     async (event: ReactMouseEvent, surface: RightPanelSurface) => {
@@ -311,7 +350,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       const action = await api.contextMenu.show(items, { x: event.clientX, y: event.clientY });
       switch (action) {
         case "copy-path":
-          if (surface.kind === "file") props.onCopyFilePath(surface.relativePath);
+          if (surface.kind === "file") props.onCopyFilePath?.(surface.relativePath);
           break;
         case "close":
           props.onCloseSurface(surface);
@@ -433,7 +472,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 </div>
               );
             })}
-            {props.surfaces.length > 0 ? (
+            {props.surfaces.length > 0 && addActions.length > 0 ? (
               <Menu>
                 <MenuTrigger
                   className="relative inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -442,34 +481,22 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   <Plus className="size-4" />
                 </MenuTrigger>
                 <MenuPopup align="start" side="bottom" sideOffset={6} className="min-w-44">
-                  <SurfaceMenuItem
-                    available={props.browserAvailable}
-                    disabledReason={SURFACE_DISABLED_REASONS.browser}
-                    onClick={props.onAddBrowser}
-                  >
-                    <Globe2 />
-                    Browser
-                  </SurfaceMenuItem>
-                  <SurfaceMenuItem available onClick={props.onAddTerminal}>
-                    <TerminalSquare />
-                    Terminal
-                  </SurfaceMenuItem>
-                  <SurfaceMenuItem
-                    available={props.filesAvailable}
-                    disabledReason={SURFACE_DISABLED_REASONS.files}
-                    onClick={props.onAddFiles}
-                  >
-                    <Files />
-                    Files
-                  </SurfaceMenuItem>
-                  <SurfaceMenuItem
-                    available={props.diffAvailable}
-                    disabledReason={SURFACE_DISABLED_REASONS.diff}
-                    onClick={props.onAddDiff}
-                  >
-                    <FileDiff />
-                    Diff
-                  </SurfaceMenuItem>
+                  {addActions.map((action) => {
+                    const Icon = action.icon;
+                    return (
+                      <SurfaceMenuItem
+                        key={action.label}
+                        available={action.available}
+                        {...(action.disabledReason
+                          ? { disabledReason: action.disabledReason }
+                          : {})}
+                        onClick={action.onClick}
+                      >
+                        <Icon />
+                        {action.label}
+                      </SurfaceMenuItem>
+                    );
+                  })}
                 </MenuPopup>
               </Menu>
             ) : null}
@@ -479,15 +506,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       </div>
       <div className="flex min-h-0 flex-1 flex-col">
         {props.activeSurfaceId === null ? (
-          <RightPanelEmptyState
-            onAddBrowser={props.onAddBrowser}
-            onAddTerminal={props.onAddTerminal}
-            onAddDiff={props.onAddDiff}
-            onAddFiles={props.onAddFiles}
-            browserAvailable={props.browserAvailable}
-            diffAvailable={props.diffAvailable}
-            filesAvailable={props.filesAvailable}
-          />
+          <RightPanelEmptyState actions={addActions} />
         ) : (
           props.children
         )}

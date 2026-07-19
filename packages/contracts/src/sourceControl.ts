@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
 export const SourceControlProviderKind = Schema.Literals([
@@ -163,6 +163,13 @@ export const ProjectPullRequest = Schema.Struct({
   baseRefName: TrimmedNonEmptyString,
   headRefName: TrimmedNonEmptyString,
   isDraft: Schema.Boolean,
+  commentCount: Schema.optional(NonNegativeInt),
+  reviewCount: Schema.optional(NonNegativeInt),
+  reviewDecision: Schema.optional(
+    Schema.Literals(["approved", "changes_requested", "review_required", "not_reported"]),
+  ),
+  checksStatus: Schema.optional(Schema.Literals(["passing", "failing", "pending", "not_reported"])),
+  checksCount: Schema.optional(NonNegativeInt),
   updatedAt: Schema.Option(Schema.DateTimeUtc),
   createdAt: Schema.Option(Schema.DateTimeUtc),
 });

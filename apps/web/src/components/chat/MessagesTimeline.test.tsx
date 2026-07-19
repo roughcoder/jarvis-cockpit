@@ -219,6 +219,115 @@ function buildUserTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("renders a provider-neutral recovery action for a failed timeline entry", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        onRecoveryAction={() => {}}
+        timelineEntries={[
+          {
+            id: "failed-turn",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "failed-turn",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Turn failed",
+              detail: "Provider quota exhausted.",
+              tone: "error",
+              semanticActivityStatus: "failed",
+              recoveryAction: { id: "turn-1", label: "Retry" },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Turn failed");
+    expect(markup).toContain("Provider quota exhausted.");
+    expect(markup).toContain('aria-label="Retry"');
+  });
+
+  it("renders universal in-flight and cancelled activity rows independently of turn state", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const runningMarkup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "semantic-running",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "semantic-running",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Searching repository",
+              tone: "tool",
+              toolLifecycleStatus: "inProgress",
+              semanticActivityStatus: "running",
+            },
+          },
+        ]}
+      />,
+    );
+    const cancelledMarkup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "semantic-cancelled",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "semantic-cancelled",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Cancelled repository search",
+              tone: "tool",
+              toolLifecycleStatus: "stopped",
+              semanticActivityStatus: "cancelled",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(runningMarkup).toContain("Searching repository");
+    expect(runningMarkup).toContain('data-tool-status="pending"');
+    expect(cancelledMarkup).toContain("Cancelled repository search");
+    expect(cancelledMarkup).not.toContain("data-tool-status=");
+  });
+
+  it("renders compact user text with progressive instruction disclosure", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const entry = buildUserTimelineEntry("Review roughcoder/jarvis #126.");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            ...entry,
+            message: {
+              ...entry.message,
+              disclosure: {
+                label: "Review instructions",
+                text: "Full generated orchestration instructions.",
+              },
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Review roughcoder/jarvis #126.");
+    expect(markup).toContain("Review instructions");
+    expect(markup).toContain("Full generated orchestration instructions.");
+    expect(markup).toMatch(
+      /<details[^>]*>[\s\S]*Review instructions[\s\S]*Full generated orchestration instructions\.[\s\S]*<\/details>/u,
+    );
+    expect(markup.match(/Full generated orchestration instructions\./gu)).toHaveLength(1);
+  });
+
   it("uses LegendList isNearEnd when deciding whether the live edge is visible", async () => {
     const {
       resolveTimelineIsAtEnd,

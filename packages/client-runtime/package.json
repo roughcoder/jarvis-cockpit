@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./conversation": {
+      "types": "./src/conversation/index.ts",
+      "default": "./src/conversation/index.ts"
+    },
     "./connection": {
       "types": "./src/connection/index.ts",
       "default": "./src/connection/index.ts"

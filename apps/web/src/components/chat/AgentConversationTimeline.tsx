@@ -1,0 +1,102 @@
+import type { AgentConversation } from "@t3tools/client-runtime/conversation";
+import type { EnvironmentId } from "@t3tools/contracts";
+import type { TimestampFormat } from "@t3tools/contracts/settings";
+import type { LegendListRef } from "@legendapp/list/react";
+import { useMemo, useRef } from "react";
+import { MessageSquareIcon } from "lucide-react";
+
+import { agentConversationOperationalFlags } from "../../agentConversationTimeline.logic";
+import {
+  mergeAgentConversationTimelineOverlay,
+  type AgentConversationOverlayTurn,
+} from "../../agentConversationTimelineOverlay.logic";
+import { MessagesTimeline } from "./MessagesTimeline";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
+
+interface AgentConversationTimelineProps {
+  readonly conversation: AgentConversation;
+  readonly environmentId: EnvironmentId;
+  readonly routeThreadKey: string;
+  readonly resolvedTheme: "light" | "dark";
+  readonly timestampFormat: TimestampFormat;
+  readonly showEmptyState?: boolean;
+  readonly markdownCwd?: string;
+  readonly workspaceRoot?: string;
+  readonly overlayTurns?: ReadonlyArray<AgentConversationOverlayTurn>;
+  readonly onRecoveryAction?: (actionId: string) => void;
+  readonly recoveryActionsDisabled?: boolean;
+}
+
+const NOOP = () => {};
+
+export function AgentConversationTimeline({
+  conversation,
+  environmentId,
+  routeThreadKey,
+  resolvedTheme,
+  timestampFormat,
+  showEmptyState = true,
+  markdownCwd,
+  workspaceRoot,
+  overlayTurns = EMPTY_OVERLAY_TURNS,
+  onRecoveryAction,
+  recoveryActionsDisabled = false,
+}: AgentConversationTimelineProps) {
+  const listRef = useRef<LegendListRef | null>(null);
+  const timeline = useMemo(
+    () => mergeAgentConversationTimelineOverlay(conversation, overlayTurns),
+    [conversation, overlayTurns],
+  );
+  const flags = agentConversationOperationalFlags(conversation.operationalState);
+
+  if (timeline.timelineEntries.length === 0 && !timeline.isWorking) {
+    if (!showEmptyState) return null;
+    return (
+      <Empty className="min-h-80">
+        <EmptyHeader>
+          <MessageSquareIcon className="mb-4 size-7 text-muted-foreground" />
+          <EmptyTitle>{conversation.title}</EmptyTitle>
+          <EmptyDescription>
+            {conversation.context.workspace
+              ? "Continue the workspace conversation from this surface."
+              : "Planning conversation - no repo access. Attach a repo to let it inspect code."}
+          </EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    );
+  }
+
+  return (
+    <MessagesTimeline
+      isWorking={timeline.isWorking}
+      activeTurnInProgress={flags.activeTurnInProgress || timeline.isWorking}
+      activeTurnStartedAt={null}
+      listRef={listRef}
+      timelineEntries={timeline.timelineEntries}
+      latestTurn={null}
+      runningTurnId={null}
+      turnDiffSummaryByAssistantMessageId={new Map()}
+      routeThreadKey={routeThreadKey}
+      onOpenTurnDiff={NOOP}
+      revertTurnCountByUserMessageId={new Map()}
+      onRevertUserMessage={NOOP}
+      isRevertingCheckpoint={false}
+      onImageExpand={NOOP}
+      activeThreadEnvironmentId={environmentId}
+      markdownCwd={markdownCwd}
+      resolvedTheme={resolvedTheme}
+      timestampFormat={timestampFormat}
+      workspaceRoot={workspaceRoot}
+      anchorMessageId={null}
+      onAnchorReady={NOOP}
+      onAnchorSizeChanged={NOOP}
+      contentInsetEndAdjustment={0}
+      onIsAtEndChange={NOOP}
+      onManualNavigation={NOOP}
+      onRecoveryAction={onRecoveryAction ?? NOOP}
+      recoveryActionsDisabled={recoveryActionsDisabled}
+    />
+  );
+}
+
+const EMPTY_OVERLAY_TURNS: ReadonlyArray<AgentConversationOverlayTurn> = [];

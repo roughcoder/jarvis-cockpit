@@ -1,5 +1,8 @@
 # Design: Conversations Own A Workspace Of Worktrees
 
+> Historical design note. The normative successor is
+> [`universal-durable-agent-conversations-spec.md`](./universal-durable-agent-conversations-spec.md).
+
 Date: 2026-07-07. Status: assessment + proposal (Neil raised; coordinator investigated).
 Related: `orchestration-chat-design.md`, `repo-access-and-provisioning.md`.
 

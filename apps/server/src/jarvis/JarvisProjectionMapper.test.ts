@@ -114,6 +114,53 @@ it("maps one Jarvis run with two sessions into one project and two thread shells
   assert.strictEqual(snapshot.threads[0]?.worktreePath, null);
 });
 
+it("hides worker readiness-test work from the orchestration projection", () => {
+  const readinessRun: JarvisRun = {
+    ...run,
+    run_id: "run_readiness" as JarvisRun["run_id"],
+    metadata: { purpose: "worker-readiness-test" },
+  };
+  const readinessSession = {
+    ...makeSession("sess_readiness"),
+    run_id: readinessRun.run_id,
+  };
+  const taggedSession = {
+    ...makeSession("sess_tagged"),
+    metadata: { purpose: "worker-readiness-test" },
+  };
+  // Untagged run whose only session carries the tag (Jarvis may echo start-work
+  // metadata on sessions only) — the run must disappear with its session.
+  const sessionTaggedRun: JarvisRun = {
+    ...run,
+    run_id: "run_session_tagged" as JarvisRun["run_id"],
+  };
+  const sessionTaggedOnly = {
+    ...makeSession("sess_session_tagged"),
+    run_id: sessionTaggedRun.run_id,
+    metadata: { purpose: "worker-readiness-test" },
+  };
+  const snapshot = mapJarvisRunsSnapshotToShellSnapshot({
+    api_version: "v1",
+    schema_version: 1,
+    cursor: "evt_1",
+    sync: { mode: "fast", status: "fresh", synced_at: now, errors: [] },
+    runs: [run, readinessRun, sessionTaggedRun],
+    sessions: [makeSession("sess_1"), readinessSession, taggedSession, sessionTaggedOnly],
+    workers: [],
+    artifacts: [],
+    generated_at: now,
+  });
+
+  assert.deepStrictEqual(
+    snapshot.projects.map((project) => project.id),
+    ["jarvis-run_run_1"],
+  );
+  assert.deepStrictEqual(
+    snapshot.threads.map((thread) => thread.id),
+    ["jarvis-session_sessref_macbook-worker_sess_1"],
+  );
+});
+
 it("keeps worker-local sessions out of the run-backed orchestration projection", () => {
   const snapshot = mapJarvisRunsSnapshotToShellSnapshot({
     api_version: "v1",
@@ -458,10 +505,58 @@ it("maps known and unknown events into timeline activities", () => {
   assert.strictEqual(detail.messages[0]?.role, "user");
   assert.strictEqual(detail.messages[0]?.text, "Please run verification.");
   assert.strictEqual(detail.messages[1]?.text, "Done.");
-  assert.strictEqual(detail.activities[0]?.kind, "turn.started");
-  assert.strictEqual(detail.activities[2]?.kind, "provider.future_event");
-  assert.strictEqual(detail.activities[2]?.tone, "info");
-  assert.strictEqual(detail.activities[2]?.summary, "Future event");
+  assert.strictEqual(detail.activities.length, 1);
+  assert.strictEqual(detail.activities[0]?.kind, "provider.future_event");
+  assert.strictEqual(detail.activities[0]?.tone, "info");
+  assert.strictEqual(detail.activities[0]?.summary, "Future event");
+});
+
+it("normalizes Jarvis tool pairs and suppresses routine provider noise", () => {
+  const session = makeSession("sess_1");
+  const events: ReadonlyArray<JarvisSessionEvent> = [
+    makeEvent({
+      event_id: "evt_provider" as JarvisSessionEvent["event_id"],
+      sequence: 1,
+      type: "provider.event",
+      data: {},
+    }),
+    makeEvent({
+      event_id: "evt_call" as JarvisSessionEvent["event_id"],
+      sequence: 2,
+      type: "tool.call",
+      data: {
+        tool_call_id: "call-1",
+        tool_name: "spawn_child_work_session",
+        item_type: "mcp_tool_call",
+        input: { title: "Claude review" },
+      },
+    }),
+    makeEvent({
+      event_id: "evt_result" as JarvisSessionEvent["event_id"],
+      sequence: 3,
+      type: "tool.result",
+      data: {
+        tool_call_id: "call-1",
+        tool_name: "spawn_child_work_session",
+        item_type: "mcp_tool_call",
+        output: { child_chat_id: "run-1" },
+      },
+    }),
+  ];
+
+  const detail = mapJarvisSessionToThreadDetail({ session, run, events });
+
+  assert.deepStrictEqual(
+    detail.activities.map((activity) => activity.kind),
+    ["tool.updated", "tool.completed"],
+  );
+  const callActivity = detail.activities[0];
+  const resultActivity = detail.activities[1];
+  assert.ok(callActivity);
+  assert.ok(resultActivity);
+  assert.strictEqual(callActivity.summary, "spawn_child_work_session");
+  assert.strictEqual((callActivity.payload as Record<string, unknown>).toolCallId, "call-1");
+  assert.strictEqual((resultActivity.payload as Record<string, unknown>).status, "completed");
 });
 
 it("uses echoed client message ids for Jarvis user turn messages", () => {

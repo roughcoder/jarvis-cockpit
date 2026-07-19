@@ -31,13 +31,17 @@ import {
   JarvisProjectMemoryForgetInput,
   JarvisProjectMemoryResponse,
   JarvisProjectThread,
+  type JarvisProjectThreadApprovalInput,
   JarvisProjectThreadArchiveInput,
+  JarvisProjectThreadControlResponse,
   JarvisProjectThreadDetail,
   JarvisProjectThreadDetailResponse,
   JarvisProjectThreadId,
+  type JarvisProjectThreadInterruptInput,
   JarvisProjectThreadsResponse,
   JarvisProjectThreadTurnInput,
   JarvisProjectThreadTurnResult,
+  type JarvisProjectThreadUserInputInput,
   JarvisProjectUpdateInput,
   JarvisDeleteInput,
   JarvisLifecycleResult,
@@ -57,6 +61,7 @@ import {
   JarvisSessionRequestsPage,
   JarvisStartWorkInput,
   JarvisStartWorkValidationResult,
+  type JarvisSyncMode,
   JarvisTurnInput,
   JarvisUserInputInput,
   JarvisWorkerSession,
@@ -123,7 +128,9 @@ export interface JarvisClient {
   readonly getCatalog: () => Effect.Effect<JarvisCockpitCatalog, JarvisClientError>;
   readonly getCapabilities: () => Effect.Effect<JarvisCapabilitiesResult, JarvisClientError>;
   readonly getMcpStatus: () => Effect.Effect<JarvisMcpStatus, JarvisClientError>;
-  readonly getSnapshot: () => Effect.Effect<JarvisRunsSnapshot, JarvisClientError>;
+  readonly getSnapshot: (options?: {
+    readonly sync?: JarvisSyncMode;
+  }) => Effect.Effect<JarvisRunsSnapshot, JarvisClientError>;
   readonly getProjects: (options?: {
     readonly includeArchived?: boolean;
   }) => Effect.Effect<ReadonlyArray<JarvisProject>, JarvisClientError>;
@@ -203,6 +210,21 @@ export interface JarvisClient {
     threadId: string,
     input: JarvisProjectThreadTurnInput,
   ) => Effect.Effect<JarvisProjectThreadTurnResult, JarvisClientError>;
+  readonly respondProjectThreadApproval: (
+    projectId: string,
+    threadId: string,
+    input: JarvisProjectThreadApprovalInput,
+  ) => Effect.Effect<JarvisProjectThreadControlResponse, JarvisClientError>;
+  readonly respondProjectThreadInput: (
+    projectId: string,
+    threadId: string,
+    input: JarvisProjectThreadUserInputInput,
+  ) => Effect.Effect<JarvisProjectThreadControlResponse, JarvisClientError>;
+  readonly interruptProjectThread: (
+    projectId: string,
+    threadId: string,
+    input: JarvisProjectThreadInterruptInput,
+  ) => Effect.Effect<JarvisProjectThreadControlResponse, JarvisClientError>;
   readonly getSession: (
     sessionRef: string,
   ) => Effect.Effect<JarvisWorkerSession, JarvisClientError>;
@@ -414,6 +436,9 @@ const decodeProjectThreadDetailResponse = Schema.decodeUnknownEffect(
 );
 const decodeProjectThread = Schema.decodeUnknownEffect(JarvisProjectThread);
 const decodeProjectThreadTurnResult = Schema.decodeUnknownEffect(JarvisProjectThreadTurnResult);
+const decodeProjectThreadControlResponse = Schema.decodeUnknownEffect(
+  JarvisProjectThreadControlResponse,
+);
 const decodeProjectThreadResponse = (operation: string, body: unknown) =>
   Effect.gen(function* () {
     const candidate = projectThreadPayloadFromResponse(operation, body);
@@ -652,6 +677,7 @@ function canUseJarvisOAuthForUrl(
 }
 
 const JARVIS_SSE_IDLE_TIMEOUT_MS = 45_000;
+const JARVIS_JSON_REQUEST_TIMEOUT_MS = 30_000;
 
 /**
  * Incrementally parses SSE frames. Jarvis sends JSON envelopes, but this is
@@ -827,54 +853,118 @@ function streamJarvisCockpitSse(
   );
 }
 
+async function runBoundedJarvisJsonRequest<T>(input: {
+  readonly operation: string;
+  readonly timeoutMs: number;
+  readonly callerSignal?: AbortSignal | null | undefined;
+  readonly execute: (signal: AbortSignal) => Promise<T>;
+}): Promise<T> {
+  const requestController = new AbortController();
+  const timeoutSignal = AbortSignal.timeout(input.timeoutMs);
+  const timeoutError = new JarvisClientError({
+    operation: input.operation,
+    message: `Jarvis request ${input.operation} timed out after ${input.timeoutMs} ms.`,
+  });
+  const relayCallerAbort = () => requestController.abort(input.callerSignal?.reason);
+  const relayTimeoutAbort = () => requestController.abort(timeoutError);
+
+  if (input.callerSignal?.aborted) {
+    relayCallerAbort();
+  } else {
+    input.callerSignal?.addEventListener("abort", relayCallerAbort, { once: true });
+  }
+  if (!requestController.signal.aborted) {
+    timeoutSignal.addEventListener("abort", relayTimeoutAbort, { once: true });
+  }
+
+  let rejectOnAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectOnAbort = () =>
+      reject(
+        requestController.signal.reason ??
+          new Error(`Jarvis request ${input.operation} was aborted.`),
+      );
+    if (requestController.signal.aborted) {
+      rejectOnAbort();
+    } else {
+      requestController.signal.addEventListener("abort", rejectOnAbort, { once: true });
+    }
+  });
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => input.execute(requestController.signal)),
+      aborted,
+    ]);
+  } finally {
+    input.callerSignal?.removeEventListener("abort", relayCallerAbort);
+    timeoutSignal.removeEventListener("abort", relayTimeoutAbort);
+    if (rejectOnAbort !== undefined) {
+      requestController.signal.removeEventListener("abort", rejectOnAbort);
+    }
+  }
+}
+
 export function makeJarvisCockpitClient(input: {
   readonly baseUrl: URL;
   readonly token?: string;
   readonly tokenProvider?: JarvisAccessTokenProvider;
   readonly fetch?: FetchLike;
+  readonly requestTimeoutMs?: number;
 }): JarvisClient {
   const fetchImpl = input.fetch ?? fetch;
+  const requestTimeoutMs =
+    input.requestTimeoutMs !== undefined &&
+    Number.isFinite(input.requestTimeoutMs) &&
+    input.requestTimeoutMs > 0
+      ? Math.max(1, Math.floor(input.requestTimeoutMs))
+      : JARVIS_JSON_REQUEST_TIMEOUT_MS;
   const requestJson = (operation: string, path: string, init?: RequestInit) =>
     resolveRequestAuth(input, operation).pipe(
       Effect.flatMap((auth) =>
         Effect.tryPromise({
-          try: async () => {
-            const requestUrl = new URL(path, input.baseUrl);
-            const send = async (token: string | undefined) => {
-              const response = await fetchImpl(requestUrl, {
-                ...init,
-                headers: {
-                  accept: "application/json",
-                  ...(init?.body != null && !isFormDataBody(init.body)
-                    ? { "content-type": "application/json" }
-                    : {}),
-                  ...(token ? { authorization: `Bearer ${token}` } : {}),
-                  ...init?.headers,
-                },
-              });
-              const text = await response.text();
-              return { response, text };
-            };
-            const first = await send(auth.token);
-            const result =
-              !first.response.ok &&
-              isAuthRejectedStatus(first.response.status) &&
-              auth.recoveryToken !== undefined
-                ? await send(auth.recoveryToken)
-                : first;
-            if (!result.response.ok) {
-              const responseBody = truncateResponseBody(result.text);
-              throw new JarvisClientError({
-                operation,
-                status: result.response.status,
-                responseBody,
-                message: summarizeHttpError(operation, result.response.status, responseBody),
-              });
-            }
-            // @effect-diagnostics-next-line preferSchemaOverJson:off
-            const body = result.text.trim().length > 0 ? JSON.parse(result.text) : {};
-            return body as unknown;
-          },
+          try: () =>
+            runBoundedJarvisJsonRequest({
+              operation,
+              timeoutMs: requestTimeoutMs,
+              callerSignal: init?.signal,
+              execute: async (signal) => {
+                const requestUrl = new URL(path, input.baseUrl);
+                const send = async (token: string | undefined) => {
+                  const response = await fetchImpl(requestUrl, {
+                    ...init,
+                    signal,
+                    headers: {
+                      accept: "application/json",
+                      ...(init?.body != null && !isFormDataBody(init.body)
+                        ? { "content-type": "application/json" }
+                        : {}),
+                      ...(token ? { authorization: `Bearer ${token}` } : {}),
+                      ...init?.headers,
+                    },
+                  });
+                  const text = await response.text();
+                  return { response, text };
+                };
+                const first = await send(auth.token);
+                const result =
+                  !first.response.ok &&
+                  isAuthRejectedStatus(first.response.status) &&
+                  auth.recoveryToken !== undefined
+                    ? await send(auth.recoveryToken)
+                    : first;
+                if (!result.response.ok) {
+                  const responseBody = truncateResponseBody(result.text);
+                  throw new JarvisClientError({
+                    operation,
+                    status: result.response.status,
+                    responseBody,
+                    message: summarizeHttpError(operation, result.response.status, responseBody),
+                  });
+                }
+                const body = result.text.trim().length > 0 ? JSON.parse(result.text) : {};
+                return body as unknown;
+              },
+            }),
           catch: (cause) =>
             cause instanceof JarvisClientError
               ? cause
@@ -1117,8 +1207,11 @@ export function makeJarvisCockpitClient(input: {
       requestJson("mcp.status", "/v1/mcp/status").pipe(
         Effect.flatMap(decodeFor("mcp.status", decodeMcpStatus)),
       ),
-    getSnapshot: () =>
-      requestJson("cockpit.snapshot", "/v1/cockpit/snapshot?sync=fast").pipe(
+    getSnapshot: (options) =>
+      requestJson(
+        "cockpit.snapshot",
+        `/v1/cockpit/snapshot?sync=${encodeURIComponent(options?.sync ?? "fast")}`,
+      ).pipe(
         Effect.flatMap(
           decodeSnapshotDroppingMalformedSessions(decodeFor("cockpit.snapshot", decodeSnapshot)),
         ),
@@ -1224,6 +1317,9 @@ export function makeJarvisCockpitClient(input: {
       requestJson("projects.files.upload", `/v1/projects/${encodeURIComponent(projectId)}/files`, {
         method: "POST",
         body: projectFileUploadFormData(input),
+        ...(input.idempotency_key
+          ? { headers: { "X-Idempotency-Key": input.idempotency_key } }
+          : {}),
       }).pipe(Effect.flatMap(decodeFor("projects.files.upload", decodeJsonObject))),
     retractProjectFile: (projectId, docId, input = {}) =>
       requestJson(
@@ -1279,6 +1375,30 @@ export function makeJarvisCockpitClient(input: {
         },
       ).pipe(
         Effect.flatMap((text) => parseProjectThreadTurnResponse("projects.threads.turn", text)),
+      ),
+    respondProjectThreadApproval: (projectId, threadId, input) =>
+      postJson(
+        "projects.threads.approval",
+        `/v1/projects/${encodeURIComponent(projectId)}/threads/${encodeURIComponent(threadId)}/approval`,
+        input,
+      ).pipe(
+        Effect.flatMap(decodeFor("projects.threads.approval", decodeProjectThreadControlResponse)),
+      ),
+    respondProjectThreadInput: (projectId, threadId, input) =>
+      postJson(
+        "projects.threads.input",
+        `/v1/projects/${encodeURIComponent(projectId)}/threads/${encodeURIComponent(threadId)}/input`,
+        input,
+      ).pipe(
+        Effect.flatMap(decodeFor("projects.threads.input", decodeProjectThreadControlResponse)),
+      ),
+    interruptProjectThread: (projectId, threadId, input) =>
+      postJson(
+        "projects.threads.interrupt",
+        `/v1/projects/${encodeURIComponent(projectId)}/threads/${encodeURIComponent(threadId)}/interrupt`,
+        input,
+      ).pipe(
+        Effect.flatMap(decodeFor("projects.threads.interrupt", decodeProjectThreadControlResponse)),
       ),
     getSession: (sessionRef) =>
       requestJson("sessions.get", `/v1/sessions/${encodeURIComponent(sessionRef)}`).pipe(
@@ -1540,7 +1660,8 @@ export function makeJarvisClient(config: {
       getCatalog: () => withClient("cockpit.catalog", (client) => client.getCatalog()),
       getCapabilities: () => withClient("capabilities.get", (client) => client.getCapabilities()),
       getMcpStatus: () => withClient("mcp.status", (client) => client.getMcpStatus()),
-      getSnapshot: () => withClient("cockpit.snapshot", (client) => client.getSnapshot()),
+      getSnapshot: (options) =>
+        withClient("cockpit.snapshot", (client) => client.getSnapshot(options)),
       getProjects: (options) =>
         withClient("projects.list", (client) => client.getProjects(options)),
       getProject: (projectId) =>
@@ -1604,6 +1725,18 @@ export function makeJarvisClient(config: {
       sendProjectThreadTurn: (projectId, threadId, input) =>
         withClient("projects.threads.turn", (client) =>
           client.sendProjectThreadTurn(projectId, threadId, input),
+        ),
+      respondProjectThreadApproval: (projectId, threadId, input) =>
+        withClient("projects.threads.approval", (client) =>
+          client.respondProjectThreadApproval(projectId, threadId, input),
+        ),
+      respondProjectThreadInput: (projectId, threadId, input) =>
+        withClient("projects.threads.input", (client) =>
+          client.respondProjectThreadInput(projectId, threadId, input),
+        ),
+      interruptProjectThread: (projectId, threadId, input) =>
+        withClient("projects.threads.interrupt", (client) =>
+          client.interruptProjectThread(projectId, threadId, input),
         ),
       getSession: (sessionRef) =>
         withClient("sessions.get", (client) => client.getSession(sessionRef)),
@@ -1809,6 +1942,9 @@ function makeMissingConfigurationClient(message: string): JarvisClient {
     renameProjectThread: () => fail("jarvis.client.configure"),
     unarchiveProjectThread: () => fail("jarvis.client.configure"),
     sendProjectThreadTurn: () => fail("jarvis.client.configure"),
+    respondProjectThreadApproval: () => fail("jarvis.client.configure"),
+    respondProjectThreadInput: () => fail("jarvis.client.configure"),
+    interruptProjectThread: () => fail("jarvis.client.configure"),
     getSession: () => fail("jarvis.client.configure"),
     getSessionEvents: () => fail("jarvis.client.configure"),
     getRequests: () => fail("jarvis.client.configure"),
@@ -1833,6 +1969,30 @@ function makeMissingConfigurationClient(message: string): JarvisClient {
 
 export interface JarvisFixtureClientOptions {
   readonly emptyProjects?: boolean;
+}
+
+function fixtureProjectThreadControlResponse(
+  projectId: string,
+  threadId: string,
+  control: JarvisProjectThreadControlResponse["control"],
+): JarvisProjectThreadControlResponse {
+  return {
+    ok: true,
+    api_version: "v1",
+    schema_version: 1,
+    project_id: JarvisProjectId.make(projectId),
+    thread_id: JarvisProjectThreadId.make(threadId),
+    control,
+    execution: {
+      available: true,
+      status: "running",
+      active_turn: null,
+      pending_requests: [],
+      supported_controls: ["turn", "input", "approval", "interrupt", "stop"],
+      supports: { steer: false, queue: false },
+      diagnostic: null,
+    },
+  };
 }
 
 export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): JarvisClient {
@@ -2371,6 +2531,9 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
     const engine = firstTrimmed(workInput.engine) ?? "codex";
     const provider = engine.toLowerCase().startsWith("claude") ? "claude" : "codex";
     const workerId = firstTrimmed(workInput.worker_id) ?? "macbook-worker";
+    const linkedProjectId = firstTrimmed(workInput.project_id) ?? null;
+    const workPurpose =
+      typeof workInput.metadata?.["purpose"] === "string" ? workInput.metadata["purpose"] : null;
     const runSlug = fixtureIdSlug(title);
     const syntheticRunId = JarvisRunId.make(`run_fixture_${runSlug}_${generatedWorkCount}`);
     const syntheticSessionId = JarvisWorkerSessionId.make(
@@ -2382,6 +2545,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
     const syntheticRun: JarvisRun = {
       ...run,
       run_id: syntheticRunId,
+      project_id: linkedProjectId,
       title,
       objective,
       status: "running",
@@ -2403,6 +2567,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       metadata: {
         surface: "jarvis-cockpit",
         fixture_generated: true,
+        ...(workPurpose !== null ? { purpose: workPurpose } : {}),
       },
     };
     const syntheticSession: JarvisWorkerSession = {
@@ -2411,6 +2576,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       worker_id: workerId as JarvisWorkerSession["worker_id"],
       session_id: syntheticSessionId,
       run_id: syntheticRunId,
+      project_id: linkedProjectId,
       title,
       provider,
       engine,
@@ -2427,6 +2593,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       metadata: {
         surface: "jarvis-cockpit",
         fixture_generated: true,
+        ...(workPurpose !== null ? { purpose: workPurpose } : {}),
       },
     };
     const syntheticEvents: ReadonlyArray<JarvisSessionEvent> = [
@@ -3295,6 +3462,30 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
         ],
       });
     },
+    respondProjectThreadApproval: (candidateProjectId, threadId, input) =>
+      Effect.succeed(
+        fixtureProjectThreadControlResponse(candidateProjectId, threadId, {
+          action: "approval",
+          accepted: true,
+          request_id: input.request_id,
+        }),
+      ),
+    respondProjectThreadInput: (candidateProjectId, threadId, input) =>
+      Effect.succeed(
+        fixtureProjectThreadControlResponse(candidateProjectId, threadId, {
+          action: "input",
+          accepted: true,
+          request_id: input.request_id,
+        }),
+      ),
+    interruptProjectThread: (candidateProjectId, threadId, input) =>
+      Effect.succeed(
+        fixtureProjectThreadControlResponse(candidateProjectId, threadId, {
+          action: "interrupt",
+          accepted: true,
+          turn_id: input.turn_id,
+        }),
+      ),
     getSession: (candidateSessionRef) =>
       findSession(candidateSessionRef)
         ? Effect.succeed(findSession(candidateSessionRef)!)
@@ -3619,12 +3810,16 @@ function parseProjectThreadTurnResponse(
       );
     }
   }
-  return Effect.succeed(parseProjectThreadTurnSse(text));
+  return parseProjectThreadTurnSse(operation, text);
 }
 
-function parseProjectThreadTurnSse(text: string): JarvisProjectThreadTurnResult {
+function parseProjectThreadTurnSse(
+  operation: string,
+  text: string,
+): Effect.Effect<JarvisProjectThreadTurnResult, JarvisClientError> {
   const events: Record<string, Schema.Json>[] = [];
   const replyParts: string[] = [];
+  let turnError: { readonly code: string | null; readonly message: string } | null = null;
   for (const block of text.split(/\r?\n\r?\n/u)) {
     const trimmedBlock = block.trim();
     if (trimmedBlock.length === 0) {
@@ -3651,6 +3846,18 @@ function parseProjectThreadTurnSse(text: string): JarvisProjectThreadTurnResult 
       }
     }
     events.push({ event: eventType, data: data as Schema.Json });
+    const dataType = isRecord(data) && typeof data.type === "string" ? data.type : null;
+    if (eventType === "thread.turn.error" || dataType === "thread.turn.error") {
+      const payload = isRecord(data) && isRecord(data.payload) ? data.payload : data;
+      const error = isRecord(payload) && isRecord(payload.error) ? payload.error : null;
+      turnError = {
+        code: error && typeof error.code === "string" ? error.code : null,
+        message:
+          error && typeof error.message === "string" && error.message.trim().length > 0
+            ? error.message.trim()
+            : "Jarvis reported that the project conversation turn failed.",
+      };
+    }
     if (eventType === "thread.reply") {
       if (typeof data === "string") {
         replyParts.push(data);
@@ -3662,11 +3869,20 @@ function parseProjectThreadTurnSse(text: string): JarvisProjectThreadTurnResult 
       }
     }
   }
-  return {
+  if (turnError) {
+    const code = turnError.code ? ` (${turnError.code})` : "";
+    return Effect.fail(
+      new JarvisClientError({
+        operation,
+        message: `Jarvis project conversation turn failed${code}: ${turnError.message}`,
+      }),
+    );
+  }
+  return Effect.succeed({
     ok: true,
     text: replyParts.join(""),
     events,
-  };
+  });
 }
 
 function appendQuery(path: string, params: Record<string, string | number | undefined>): string {
@@ -3690,14 +3906,14 @@ function projectFileUploadFormData(input: JarvisProjectFileUploadInput): FormDat
   const mimeType = payload.mime_type ?? "application/octet-stream";
   const content = NodeBuffer.Buffer.from(payload.content_base64, "base64");
   formData.append("file", new Blob([content], { type: mimeType }), payload.filename);
+  if (payload.doc_id !== undefined) {
+    formData.append("doc_id", payload.doc_id);
+  }
   if (payload.title !== undefined) {
     formData.append("title", payload.title);
   }
   if (payload.artifact_type !== undefined) {
     formData.append("artifact_type", payload.artifact_type);
-  }
-  if (payload.idempotency_key !== undefined) {
-    formData.append("idempotency_key", payload.idempotency_key);
   }
   formData.append("metadata", JSON.stringify(payload.metadata));
   return formData;

@@ -48,7 +48,10 @@ it.effect("loads Jarvis fixture data as orchestration shell and read-model snaps
       "jarvis-session_sessref_macbook-worker_sess_fixture_codex",
     );
     assert.strictEqual(readModel.projects[0]?.deletedAt, null);
-    assert.strictEqual(readModel.threads[0]?.activities.length, 2);
+    assert.deepStrictEqual(
+      readModel.threads[0]?.activities.map((activity) => activity.summary),
+      ["Choose the next worker action."],
+    );
   }),
 );
 
@@ -539,7 +542,12 @@ it.effect("loads Jarvis thread detail only for Jarvis-provenance thread ids", ()
     assert.strictEqual(Option.isSome(detail), true);
     assert.strictEqual(Option.isNone(nonJarvisDetail), true);
     if (Option.isSome(detail)) {
-      assert.strictEqual(detail.value.activities[1]?.summary, "Choose the next worker action.");
+      assert.strictEqual(
+        detail.value.activities.some(
+          (activity) => activity.summary === "Choose the next worker action.",
+        ),
+        true,
+      );
     }
   }),
 );
