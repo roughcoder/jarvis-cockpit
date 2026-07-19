@@ -5799,7 +5799,12 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         snapshotEvent.snapshot.thread.id,
         ThreadId.make("jarvis-session_sessref_macbook-worker_sess_fixture_codex"),
       );
-      assert.equal(snapshotEvent.snapshot.thread.activities[0]?.summary, "Session created");
+      // The activity rail presents operator-actionable events only; lifecycle noise such as
+      // session.created is filtered out, so the fixture's input request leads.
+      assert.equal(
+        snapshotEvent.snapshot.thread.activities[0]?.summary,
+        "Choose the next worker action.",
+      );
       assert.equal(snapshotEvent.snapshot.thread.session?.status, "running");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
@@ -5910,7 +5915,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         body.threads[0]?.id,
         ThreadId.make("jarvis-session_sessref_macbook-worker_sess_fixture_codex"),
       );
-      assert.equal(body.threads[0]?.activities[0]?.summary, "Session created");
+      // Lifecycle events (session.created) are filtered out of the activity rail, so the
+      // fixture's input request is the leading activity.
+      assert.equal(body.threads[0]?.activities[0]?.summary, "Choose the next worker action.");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
