@@ -14,16 +14,14 @@ import {
   createStagePnpmConfig,
   createBuildConfig,
   DESKTOP_ASAR_UNPACK,
-  InvalidMacPasskeyRpDomainError,
-  InvalidMacPasskeyPublishableKeyError,
+  InvalidAppleTeamIdError,
   InvalidMockUpdateServerPortError,
-  isMacPasskeySigningConfigurationError,
+  isMacSigningConfigurationError,
   LinuxIconResizeError,
-  MacPasskeySigningConfigurationResolutionError,
-  MissingMacPasskeyProvisioningProfileError,
-  renderMacPasskeyEntitlements,
-  resolveClerkPasskeyNativeArtifacts,
-  resolveMacPasskeySigningConfiguration,
+  MacSigningConfigurationResolutionError,
+  MissingMacProvisioningProfileError,
+  renderMacEntitlements,
+  resolveMacSigningConfiguration,
   resolveDesktopRuntimeDependencies,
   resolveFffNativeDependencies,
   resolveBuildOptions,
@@ -278,122 +276,88 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     });
   });
 
-  it("derives macOS passkey signing configuration from the Clerk publishable key", () => {
-    const configuration = resolveMacPasskeySigningConfiguration({
+  it("resolves macOS signing configuration and renders required entitlements", () => {
+    const configuration = resolveMacSigningConfiguration({
       T3CODE_APPLE_TEAM_ID: "abc1234567",
       T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
-      T3CODE_CLERK_PUBLISHABLE_KEY: `pk_test_${btoa("example.clerk.accounts.dev$")}`,
     });
 
     assert.deepStrictEqual(configuration, {
       appId: "com.t3tools.t3code",
       teamId: "ABC1234567",
-      rpDomains: ["example.clerk.accounts.dev"],
       provisioningProfilePath: "/tmp/t3code.provisionprofile",
     });
-  });
 
-  it("normalizes explicit macOS passkey RP domains and renders required entitlements", () => {
-    const configuration = resolveMacPasskeySigningConfiguration({
-      T3CODE_APPLE_TEAM_ID: "ABC1234567",
-      T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
-      T3CODE_CLERK_PASSKEY_RP_DOMAINS:
-        " Clerk.Example.com,example.clerk.accounts.dev,clerk.example.com ",
-    });
-    const entitlements = renderMacPasskeyEntitlements(configuration);
-
-    assert.deepStrictEqual(configuration.rpDomains, [
-      "clerk.example.com",
-      "example.clerk.accounts.dev",
-    ]);
+    const entitlements = renderMacEntitlements(configuration);
+    assert.include(entitlements, "<key>com.apple.application-identifier</key>");
     assert.include(entitlements, "<string>ABC1234567.com.t3tools.t3code</string>");
-    assert.include(entitlements, "<string>webcredentials:clerk.example.com</string>");
-    assert.include(entitlements, "<string>webcredentials:example.clerk.accounts.dev</string>");
+    assert.include(entitlements, "<key>com.apple.developer.team-identifier</key>");
+    assert.include(entitlements, "<string>ABC1234567</string>");
     assert.include(entitlements, "<key>com.apple.security.cs.allow-jit</key>");
+    assert.include(
+      entitlements,
+      "<key>com.apple.security.cs.allow-unsigned-executable-memory</key>",
+    );
+    assert.include(entitlements, "<key>com.apple.security.cs.disable-library-validation</key>");
+    assert.notInclude(entitlements, "associated-domains");
   });
 
-  it("rejects incomplete macOS passkey signing configuration", () => {
+  it("rejects incomplete macOS signing configuration", () => {
     const captureError = (env: Readonly<Record<string, string | undefined>>) => {
       try {
-        resolveMacPasskeySigningConfiguration(env);
+        resolveMacSigningConfiguration(env);
       } catch (error) {
         return error;
       }
-      return assert.fail("Expected passkey signing configuration to fail.");
+      return assert.fail("Expected macOS signing configuration to fail.");
     };
 
     const missingProfileError = captureError({
       T3CODE_APPLE_TEAM_ID: "ABC1234567",
-      T3CODE_CLERK_PASSKEY_RP_DOMAINS: "example.clerk.accounts.dev",
     });
-    assert.instanceOf(missingProfileError, MissingMacPasskeyProvisioningProfileError);
+    assert.instanceOf(missingProfileError, MissingMacProvisioningProfileError);
     assert.equal(
       missingProfileError.message,
-      "T3CODE_MACOS_PROVISIONING_PROFILE must point to an Associated Domains provisioning profile.",
+      "T3CODE_MACOS_PROVISIONING_PROFILE must point to a macOS provisioning profile.",
     );
 
-    const unsafeDomain =
-      "https://domain-user:domain-secret@example.clerk.accounts.dev/path?token=query-secret";
-    const invalidDomainError = captureError({
+    const blankProfileError = captureError({
       T3CODE_APPLE_TEAM_ID: "ABC1234567",
-      T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
-      T3CODE_CLERK_PASSKEY_RP_DOMAINS: unsafeDomain,
+      T3CODE_MACOS_PROVISIONING_PROFILE: "   ",
     });
-    assert.instanceOf(invalidDomainError, InvalidMacPasskeyRpDomainError);
-    assert.equal(invalidDomainError.reason, "scheme-not-allowed");
-    assert.equal(invalidDomainError.inputLength, unsafeDomain.length);
-    assert.equal(invalidDomainError.message, "Invalid passkey RP domain (scheme-not-allowed).");
-    assert.notProperty(invalidDomainError, "domain");
-    assert.notProperty(invalidDomainError, "cause");
-    const serializedInvalidDomainError = JSON.stringify(invalidDomainError);
-    assert.notInclude(serializedInvalidDomainError, unsafeDomain);
-    assert.notInclude(serializedInvalidDomainError, "domain-user");
-    assert.notInclude(serializedInvalidDomainError, "domain-secret");
-    assert.notInclude(serializedInvalidDomainError, "query-secret");
-    assert.throws(
-      () =>
-        resolveMacPasskeySigningConfiguration({
-          T3CODE_APPLE_TEAM_ID: "ABC1234567",
-          T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
-          T3CODE_CLERK_PASSKEY_RP_DOMAINS: "example.clerk.accounts.dev:8443",
-        }),
-      /Invalid passkey RP domain/u,
-    );
-    const invalidPublishableKeyError = captureError({
-      T3CODE_APPLE_TEAM_ID: "ABC1234567",
-      T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
-      T3CODE_CLERK_PUBLISHABLE_KEY: "pk_test_%",
-    });
-    assert.instanceOf(invalidPublishableKeyError, InvalidMacPasskeyPublishableKeyError);
-    assert.ok(invalidPublishableKeyError.cause);
-    assert.equal(invalidPublishableKeyError.message, "T3CODE_CLERK_PUBLISHABLE_KEY is invalid.");
-    assert.notProperty(invalidPublishableKeyError, "publishableKey");
-    assert.notInclude(invalidPublishableKeyError.message, "pk_test_%");
+    assert.instanceOf(blankProfileError, MissingMacProvisioningProfileError);
+
+    for (const teamId of [undefined, "", "SHORT", "ABC12345678", "abc-123456"]) {
+      const invalidTeamIdError = captureError({
+        ...(teamId === undefined ? {} : { T3CODE_APPLE_TEAM_ID: teamId }),
+        T3CODE_MACOS_PROVISIONING_PROFILE: "/tmp/t3code.provisionprofile",
+      });
+      assert.instanceOf(invalidTeamIdError, InvalidAppleTeamIdError);
+      assert.include(invalidTeamIdError.message, "must be a 10-character Apple Developer Team ID");
+    }
   });
 
-  it("preserves known passkey signing configuration errors at the build boundary", () => {
-    const decodingCause = new Error("publishable-key-decode-failed");
-    const knownError = new InvalidMacPasskeyPublishableKeyError({ cause: decodingCause });
-    const error = MacPasskeySigningConfigurationResolutionError.fromCause(knownError);
+  it("preserves known macOS signing configuration errors at the build boundary", () => {
+    const knownError = new InvalidAppleTeamIdError({ teamId: "SHORT" });
+    const error = MacSigningConfigurationResolutionError.fromCause(knownError);
 
     assert.strictEqual(error, knownError);
-    assert.instanceOf(error, InvalidMacPasskeyPublishableKeyError);
-    assert.strictEqual(error.cause, decodingCause);
-    assert.isTrue(isMacPasskeySigningConfigurationError(error));
+    assert.instanceOf(error, InvalidAppleTeamIdError);
+    assert.isTrue(isMacSigningConfigurationError(error));
   });
 
-  it("wraps unknown passkey signing configuration defects without copying cause text", () => {
-    const secret = "pk_test_do-not-retain";
+  it("wraps unknown macOS signing configuration defects without copying cause text", () => {
+    const secret = "do-not-retain";
     const cause = new Error(secret);
-    const error = MacPasskeySigningConfigurationResolutionError.fromCause(cause);
+    const error = MacSigningConfigurationResolutionError.fromCause(cause);
 
-    assert.instanceOf(error, MacPasskeySigningConfigurationResolutionError);
+    assert.instanceOf(error, MacSigningConfigurationResolutionError);
     assert.strictEqual(error.cause, cause);
-    assert.equal(error.message, "Failed to resolve macOS passkey signing configuration.");
+    assert.equal(error.message, "Failed to resolve macOS signing configuration.");
     assert.notInclude(error.message, secret);
   });
 
-  it.effect("adds passkey entitlements and both renderer protocols to signed macOS builds", () =>
+  it.effect("adds entitlements and both renderer protocols to signed macOS builds", () =>
     Effect.gen(function* () {
       const config = yield* createBuildConfig("mac", "dmg", "1.2.3", true, false, undefined, {
         entitlementsPath: "/tmp/entitlements.mac.plist",
@@ -448,26 +412,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "@ff-labs/fff-bin-linux-arm64-gnu": "0.9.4",
       "@ff-labs/fff-bin-linux-arm64-musl": "0.9.4",
     });
-  });
-
-  it("resolves target Clerk passkey native artifacts", () => {
-    assert.deepStrictEqual(resolveClerkPasskeyNativeArtifacts("mac", "universal"), [
-      {
-        packageName: "@clerk/electron-passkeys-darwin-arm64",
-        binaryFileName: "electron-passkeys.darwin-arm64.node",
-      },
-      {
-        packageName: "@clerk/electron-passkeys-darwin-x64",
-        binaryFileName: "electron-passkeys.darwin-x64.node",
-      },
-    ]);
-    assert.deepStrictEqual(resolveClerkPasskeyNativeArtifacts("win", "x64"), [
-      {
-        packageName: "@clerk/electron-passkeys-win32-x64-msvc",
-        binaryFileName: "electron-passkeys.win32-x64-msvc.node",
-      },
-    ]);
-    assert.deepStrictEqual(resolveClerkPasskeyNativeArtifacts("linux", "x64"), []);
   });
 
   it("falls back to the default mock update port when the configured port is blank", () => {

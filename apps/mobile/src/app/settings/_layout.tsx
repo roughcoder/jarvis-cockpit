@@ -2,7 +2,7 @@ import Stack from "expo-router/stack";
 import { useCallback } from "react";
 import { useResolveClassNames } from "uniwind";
 
-import { useClerkSettingsSheetDetent } from "../../features/cloud/ClerkSettingsSheetDetent";
+import { useSettingsSheetDetent } from "../../features/settings-sheet/SettingsSheetDetent";
 import { useThemeColor } from "../../lib/useThemeColor";
 
 export const unstable_settings = {
@@ -10,7 +10,7 @@ export const unstable_settings = {
 };
 
 export default function SettingsLayout() {
-  const { collapse } = useClerkSettingsSheetDetent();
+  const { collapse } = useSettingsSheetDetent();
   const contentStyle = useResolveClassNames("bg-sheet");
   const sheetBg = useThemeColor("--color-sheet");
   const headerTint = useThemeColor("--color-foreground");
@@ -44,18 +44,9 @@ export default function SettingsLayout() {
         options={{ animation: "slide_from_right", title: "Add Environment" }}
       />
       <Stack.Screen
-        name="waitlist"
-        options={{ animation: "slide_from_right", title: "Join the waitlist" }}
-      />
-      <Stack.Screen
         name="archive"
         listeners={{ transitionEnd: handleExpandedRouteTransitionEnd }}
         options={{ animation: "slide_from_right", title: "Archived Threads" }}
-      />
-      <Stack.Screen
-        name="auth"
-        listeners={{ transitionEnd: handleExpandedRouteTransitionEnd }}
-        options={{ animation: "slide_from_right", title: "Sign in" }}
       />
     </Stack>
   );

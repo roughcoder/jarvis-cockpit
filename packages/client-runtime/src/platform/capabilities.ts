@@ -21,13 +21,6 @@ export interface ProvisionedSshEnvironment extends PreparedSshEnvironment {
   readonly label: string;
 }
 
-export class CloudSession extends Context.Service<
-  CloudSession,
-  {
-    readonly clerkToken: Effect.Effect<string, ConnectionAttemptError>;
-  }
->()("@t3tools/client-runtime/platform/capabilities/CloudSession") {}
-
 export class RelayDeviceIdentity extends Context.Service<
   RelayDeviceIdentity,
   {

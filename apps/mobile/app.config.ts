@@ -104,7 +104,6 @@ const config: ExpoConfig = {
     "expo-router",
     "expo-font",
     "expo-secure-store",
-    ["@clerk/expo", { theme: "./clerk-theme.json" }],
     "expo-web-browser",
     [
       "expo-camera",
@@ -161,10 +160,6 @@ const config: ExpoConfig = {
     appVariant: APP_VARIANT,
     relay: {
       url: repoEnv.T3CODE_RELAY_URL ?? null,
-    },
-    clerk: {
-      publishableKey: repoEnv.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? null,
-      jwtTemplate: repoEnv.EXPO_PUBLIC_CLERK_JWT_TEMPLATE ?? null,
     },
     observability: {
       tracesUrl: repoEnv.EXPO_PUBLIC_OTLP_TRACES_URL ?? "https://api.axiom.co/v1/traces",
