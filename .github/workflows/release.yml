@@ -5,8 +5,13 @@ on:
     tags:
       - "v*.*.*"
       - "!v*-nightly.*"
-  schedule:
-    - cron: "0 */3 * * *"
+  # Nightly cron is upstream-only. This fork must never cron-fire the release
+  # lane: it would build on billed runners (2x macOS at 10x minutes), publish
+  # the CLI to npm, and cut GitHub Releases against the fork -- none of which
+  # it has the secrets or the intent to do. Tag pushes and manual dispatch
+  # remain available. Restore for upstream merges:
+  #   schedule:
+  #     - cron: "0 */3 * * *"
   workflow_dispatch:
     inputs:
       channel:
