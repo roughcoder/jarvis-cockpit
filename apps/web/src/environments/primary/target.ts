@@ -222,7 +222,7 @@ function resolveDevServerPrimaryTarget(
 
   const isCurrentOriginDevServer =
     (currentUrl.protocol === "http:" || currentUrl.protocol === "https:") &&
-    currentUrl.origin === devServerUrl.origin;
+    (currentUrl.origin === devServerUrl.origin || isSameLoopbackOrigin(currentUrl, devServerUrl));
 
   if (
     !isCurrentOriginDevServer ||

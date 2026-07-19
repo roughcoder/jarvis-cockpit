@@ -21,6 +21,7 @@ import {
 
 import { PrimaryEnvironmentHttpClient } from "./httpClient";
 import { runPrimaryHttp } from "../../lib/runtime";
+import { resolvePrimaryEnvironmentHttpUrl } from "./target";
 
 const PrimaryEnvironmentRequestOperation = Schema.Literals([
   "fetch-session-state",
@@ -36,11 +37,23 @@ const PrimaryEnvironmentRequestOperation = Schema.Literals([
 ]);
 type PrimaryEnvironmentRequestOperation = typeof PrimaryEnvironmentRequestOperation.Type;
 
+const PrimaryEnvironmentRequestFailure = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("http-status"),
+    status: Schema.Number,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("transport"),
+    requestUrl: Schema.String,
+  }),
+]);
+type PrimaryEnvironmentRequestFailure = typeof PrimaryEnvironmentRequestFailure.Type;
+
 export class PrimaryEnvironmentRequestError extends Schema.TaggedErrorClass<PrimaryEnvironmentRequestError>()(
   "PrimaryEnvironmentRequestError",
   {
     operation: PrimaryEnvironmentRequestOperation,
-    status: Schema.Number,
+    failure: PrimaryEnvironmentRequestFailure,
     pairingLinkId: Schema.optional(Schema.String),
     sessionId: Schema.optional(Schema.String),
     cause: Schema.Defect(),
@@ -52,10 +65,13 @@ export class PrimaryEnvironmentRequestError extends Schema.TaggedErrorClass<Prim
     readonly pairingLinkId?: string;
     readonly sessionId?: string;
   }): PrimaryEnvironmentRequestError {
-    const status = readHttpApiStatus(input.cause) ?? 500;
+    const failure = readHttpApiFailure(input.cause) ?? {
+      kind: "transport" as const,
+      requestUrl: readPrimaryRequestUrlFallback(),
+    };
     return new PrimaryEnvironmentRequestError({
       operation: input.operation,
-      status,
+      failure,
       ...(input.pairingLinkId !== undefined ? { pairingLinkId: input.pairingLinkId } : {}),
       ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
       cause: input.cause,
@@ -63,7 +79,11 @@ export class PrimaryEnvironmentRequestError extends Schema.TaggedErrorClass<Prim
   }
 
   override get message(): string {
-    return `Primary environment request failed during ${this.operation} (HTTP ${this.status}).`;
+    if (this.failure.kind === "http-status") {
+      return `Primary environment request failed during ${this.operation} (HTTP ${this.failure.status}).`;
+    }
+
+    return `Primary environment request failed during ${this.operation}: could not reach the server at ${this.failure.requestUrl} - network/CORS error.`;
   }
 }
 
@@ -209,13 +229,34 @@ export async function fetchSessionState(): Promise<AuthSessionState> {
   });
 }
 
-function readHttpApiStatus(error: unknown): number | null {
+function readHttpApiFailure(error: unknown): PrimaryEnvironmentRequestFailure | null {
   if (isEnvironmentHttpCommonError(error)) {
-    return readEnvironmentHttpErrorStatus(error);
+    return {
+      kind: "http-status",
+      status: readEnvironmentHttpErrorStatus(error),
+    };
   }
-  return HttpClientError.isHttpClientError(error) && error.response !== undefined
-    ? error.response.status
-    : null;
+  if (!HttpClientError.isHttpClientError(error)) {
+    return null;
+  }
+  if (error.response !== undefined) {
+    return {
+      kind: "http-status",
+      status: error.response.status,
+    };
+  }
+  return {
+    kind: "transport",
+    requestUrl: error.request.url,
+  };
+}
+
+function readPrimaryRequestUrlFallback(): string {
+  try {
+    return resolvePrimaryEnvironmentHttpUrl("/");
+  } catch {
+    return "the primary environment";
+  }
 }
 
 function readEnvironmentHttpErrorStatus(error: EnvironmentHttpCommonErrorType): number {
@@ -328,7 +369,10 @@ function waitForBootstrapRetry(delayMs: number): Promise<void> {
 
 function isTransientBootstrapError(error: unknown): boolean {
   if (isPrimaryEnvironmentRequestError(error)) {
-    return TRANSIENT_BOOTSTRAP_STATUS_CODES.has(error.status);
+    return (
+      error.failure.kind === "http-status" &&
+      TRANSIENT_BOOTSTRAP_STATUS_CODES.has(error.failure.status)
+    );
   }
 
   if (error instanceof TypeError) {
