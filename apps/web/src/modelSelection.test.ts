@@ -101,24 +101,26 @@ describe("instance-scoped model selection", () => {
     ).toBe("openai/gpt-5.5");
   });
 
-  it("includes Grok custom models from the selected provider instance", () => {
-    const providers = [provider({ provider: ProviderDriverKind.make("grok"), instanceId: "grok" })];
+  it("includes Codex custom models from the selected provider instance", () => {
+    const providers = [
+      provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
+    ];
     const settings: UnifiedSettings = {
       ...settingsWithProviderInstances(),
       providerInstances: {
         ...settingsWithProviderInstances().providerInstances,
-        [ProviderInstanceId.make("grok")]: {
-          driver: ProviderDriverKind.make("grok"),
-          config: { customModels: ["grok-test-custom-model"] },
+        [ProviderInstanceId.make("codex")]: {
+          driver: ProviderDriverKind.make("codex"),
+          config: { customModels: ["codex-test-custom-model"] },
         },
       },
     };
-    const grok = deriveProviderInstanceEntries(providers).find(
-      (entry) => entry.instanceId === "grok",
+    const codex = deriveProviderInstanceEntries(providers).find(
+      (entry) => entry.instanceId === "codex",
     )!;
 
-    expect(getAppModelOptionsForInstance(settings, grok).map((option) => option.slug)).toContain(
-      "grok-test-custom-model",
+    expect(getAppModelOptionsForInstance(settings, codex).map((option) => option.slug)).toContain(
+      "codex-test-custom-model",
     );
   });
 
