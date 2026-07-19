@@ -247,9 +247,10 @@ export interface JarvisClient {
   readonly validateWork: (
     input: JarvisStartWorkInput,
   ) => Effect.Effect<JarvisStartWorkValidationResult, JarvisClientError>;
-  readonly pruneWorkerWorktrees: (
-    workerId: string,
-  ) => Effect.Effect<JarvisWorkerWorktreePruneResponse, JarvisClientError>;
+  readonly pruneWorkerWorktrees: (input: {
+    readonly workerId: string;
+    readonly idempotencyKey: string;
+  }) => Effect.Effect<JarvisWorkerWorktreePruneResponse, JarvisClientError>;
   readonly sendTurn: (
     sessionRef: string,
     input: JarvisTurnInput,
@@ -1485,11 +1486,11 @@ export function makeJarvisCockpitClient(input: {
       postJson("work.validate", "/v1/work/validate", withSurfaceMetadata(workInput)).pipe(
         Effect.flatMap(decodeFor("work.validate", decodeStartWorkValidationResult)),
       ),
-    pruneWorkerWorktrees: (workerId) =>
+    pruneWorkerWorktrees: (input) =>
       postJson(
         "workers.worktrees.prune",
-        `/v1/workers/${encodeURIComponent(workerId)}/worktrees/prune`,
-        {},
+        `/v1/workers/${encodeURIComponent(input.workerId)}/worktrees/prune`,
+        { idempotency_key: input.idempotencyKey },
       ).pipe(
         Effect.flatMap(decodeFor("workers.worktrees.prune", decodeWorkerWorktreePruneResponse)),
       ),
@@ -1749,8 +1750,8 @@ export function makeJarvisClient(config: {
         withClient("sessions.checkpoints", (client) => client.getCheckpoints(sessionRef, options)),
       startWork: (input) => withClient("work.start", (client) => client.startWork(input)),
       validateWork: (input) => withClient("work.validate", (client) => client.validateWork(input)),
-      pruneWorkerWorktrees: (workerId) =>
-        withClient("workers.worktrees.prune", (client) => client.pruneWorkerWorktrees(workerId)),
+      pruneWorkerWorktrees: (input) =>
+        withClient("workers.worktrees.prune", (client) => client.pruneWorkerWorktrees(input)),
       sendTurn: (sessionRef, input) =>
         withClient("sessions.turns", (client) => client.sendTurn(sessionRef, input)),
       respondApproval: (sessionRef, input) =>

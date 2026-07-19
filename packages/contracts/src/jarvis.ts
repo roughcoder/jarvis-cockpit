@@ -987,9 +987,14 @@ export const JarvisWorkerRepoAccess = Schema.Struct({
 export type JarvisWorkerRepoAccess = typeof JarvisWorkerRepoAccess.Type;
 
 export const JarvisWorkerWorktreeInventory = Schema.Struct({
-  count: Schema.optional(NonNegativeInt),
-  disk_bytes: Schema.optional(NonNegativeInt),
-  stale_count: Schema.optional(NonNegativeInt),
+  root: OptionalPossiblyEmptyPublicString,
+  count: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  disk_bytes: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  stale_count: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  orphan_count: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  // Keep status tolerant so future worker-side scan states don't fail the full snapshot decode.
+  status: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  error: OptionalPossiblyEmptyPublicString,
 });
 export type JarvisWorkerWorktreeInventory = typeof JarvisWorkerWorktreeInventory.Type;
 
@@ -1317,6 +1322,7 @@ export type JarvisProjectThreadControlRpcResult = typeof JarvisProjectThreadCont
 
 export const JarvisWorkerWorktreePruneInput = Schema.Struct({
   workerId: JarvisWorkerId,
+  idempotencyKey: TrimmedNonEmptyString,
 });
 export type JarvisWorkerWorktreePruneInput = typeof JarvisWorkerWorktreePruneInput.Type;
 
@@ -1332,16 +1338,30 @@ export const JarvisWorkerWorktreePruneRefusal = Schema.Struct({
 });
 export type JarvisWorkerWorktreePruneRefusal = typeof JarvisWorkerWorktreePruneRefusal.Type;
 
-export const JarvisWorkerWorktreePruneResponse = Schema.Struct({
-  ok: Schema.Boolean,
+export const JarvisWorkerWorktreePruneReclamation = Schema.Struct({
+  records: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+  events: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   worktrees: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   bytes: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
+});
+export type JarvisWorkerWorktreePruneReclamation = typeof JarvisWorkerWorktreePruneReclamation.Type;
+
+export const JarvisWorkerWorktreePruneResponse = Schema.Struct({
+  ok: Schema.Boolean,
+  worker_id: Schema.optional(JarvisWorkerId),
+  cursor: Schema.optional(TrimmedNonEmptyString),
+  reclamation: Schema.optionalKey(JarvisWorkerWorktreePruneReclamation),
+  // Older worker endpoints returned these top-level counters. Keep accepting them
+  // so in-flight dogfood workers do not fail decode during rollout.
+  worktrees: Schema.optional(NonNegativeInt),
+  bytes: Schema.optional(NonNegativeInt),
   pruned: Schema.Array(JarvisWorkerWorktreePrunedItem).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   refused: Schema.Array(JarvisWorkerWorktreePruneRefusal).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  worktree_inventory: Schema.optionalKey(JarvisWorkerWorktreeInventory),
 });
 export type JarvisWorkerWorktreePruneResponse = typeof JarvisWorkerWorktreePruneResponse.Type;
 

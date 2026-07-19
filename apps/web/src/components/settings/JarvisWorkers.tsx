@@ -18,10 +18,14 @@ import {
   Trash2Icon,
   XCircleIcon,
 } from "lucide-react";
-import type { JarvisWorkerProfile, JarvisWorkerSession } from "@t3tools/contracts";
+import type {
+  JarvisCockpitSnapshotResult,
+  JarvisWorkerProfile,
+  JarvisWorkerSession,
+} from "@t3tools/contracts";
 
 import { formatRelativeTimeLabel } from "../../timestampFormat";
-import { cn, newMessageId, newThreadId } from "../../lib/utils";
+import { cn, newMessageId, newThreadId, randomUUID } from "../../lib/utils";
 import { primaryServerConfigAtom, serverEnvironment } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
 import { usePrimaryEnvironment } from "../../state/environments";
@@ -44,12 +48,25 @@ import {
   type WorkerGitAuthStatePresentation,
   type WorkerReadinessStatus,
   type WorkerTestJobStatus,
+  type WorkerWorktreeInventoryPresentation,
 } from "./JarvisWorkers.logic";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 
 const WORKER_SNAPSHOT_POLL_MS = 2_000;
 const TERMINAL_SESSION_STATUSES = new Set(["completed", "failed", "stopped", "interrupted"]);
 const WARM_CHECKOUT_SEARCH_THRESHOLD = 10;
+
+type WorkerPruneStatus =
+  | {
+      readonly state: "succeeded";
+      readonly updatedAt: string;
+      readonly description: string;
+    }
+  | {
+      readonly state: "failed";
+      readonly updatedAt: string;
+      readonly description: string;
+    };
 
 function healthVariant(worker: JarvisWorkerProfile): "success" | "warning" | "error" | "outline" {
   if (worker.status === "online" && worker.health === "healthy") return "success";
@@ -183,6 +200,30 @@ function WorkerTestJobStatusRow({
   );
 }
 
+function WorkerPruneStatusRow({
+  status,
+}: {
+  readonly status: WorkerPruneStatus | null | undefined;
+}) {
+  if (!status) return null;
+  return (
+    <div className="w-full max-w-72 rounded-md border bg-background/50 px-2 py-1.5 text-left">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+          Last prune
+        </span>
+        <Badge variant={status.state === "succeeded" ? "success" : "error"} size="sm">
+          {status.state === "succeeded" ? "Succeeded" : "Failed"}
+        </Badge>
+      </div>
+      <div className="text-[11px] text-muted-foreground" title={absoluteTime(status.updatedAt)}>
+        {formatRelativeTimeLabel(status.updatedAt)}
+      </div>
+      <div className="mt-0.5 break-words text-[11px] text-foreground/80">{status.description}</div>
+    </div>
+  );
+}
+
 function WarmCheckouts({ worker }: { readonly worker: JarvisWorkerProfile }) {
   const checkouts = workerWarmCheckouts(worker);
   const [query, setQuery] = useState("");
@@ -254,6 +295,7 @@ function WorkerRow({
   onSendTestJob,
   pendingPrune,
   pendingTestJob,
+  pruneStatus,
   sessions,
   testJobStatus,
   worker,
@@ -263,6 +305,7 @@ function WorkerRow({
   readonly fixtureMode: boolean;
   readonly pendingPrune: boolean;
   readonly pendingTestJob: boolean;
+  readonly pruneStatus: WorkerPruneStatus | null | undefined;
   readonly testJobStatus: WorkerTestJobStatus | null | undefined;
   readonly onPruneWorktrees: (worker: JarvisWorkerProfile) => void;
   readonly onSendTestJob: (worker: JarvisWorkerProfile) => void;
@@ -353,6 +396,7 @@ function WorkerRow({
               Fixture mode simulates this dispatch; no live worker is contacted.
             </p>
           ) : null}
+          <WorkerPruneStatusRow status={pruneStatus} />
           <WorkerTestJobStatusRow status={testJobStatus} />
         </div>
       </div>
@@ -366,7 +410,7 @@ function WorkerRow({
           <div className="grid gap-1.5">
             <GitIdentityRow identity={identity.gitIdentity} />
             <RepoAccessRows access={identity.repoAccess} />
-            <InfoRow label="Worktree inventory" value={identity.worktreeInventory} />
+            <WorktreeInventoryRow inventory={identity.worktreeInventory} />
           </div>
         </div>
 
@@ -557,18 +601,37 @@ function RepoAccessRows({
   );
 }
 
-function InfoRow({ label, value }: { readonly label: string; readonly value: string }) {
+function WorktreeInventoryRow({
+  inventory,
+}: {
+  readonly inventory: WorkerWorktreeInventoryPresentation;
+}) {
   return (
-    <div className="flex min-w-0 items-center justify-between gap-2 rounded-md border bg-background/50 px-2 py-1.5">
-      <span className="text-xs text-muted-foreground">{label}</span>
-      <span
-        className={cn(
-          "min-w-0 truncate text-right text-xs font-medium",
-          value === NOT_REPORTED ? "text-muted-foreground" : "text-foreground",
-        )}
-      >
-        {value}
-      </span>
+    <div className="rounded-md border bg-background/50 px-2 py-1.5">
+      <div className="mb-1 flex min-w-0 items-center justify-between gap-2">
+        <span className="text-xs text-muted-foreground">Worktree inventory</span>
+        <span
+          className={cn(
+            "min-w-0 truncate text-right text-xs font-medium",
+            inventory.reported ? "text-foreground" : "text-muted-foreground",
+          )}
+          title={inventory.detail}
+        >
+          {inventory.summary}
+        </span>
+      </div>
+      <div className="flex min-w-0 items-center justify-between gap-2 text-[11px]">
+        <span className="shrink-0 text-muted-foreground">Scan root</span>
+        <span
+          className={cn(
+            "min-w-0 truncate text-right font-mono",
+            inventory.root === NOT_REPORTED ? "text-muted-foreground" : "text-foreground/80",
+          )}
+          title={inventory.root}
+        >
+          {inventory.root}
+        </span>
+      </div>
     </div>
   );
 }
@@ -580,10 +643,20 @@ export function JarvisWorkersPanel() {
   const pruneWorkerWorktrees = useAtomCommand(serverEnvironment.pruneJarvisWorkerWorktrees, {
     reportFailure: false,
   });
+  const refreshJarvisSnapshot = useAtomCommand(serverEnvironment.refreshJarvisSnapshot, {
+    reportFailure: false,
+  });
   const [testJobStatuses, setTestJobStatuses] = useState<
     Partial<Record<string, WorkerTestJobStatus>>
   >({});
   const [pendingPrunes, setPendingPrunes] = useState<Partial<Record<string, boolean>>>({});
+  const [pruneStatuses, setPruneStatuses] = useState<Partial<Record<string, WorkerPruneStatus>>>(
+    {},
+  );
+  const [manualRefreshPending, setManualRefreshPending] = useState(false);
+  const [manualProbeResult, setManualProbeResult] = useState<JarvisCockpitSnapshotResult | null>(
+    null,
+  );
   const snapshotQuery = useEnvironmentQuery(
     primaryEnvironment
       ? serverEnvironment.jarvisSnapshot({
@@ -592,8 +665,16 @@ export function JarvisWorkersPanel() {
         })
       : null,
   );
-  const result = snapshotQuery.data;
+  const result = manualProbeResult ?? snapshotQuery.data;
   const workers = result?.snapshot?.workers ?? [];
+  useEffect(() => {
+    if (!manualProbeResult || !snapshotQuery.data) return;
+    const fastGeneratedAt = snapshotQuery.data.snapshot?.generated_at ?? "";
+    const probeGeneratedAt = manualProbeResult.snapshot?.generated_at ?? "";
+    if (fastGeneratedAt > probeGeneratedAt) {
+      setManualProbeResult(null);
+    }
+  }, [manualProbeResult, snapshotQuery.data]);
   useEffect(() => {
     if (!primaryEnvironment) return;
     const id = window.setInterval(() => snapshotQuery.refresh(), WORKER_SNAPSHOT_POLL_MS);
@@ -623,6 +704,36 @@ export function JarvisWorkersPanel() {
     (total, worker) => total + workerWarmCheckouts(worker).length,
     0,
   );
+
+  const refreshWorkers = useCallback(() => {
+    if (!primaryEnvironment) {
+      snapshotQuery.refresh();
+      return;
+    }
+    setManualRefreshPending(true);
+    void (async () => {
+      const result = await refreshJarvisSnapshot({
+        environmentId: primaryEnvironment.environmentId,
+        input: { sync: "probe" },
+      });
+      setManualRefreshPending(false);
+      if (result._tag === "Success") {
+        setManualProbeResult(result.value);
+        return;
+      }
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add({
+          type: "error",
+          title: "Worker refresh failed",
+          description:
+            error instanceof Error
+              ? error.message
+              : "Jarvis did not return a live worker snapshot.",
+        });
+      }
+    })();
+  }, [primaryEnvironment, refreshJarvisSnapshot, snapshotQuery]);
 
   const sendTestJob = useCallback(
     (worker: JarvisWorkerProfile) => {
@@ -709,18 +820,28 @@ export function JarvisWorkersPanel() {
         return;
       }
       void (async () => {
+        const idempotencyKey = `settings-worker-prune-${worker.worker_id}-${randomUUID()}`;
         const result = await pruneWorkerWorktrees({
           environmentId: primaryEnvironment.environmentId,
-          input: { input: { workerId: worker.worker_id } },
+          input: { input: { workerId: worker.worker_id, idempotencyKey } },
         });
         setPendingPrunes((current) => ({ ...current, [worker.worker_id]: false }));
         if (result._tag === "Success" && result.value.ok && result.value.result) {
+          const description = formatWorkerWorktreePruneResult(result.value.result);
+          setPruneStatuses((current) => ({
+            ...current,
+            [worker.worker_id]: {
+              state: "succeeded",
+              updatedAt: new Date().toISOString(),
+              description,
+            },
+          }));
           toastManager.add({
             type: "success",
             title: "Stale worktrees pruned",
-            description: formatWorkerWorktreePruneResult(result.value.result),
+            description,
           });
-          snapshotQuery.refresh();
+          refreshWorkers();
           return;
         }
         if (!isAtomCommandInterrupted(result)) {
@@ -734,6 +855,14 @@ export function JarvisWorkersPanel() {
               : typeof error === "string" && error.trim().length > 0
                 ? error
                 : "Jarvis did not prune worktrees.";
+          setPruneStatuses((current) => ({
+            ...current,
+            [worker.worker_id]: {
+              state: "failed",
+              updatedAt: new Date().toISOString(),
+              description,
+            },
+          }));
           toastManager.add({
             type: "error",
             title: "Worktree prune failed",
@@ -742,7 +871,7 @@ export function JarvisWorkersPanel() {
         }
       })();
     },
-    [primaryEnvironment, pruneWorkerWorktrees, snapshotQuery],
+    [primaryEnvironment, pruneWorkerWorktrees, refreshWorkers],
   );
 
   return (
@@ -751,8 +880,13 @@ export function JarvisWorkersPanel() {
         title="Jarvis Workers"
         icon={<ServerIcon className="size-3.5" />}
         headerAction={
-          <Button size="xs" variant="outline" onClick={snapshotQuery.refresh}>
-            <RefreshCwIcon className={cn("size-3", snapshotQuery.isPending && "animate-spin")} />
+          <Button size="xs" variant="outline" onClick={refreshWorkers}>
+            <RefreshCwIcon
+              className={cn(
+                "size-3",
+                (manualRefreshPending || snapshotQuery.isPending) && "animate-spin",
+              )}
+            />
             Refresh
           </Button>
         }
@@ -819,6 +953,7 @@ export function JarvisWorkersPanel() {
             fixtureMode={fixtureMode}
             pendingPrune={pendingPrunes[worker.worker_id] === true}
             pendingTestJob={testJobStatuses[worker.worker_id]?.state === "pending"}
+            pruneStatus={pruneStatuses[worker.worker_id]}
             testJobStatus={testJobStatuses[worker.worker_id]}
             onPruneWorktrees={pruneWorktrees}
             onSendTestJob={sendTestJob}

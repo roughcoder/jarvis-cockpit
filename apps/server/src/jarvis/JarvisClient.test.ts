@@ -990,6 +990,52 @@ it.effect("cockpit client attaches bearer token and selects the snapshot sync mo
   }),
 );
 
+it.effect("cockpit client sends idempotency keys when pruning worker worktrees", () =>
+  Effect.gen(function* () {
+    const requests: Array<{ url: string; method: string; body: unknown }> = [];
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      token: "worker-token",
+      fetch: async (url, init) => {
+        requests.push({
+          url: String(url),
+          method: init?.method ?? "GET",
+          body: init?.body ? JSON.parse(String(init.body)) : null,
+        });
+        return jsonResponse({
+          ok: true,
+          worker_id: "macbook-worker",
+          reclamation: { records: 0, events: 0, worktrees: 1, bytes: 4096 },
+          pruned: [{ name: "old", bytes: 4096 }],
+          refused: [],
+          worktree_inventory: {
+            root: "/tmp/worker/worktrees",
+            count: 0,
+            disk_bytes: 0,
+            stale_count: 0,
+            orphan_count: 0,
+            status: "measured",
+          },
+        });
+      },
+    });
+
+    const response = yield* client.pruneWorkerWorktrees({
+      workerId: "macbook-worker",
+      idempotencyKey: "prune-1",
+    });
+
+    assert.strictEqual(
+      requests[0]?.url,
+      "http://jarvis.local:8787/v1/workers/macbook-worker/worktrees/prune",
+    );
+    assert.strictEqual(requests[0]?.method, "POST");
+    assert.deepStrictEqual(requests[0]?.body, { idempotency_key: "prune-1" });
+    assert.strictEqual(response.reclamation?.worktrees, 1);
+    assert.strictEqual(response.worktree_inventory?.count, 0);
+  }),
+);
+
 it.effect("cockpit client incrementally reads authenticated SSE frames", () =>
   Effect.gen(function* () {
     const requests: Array<{ url: string; accept: string | null; authorization: string | null }> =
