@@ -1,6 +1,5 @@
 import {
   ClientPresentation,
-  CloudSession,
   EnvironmentOwnedDataCleanup,
   PlatformConnectionSource,
   PrimaryEnvironmentAuth,
@@ -13,7 +12,7 @@ import {
   Connectivity,
   Wakeups,
 } from "@t3tools/client-runtime/connection";
-import { managedRelayAccountChanges, managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
+import { managedRelayAccountChanges } from "@t3tools/client-runtime/relay";
 import { AuthStandardClientScopes } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -85,39 +84,9 @@ const wakeupsLayer = Wakeups.layer({
 
 const capabilitiesLayer = Layer.succeedContext(
   Context.make(
-    CloudSession,
-    CloudSession.of({
-      clerkToken: Effect.gen(function* () {
-        const session = appAtomRegistry.get(managedRelaySessionAtom);
-        if (session === null) {
-          return yield* new ConnectionBlockedError({
-            reason: "authentication",
-            detail: "Sign in to T3 Cloud to connect this environment.",
-          });
-        }
-        const token = yield* session.readClerkToken().pipe(
-          Effect.mapError(
-            (error) =>
-              new ConnectionTransientError({
-                reason: "network",
-                detail: error.message,
-              }),
-          ),
-        );
-        if (token === null) {
-          return yield* new ConnectionBlockedError({
-            reason: "authentication",
-            detail: "The T3 Cloud session is unavailable.",
-          });
-        }
-        return token;
-      }),
-    }),
+    PrimaryEnvironmentAuth,
+    PrimaryEnvironmentAuth.of({ bearerToken: Effect.succeed(Option.none()) }),
   ).pipe(
-    Context.add(
-      PrimaryEnvironmentAuth,
-      PrimaryEnvironmentAuth.of({ bearerToken: Effect.succeed(Option.none()) }),
-    ),
     Context.add(
       RelayDeviceIdentity,
       RelayDeviceIdentity.of({

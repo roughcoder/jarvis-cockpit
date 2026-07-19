@@ -20,29 +20,27 @@ import { useWorkspaceState } from "../state/workspace";
 import { useThreadOutboxDrain } from "../state/use-thread-outbox-drain";
 import { RegistryContext } from "@effect/atom-react";
 import { appAtomRegistry } from "../state/atom-registry";
-import { CloudAuthProvider } from "../features/cloud/CloudAuthProvider";
 import {
-  ClerkSettingsSheetDetentProvider,
-  useClerkSettingsSheetDetent,
-} from "../features/cloud/ClerkSettingsSheetDetent";
+  SettingsSheetDetentProvider,
+  useSettingsSheetDetent,
+} from "../features/settings-sheet/SettingsSheetDetent";
 import { useAgentNotificationNavigation } from "../features/agent-awareness/notificationNavigation";
 import { useThemeColor } from "../lib/useThemeColor";
 
 function AppNavigator() {
   const pathname = usePathname();
-  const expandedSettingsRouteIsActive =
-    pathname === "/settings/archive" || pathname === "/settings/auth";
+  const expandedSettingsRouteIsActive = pathname === "/settings/archive";
 
   return (
-    <ClerkSettingsSheetDetentProvider initiallyExpanded={expandedSettingsRouteIsActive}>
+    <SettingsSheetDetentProvider initiallyExpanded={expandedSettingsRouteIsActive}>
       <AppNavigatorContent />
-    </ClerkSettingsSheetDetentProvider>
+    </SettingsSheetDetentProvider>
   );
 }
 
 function AppNavigatorContent() {
   const { state } = useWorkspaceState();
-  const { collapse, isExpanded } = useClerkSettingsSheetDetent();
+  const { collapse, isExpanded } = useSettingsSheetDetent();
   const colorScheme = useColorScheme();
   const statusBarBg = useThemeColor("--color-status-bar");
   const sheetStyle = useResolveClassNames("bg-sheet");
@@ -131,19 +129,13 @@ export default function RootLayout() {
   });
   return (
     <RegistryContext.Provider value={appAtomRegistry}>
-      <CloudAuthProvider>
-        <GestureHandlerRootView style={{ flex: 1 }}>
-          <KeyboardProvider statusBarTranslucent>
-            <SafeAreaProvider>
-              {fontsLoaded ? (
-                <AppNavigator />
-              ) : (
-                <LoadingScreen message="Loading remote workspace…" />
-              )}
-            </SafeAreaProvider>
-          </KeyboardProvider>
-        </GestureHandlerRootView>
-      </CloudAuthProvider>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <KeyboardProvider statusBarTranslucent>
+          <SafeAreaProvider>
+            {fontsLoaded ? <AppNavigator /> : <LoadingScreen message="Loading remote workspace…" />}
+          </SafeAreaProvider>
+        </KeyboardProvider>
+      </GestureHandlerRootView>
     </RegistryContext.Provider>
   );
 }
