@@ -93,11 +93,14 @@ import {
   projectConversationComposerMatchesSubmission,
 } from "./projectConversationComposer.logic";
 import {
-  buildTurnWorkspaceInput,
+  buildTurnEffortInput,
   buildTurnModelInput,
+  buildTurnSpeedInput,
+  buildTurnWorkspaceInput,
   clearProjectConversationWorkspaceRepos,
   createProjectConversationWorkspaceStaging,
   projectConversationModelMatchesSubmission,
+  projectConversationPreferenceMatchesSubmission,
   projectConversationWorkspaceMatchesSubmission,
   syncProjectConversationWorkspaceSelection,
   workspaceEngineOptionsFromWorkers,
@@ -153,6 +156,8 @@ interface ProjectConversationSubmissionSnapshot {
   readonly composerImages: ReadonlyArray<ComposerImageAttachment>;
   readonly workspace: JarvisTurnWorkspaceInput | null;
   readonly model: string | null;
+  readonly effort: string | null;
+  readonly speed: string | null;
 }
 
 const PROJECT_CONVERSATION_FILE_DATA_URL_READ_MESSAGES = {
@@ -491,10 +496,18 @@ export function AgentConversationChatView({
         {
           engine: conversationWorkspaceEngine,
           model: conversation?.model,
+          effort: conversation?.effort,
+          speed: conversation?.speed,
         },
       ),
     }));
-  }, [conversation?.model, conversationWorkspaceEngine, workspaceStagingKey]);
+  }, [
+    conversation?.effort,
+    conversation?.model,
+    conversation?.speed,
+    conversationWorkspaceEngine,
+    workspaceStagingKey,
+  ]);
 
   const threadsRefreshRef = useRef(threadsQuery.refresh);
   useEffect(() => {
@@ -773,6 +786,8 @@ export function AgentConversationChatView({
     const turnAttachments = submission.attachments;
     const turnWorkspace = submission.workspace;
     const turnModel = submission.model;
+    const turnEffort = submission.effort;
+    const turnSpeed = submission.speed;
     const workspaceMatchesSubmission = projectConversationWorkspaceMatchesSubmission(
       buildTurnWorkspaceInput(workspaceStaging, conversationWorkspaceEngine),
       turnWorkspace,
@@ -786,10 +801,30 @@ export function AgentConversationChatView({
       ) ?? null,
       turnModel,
     );
+    const effortMatchesSubmission = projectConversationPreferenceMatchesSubmission(
+      buildTurnEffortInput(
+        workspaceStaging,
+        conversationWorkspaceEngine,
+        conversation?.effort,
+        workspaceEngineOptions,
+      ) ?? null,
+      turnEffort,
+    );
+    const speedMatchesSubmission = projectConversationPreferenceMatchesSubmission(
+      buildTurnSpeedInput(
+        workspaceStaging,
+        conversationWorkspaceEngine,
+        conversation?.speed,
+        workspaceEngineOptions,
+      ) ?? null,
+      turnSpeed,
+    );
     const clearMatchingRetryDraft =
       existingTurnId !== undefined &&
       workspaceMatchesSubmission &&
       modelMatchesSubmission &&
+      effortMatchesSubmission &&
+      speedMatchesSubmission &&
       projectConversationComposerMatchesSubmission({
         draftPrompt: promptRef.current,
         draftImageIds: composerImagesRef.current.map((image) => image.id),
@@ -812,6 +847,8 @@ export function AgentConversationChatView({
           toolItems: [],
           workspaceInput: turnWorkspace,
           modelInput: turnModel,
+          effortInput: turnEffort,
+          speedInput: turnSpeed,
           attachments: turnAttachments,
           composerImages: submission.composerImages,
           status: "pending",
@@ -836,6 +873,8 @@ export function AgentConversationChatView({
           text,
           idempotency_key: `project-thread-turn-${turnId}`,
           ...(turnModel !== null ? { model: turnModel } : {}),
+          ...(turnEffort !== null ? { effort: turnEffort } : {}),
+          ...(turnSpeed !== null ? { speed: turnSpeed } : {}),
           ...(turnAttachments.length > 0 ? { attachments: turnAttachments } : {}),
           ...(turnWorkspace !== null ? { workspace: turnWorkspace } : {}),
         },
@@ -900,6 +939,20 @@ export function AgentConversationChatView({
         conversation.model,
         workspaceEngineOptions,
       ) ?? null;
+    const effort =
+      buildTurnEffortInput(
+        workspaceStaging,
+        conversationWorkspaceEngine,
+        conversation.effort,
+        workspaceEngineOptions,
+      ) ?? null;
+    const speed =
+      buildTurnSpeedInput(
+        workspaceStaging,
+        conversationWorkspaceEngine,
+        conversation.speed,
+        workspaceEngineOptions,
+      ) ?? null;
     const attachments = await prepareProjectTurnAttachments({
       images: sendContext.images,
       persistedImages: sendContext.persistedImages,
@@ -913,6 +966,8 @@ export function AgentConversationChatView({
       composerImages: [...sendContext.images],
       workspace: workspace ?? null,
       model,
+      effort,
+      speed,
     });
   };
 
@@ -926,6 +981,8 @@ export function AgentConversationChatView({
         composerImages: turn.composerImages ?? [],
         workspace: turn.workspaceInput ?? null,
         model: turn.modelInput ?? null,
+        effort: turn.effortInput ?? null,
+        speed: turn.speedInput ?? null,
       },
       { existingTurnId: localTurnId },
     );

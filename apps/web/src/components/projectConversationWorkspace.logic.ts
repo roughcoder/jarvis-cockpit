@@ -11,12 +11,22 @@ export interface ProjectConversationWorkspaceEngineModel {
   readonly label: string;
 }
 
+export interface ProjectConversationWorkspaceEnginePreference {
+  readonly id: string;
+  readonly label: string;
+  readonly description?: string;
+}
+
 export interface ProjectConversationWorkspaceEngineOption {
   readonly value: ProjectConversationWorkspaceEngine;
   readonly label: string;
   readonly description: string;
   readonly models: ReadonlyArray<ProjectConversationWorkspaceEngineModel>;
   readonly defaultModel: string | null;
+  readonly efforts: ReadonlyArray<ProjectConversationWorkspaceEnginePreference>;
+  readonly defaultEffort: string | null;
+  readonly speeds: ReadonlyArray<ProjectConversationWorkspaceEnginePreference>;
+  readonly defaultSpeed: string | null;
 }
 
 export interface ProjectConversationWorkspaceStagedRepo {
@@ -27,6 +37,8 @@ export interface ProjectConversationWorkspaceStagedRepo {
 export interface ProjectConversationWorkspaceStaging {
   readonly engine: ProjectConversationWorkspaceEngine;
   readonly model: string | null;
+  readonly effort: string | null;
+  readonly speed: string | null;
   readonly repos: ReadonlyArray<ProjectConversationWorkspaceStagedRepo>;
 }
 
@@ -46,6 +58,10 @@ const DEFAULT_ENGINE_OPTIONS: ReadonlyArray<ProjectConversationWorkspaceEngineOp
     description: "OpenAI Codex app-server.",
     models: [],
     defaultModel: null,
+    efforts: [],
+    defaultEffort: null,
+    speeds: [],
+    defaultSpeed: null,
   },
   {
     value: "claude",
@@ -53,28 +69,44 @@ const DEFAULT_ENGINE_OPTIONS: ReadonlyArray<ProjectConversationWorkspaceEngineOp
     description: "Claude Code agent.",
     models: [],
     defaultModel: null,
+    efforts: [],
+    defaultEffort: null,
+    speeds: [],
+    defaultSpeed: null,
   },
 ];
 
 export function createProjectConversationWorkspaceStaging(
   engine: ProjectConversationWorkspaceEngine = "codex",
   model: string | null = null,
+  effort: string | null = null,
+  speed: string | null = null,
 ): ProjectConversationWorkspaceStaging {
-  return { engine, model: normalizeWorkspaceModel(model), repos: [] };
+  return {
+    engine,
+    model: normalizeWorkspaceModel(model),
+    effort: normalizeWorkspacePreference(effort),
+    speed: normalizeWorkspacePreference(speed),
+    repos: [],
+  };
 }
 
 export function setProjectConversationWorkspaceEngine(
   staging: ProjectConversationWorkspaceStaging,
   engine: string,
+  engineOptions: ReadonlyArray<ProjectConversationWorkspaceEngineOption> = DEFAULT_ENGINE_OPTIONS,
 ): ProjectConversationWorkspaceStaging {
   const nextEngine = normalizeWorkspaceEngine(engine);
   if (nextEngine === staging.engine) {
     return staging;
   }
+  const option = resolveWorkspaceEngineOption(engineOptions, nextEngine);
   return {
     ...staging,
     engine: nextEngine,
-    model: null,
+    model: option.defaultModel,
+    effort: option.defaultEffort,
+    speed: option.defaultSpeed,
   };
 }
 
@@ -88,11 +120,33 @@ export function setProjectConversationWorkspaceModel(
   };
 }
 
+export function setProjectConversationWorkspaceEffort(
+  staging: ProjectConversationWorkspaceStaging,
+  effort: string | null,
+): ProjectConversationWorkspaceStaging {
+  return {
+    ...staging,
+    effort: normalizeWorkspacePreference(effort),
+  };
+}
+
+export function setProjectConversationWorkspaceSpeed(
+  staging: ProjectConversationWorkspaceStaging,
+  speed: string | null,
+): ProjectConversationWorkspaceStaging {
+  return {
+    ...staging,
+    speed: normalizeWorkspacePreference(speed),
+  };
+}
+
 export function syncProjectConversationWorkspaceSelection(
   staging: ProjectConversationWorkspaceStaging,
   input: {
     readonly engine: string | null | undefined;
     readonly model: string | null | undefined;
+    readonly effort?: string | null | undefined;
+    readonly speed?: string | null | undefined;
   },
 ): ProjectConversationWorkspaceStaging {
   const engine = normalizeWorkspaceEngineOrNull(input.engine);
@@ -103,6 +157,8 @@ export function syncProjectConversationWorkspaceSelection(
     ...staging,
     engine,
     model: normalizeWorkspaceModel(input.model),
+    effort: normalizeWorkspacePreference(input.effort),
+    speed: normalizeWorkspacePreference(input.speed),
   };
 }
 
@@ -200,6 +256,36 @@ export function buildTurnModelInput(
   return undefined;
 }
 
+export function buildTurnEffortInput(
+  staging: ProjectConversationWorkspaceStaging,
+  currentEngine: string | null | undefined,
+  currentEffort: string | null | undefined,
+  engineOptions: ReadonlyArray<ProjectConversationWorkspaceEngineOption>,
+): string | undefined {
+  return buildTurnPreferenceInput({
+    staging,
+    currentEngine,
+    currentValue: currentEffort,
+    engineOptions,
+    preference: "effort",
+  });
+}
+
+export function buildTurnSpeedInput(
+  staging: ProjectConversationWorkspaceStaging,
+  currentEngine: string | null | undefined,
+  currentSpeed: string | null | undefined,
+  engineOptions: ReadonlyArray<ProjectConversationWorkspaceEngineOption>,
+): string | undefined {
+  return buildTurnPreferenceInput({
+    staging,
+    currentEngine,
+    currentValue: currentSpeed,
+    engineOptions,
+    preference: "speed",
+  });
+}
+
 export function projectConversationWorkspaceMatchesSubmission(
   current: JarvisTurnWorkspaceInput | null | undefined,
   submitted: JarvisTurnWorkspaceInput | null | undefined,
@@ -225,6 +311,13 @@ export function projectConversationModelMatchesSubmission(
   return normalizeWorkspaceModel(current) === normalizeWorkspaceModel(submitted);
 }
 
+export function projectConversationPreferenceMatchesSubmission(
+  current: string | null | undefined,
+  submitted: string | null | undefined,
+): boolean {
+  return normalizeWorkspacePreference(current) === normalizeWorkspacePreference(submitted);
+}
+
 export function workspaceEngineOptionsFromWorkers(
   workers: ReadonlyArray<JarvisWorkerProfile>,
 ): ProjectConversationWorkspaceEngineOption[] {
@@ -234,6 +327,8 @@ export function workspaceEngineOptionsFromWorkers(
       .filter((engine) => normalizeWorkspaceEngineOrNull(engine.engine) === fallback.value);
     const first = matchingEngines[0];
     const modelById = new Map<string, ProjectConversationWorkspaceEngineModel>();
+    const effortById = new Map<string, ProjectConversationWorkspaceEnginePreference>();
+    const speedById = new Map<string, ProjectConversationWorkspaceEnginePreference>();
     for (const engine of matchingEngines) {
       for (const model of engine.models ?? []) {
         const id = normalizeWorkspaceModel(model.id);
@@ -242,11 +337,41 @@ export function workspaceEngineOptionsFromWorkers(
         }
         modelById.set(id, { id, label: model.label.trim() || id });
       }
+      for (const effort of engine.efforts ?? []) {
+        const id = normalizeWorkspacePreference(effort.id);
+        if (id === null || effortById.has(id)) {
+          continue;
+        }
+        effortById.set(id, {
+          id,
+          label: effort.label.trim() || id,
+          ...(effort.description ? { description: effort.description } : {}),
+        });
+      }
+      for (const speed of engine.speeds ?? []) {
+        const id = normalizeWorkspacePreference(speed.id);
+        if (id === null || speedById.has(id)) {
+          continue;
+        }
+        speedById.set(id, {
+          id,
+          label: speed.label.trim() || id,
+          ...(speed.description ? { description: speed.description } : {}),
+        });
+      }
     }
     const defaultModel =
       matchingEngines
         .map((engine) => normalizeWorkspaceModel(engine.default_model))
         .find((model): model is string => model !== null) ?? null;
+    const defaultEffort =
+      matchingEngines
+        .map((engine) => normalizeWorkspacePreference(engine.default_effort))
+        .find((effort): effort is string => effort !== null) ?? null;
+    const defaultSpeed =
+      matchingEngines
+        .map((engine) => normalizeWorkspacePreference(engine.default_speed))
+        .find((speed): speed is string => speed !== null) ?? null;
 
     return {
       value: fallback.value,
@@ -254,6 +379,10 @@ export function workspaceEngineOptionsFromWorkers(
       description: fallback.description,
       models: [...modelById.values()],
       defaultModel,
+      efforts: [...effortById.values()],
+      defaultEffort,
+      speeds: [...speedById.values()],
+      defaultSpeed,
     };
   });
 }
@@ -281,6 +410,32 @@ export function resolveWorkspaceEngineModel(input: {
     return null;
   }
   return option.models.find((candidate) => candidate.id === model) ?? { id: model, label: model };
+}
+
+export function resolveWorkspaceEngineEffort(input: {
+  readonly engineOptions: ReadonlyArray<ProjectConversationWorkspaceEngineOption>;
+  readonly engine: string | null | undefined;
+  readonly effort: string | null | undefined;
+}): ProjectConversationWorkspaceEnginePreference | null {
+  return resolveWorkspaceEnginePreference({
+    engineOptions: input.engineOptions,
+    engine: input.engine,
+    value: input.effort,
+    preference: "effort",
+  });
+}
+
+export function resolveWorkspaceEngineSpeed(input: {
+  readonly engineOptions: ReadonlyArray<ProjectConversationWorkspaceEngineOption>;
+  readonly engine: string | null | undefined;
+  readonly speed: string | null | undefined;
+}): ProjectConversationWorkspaceEnginePreference | null {
+  return resolveWorkspaceEnginePreference({
+    engineOptions: input.engineOptions,
+    engine: input.engine,
+    value: input.speed,
+    preference: "speed",
+  });
 }
 
 export function resolveWorkspaceEngineDefaultModel(
@@ -376,6 +531,71 @@ export function normalizeWorkspaceEngineOrNull(
 function normalizeWorkspaceModel(model: string | null | undefined): string | null {
   const normalized = model?.trim();
   return normalized && normalized.length > 0 ? normalized : null;
+}
+
+function normalizeWorkspacePreference(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized && normalized.length > 0 ? normalized : null;
+}
+
+function buildTurnPreferenceInput(input: {
+  readonly staging: ProjectConversationWorkspaceStaging;
+  readonly currentEngine: string | null | undefined;
+  readonly currentValue: string | null | undefined;
+  readonly engineOptions: ReadonlyArray<ProjectConversationWorkspaceEngineOption>;
+  readonly preference: "effort" | "speed";
+}): string | undefined {
+  const option = resolveWorkspaceEngineOption(input.engineOptions, input.staging.engine);
+  const options = input.preference === "effort" ? option.efforts : option.speeds;
+  if (options.length === 0) {
+    return undefined;
+  }
+
+  const explicitValue =
+    input.preference === "effort"
+      ? normalizeWorkspacePreference(input.staging.effort)
+      : normalizeWorkspacePreference(input.staging.speed);
+  const selectedValue =
+    explicitValue ?? (input.preference === "effort" ? option.defaultEffort : option.defaultSpeed);
+  if (selectedValue === null) {
+    return undefined;
+  }
+
+  const normalizedCurrentEngine = normalizeWorkspaceEngineOrNull(input.currentEngine);
+  if (normalizedCurrentEngine !== input.staging.engine) {
+    return selectedValue;
+  }
+
+  if (
+    explicitValue !== null &&
+    explicitValue !== normalizeWorkspacePreference(input.currentValue)
+  ) {
+    return explicitValue;
+  }
+
+  return undefined;
+}
+
+function resolveWorkspaceEnginePreference(input: {
+  readonly engineOptions: ReadonlyArray<ProjectConversationWorkspaceEngineOption>;
+  readonly engine: string | null | undefined;
+  readonly value: string | null | undefined;
+  readonly preference: "effort" | "speed";
+}): ProjectConversationWorkspaceEnginePreference | null {
+  const option = resolveWorkspaceEngineOption(input.engineOptions, input.engine);
+  const options = input.preference === "effort" ? option.efforts : option.speeds;
+  const selectedValue =
+    normalizeWorkspacePreference(input.value) ??
+    (input.preference === "effort" ? option.defaultEffort : option.defaultSpeed);
+  if (selectedValue === null || options.length === 0) {
+    return null;
+  }
+  return (
+    options.find((candidate) => candidate.id === selectedValue) ?? {
+      id: selectedValue,
+      label: selectedValue,
+    }
+  );
 }
 
 function uniqueStagedRepos(

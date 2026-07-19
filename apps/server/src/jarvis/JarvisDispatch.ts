@@ -13,6 +13,7 @@ import {
   type JarvisSupportedControl,
   type OrchestrationCommand,
 } from "@t3tools/contracts";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -26,6 +27,8 @@ import {
 
 const JARVIS_CHECKPOINTS_PAGE_LIMIT = 100;
 const JARVIS_CHECKPOINTS_MAX_PAGES = 100;
+const JARVIS_EFFORT_MODEL_OPTION_ID = "jarvisEffort";
+const JARVIS_SPEED_MODEL_OPTION_ID = "jarvisSpeed";
 
 type JarvisSessionDispatchResult = {
   readonly result: JarvisControlResult | null;
@@ -152,6 +155,7 @@ function dispatchJarvisWrite(
         .sendTurn(sessionRef, {
           prompt: command.message.text,
           ...(command.modelSelection?.model ? { model: command.modelSelection.model } : {}),
+          ...jarvisTurnPreferencesForModelSelection(command.modelSelection),
           idempotency_key: String(command.commandId),
           metadata: {
             client_message_id: String(command.message.messageId),
@@ -294,10 +298,25 @@ function turnInputForCommand(
   return {
     prompt: command.message.text,
     ...(command.modelSelection?.model ? { model: command.modelSelection.model } : {}),
+    ...jarvisTurnPreferencesForModelSelection(command.modelSelection),
     idempotency_key: String(command.commandId),
     metadata: {
       client_message_id: String(command.message.messageId),
     },
+  };
+}
+
+function jarvisTurnPreferencesForModelSelection(
+  modelSelection: Extract<
+    OrchestrationCommand,
+    { readonly type: "thread.turn.start" }
+  >["modelSelection"],
+): { readonly effort?: string; readonly speed?: string } {
+  const effort = getModelSelectionStringOptionValue(modelSelection, JARVIS_EFFORT_MODEL_OPTION_ID);
+  const speed = getModelSelectionStringOptionValue(modelSelection, JARVIS_SPEED_MODEL_OPTION_ID);
+  return {
+    ...(effort ? { effort } : {}),
+    ...(speed ? { speed } : {}),
   };
 }
 

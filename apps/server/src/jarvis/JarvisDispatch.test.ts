@@ -28,8 +28,10 @@ const jarvisThreadId = ThreadId.make("jarvis-session_sessref_macbook-worker_sess
 
 function jarvisTurnStartCommand(overrides?: {
   readonly commandId?: string;
+  readonly effort?: string;
   readonly messageId?: string;
   readonly model?: string;
+  readonly speed?: string;
   readonly text?: string;
   readonly threadId?: ThreadId;
 }) {
@@ -50,6 +52,14 @@ function jarvisTurnStartCommand(overrides?: {
           modelSelection: {
             instanceId: ProviderInstanceId.make("jarvis_codex"),
             model: overrides.model,
+            ...((overrides.effort ?? overrides.speed)
+              ? {
+                  options: [
+                    ...(overrides.effort ? [{ id: "jarvisEffort", value: overrides.effort }] : []),
+                    ...(overrides.speed ? [{ id: "jarvisSpeed", value: overrides.speed }] : []),
+                  ],
+                }
+              : {}),
           },
         }
       : {}),
@@ -577,6 +587,34 @@ it.effect("forwards the selected model in Jarvis session turns", () =>
 
     assert.deepStrictEqual(result, { sequence: 0 });
     assert.strictEqual(capturedTurnInput?.model, "gpt-5.6");
+  }),
+);
+
+it.effect("forwards selected effort and speed in Jarvis session turns", () =>
+  Effect.gen(function* () {
+    let capturedTurnInput: JarvisTurnInput | undefined;
+    const client = {
+      ...makeJarvisFixtureClient(),
+      sendTurn: (_sessionRef: string, input: JarvisTurnInput) => {
+        capturedTurnInput = input;
+        return Effect.succeed({ ok: true, cursor: "evt_turn" });
+      },
+    };
+
+    const result = yield* dispatchJarvisCommand({
+      client,
+      enabled: true,
+      command: jarvisTurnStartCommand({
+        model: "gpt-5.6-sol",
+        effort: "xhigh",
+        speed: "priority",
+      }),
+    });
+
+    assert.deepStrictEqual(result, { sequence: 0 });
+    assert.strictEqual(capturedTurnInput?.model, "gpt-5.6-sol");
+    assert.strictEqual(capturedTurnInput?.effort, "xhigh");
+    assert.strictEqual(capturedTurnInput?.speed, "priority");
   }),
 );
 
