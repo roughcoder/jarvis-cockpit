@@ -151,6 +151,29 @@ function isSameLoopbackOrigin(left: URL, right: URL): boolean {
   );
 }
 
+function isHttpLikeUrl(url: URL): boolean {
+  return url.protocol === "http:" || url.protocol === "https:";
+}
+
+function isLoopbackHttpOrigin(url: URL): boolean {
+  return isHttpLikeUrl(url) && isLoopbackHostname(url.hostname);
+}
+
+function isKnownDevServerOrigin(currentUrl: URL, devServerUrl: URL): boolean {
+  return (
+    isHttpLikeUrl(currentUrl) &&
+    (currentUrl.origin === devServerUrl.origin || isSameLoopbackOrigin(currentUrl, devServerUrl))
+  );
+}
+
+function shouldUseCurrentLoopbackProxyOrigin(currentUrl: URL, targetUrl: URL): boolean {
+  return (
+    currentUrl.origin !== targetUrl.origin &&
+    isLoopbackHttpOrigin(currentUrl) &&
+    isLoopbackHostname(targetUrl.hostname)
+  );
+}
+
 function resolveHttpRequestBaseUrl(primaryTarget: PrimaryEnvironmentTarget): string {
   const httpBaseUrl = primaryTarget.target.httpBaseUrl;
   const configuredDevServerUrl = import.meta.env.VITE_DEV_SERVER_URL?.trim();
@@ -175,12 +198,12 @@ function resolveHttpRequestBaseUrl(primaryTarget: PrimaryEnvironmentTarget): str
     urlKind: "development-server-url",
   });
 
-  const isCurrentOriginDevServer =
-    (currentUrl.protocol === "http:" || currentUrl.protocol === "https:") &&
-    (currentUrl.origin === devServerUrl.origin || isSameLoopbackOrigin(currentUrl, devServerUrl));
+  const shouldUseCurrentOrigin =
+    isKnownDevServerOrigin(currentUrl, devServerUrl) ||
+    shouldUseCurrentLoopbackProxyOrigin(currentUrl, targetUrl);
 
   if (
-    !isCurrentOriginDevServer ||
+    !shouldUseCurrentOrigin ||
     currentUrl.origin === targetUrl.origin ||
     !isLoopbackHostname(targetUrl.hostname)
   ) {
@@ -220,12 +243,12 @@ function resolveDevServerPrimaryTarget(
     urlKind: "development-server-url",
   });
 
-  const isCurrentOriginDevServer =
-    (currentUrl.protocol === "http:" || currentUrl.protocol === "https:") &&
-    (currentUrl.origin === devServerUrl.origin || isSameLoopbackOrigin(currentUrl, devServerUrl));
+  const shouldUseCurrentOrigin =
+    isKnownDevServerOrigin(currentUrl, devServerUrl) ||
+    shouldUseCurrentLoopbackProxyOrigin(currentUrl, httpTargetUrl);
 
   if (
-    !isCurrentOriginDevServer ||
+    !shouldUseCurrentOrigin ||
     currentUrl.origin === httpTargetUrl.origin ||
     !isLoopbackHostname(httpTargetUrl.hostname) ||
     !isLoopbackHostname(wsTargetUrl.hostname)
