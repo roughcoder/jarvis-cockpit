@@ -15,10 +15,43 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import {
   decodeGitHubPullRequestJson,
   decodeGitHubPullRequestListJson,
+  decodeGitHubRepositoryPullRequestListJson,
   type NormalizedGitHubPullRequestRecord,
 } from "./gitHubPullRequests.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+
+const REPOSITORY_PULL_REQUESTS_QUERY = `query($owner: String!, $name: String!, $limit: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(first: $limit, states: OPEN, orderBy: { field: UPDATED_AT, direction: DESC }) {
+      nodes {
+        number
+        title
+        url
+        baseRefName
+        headRefName
+        state
+        updatedAt
+        createdAt
+        isDraft
+        author { login }
+        comments { totalCount }
+        reviews { totalCount }
+        reviewDecision
+        commits(last: 1) {
+          nodes {
+            commit {
+              statusCheckRollup {
+                state
+                contexts { totalCount }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}`;
 
 const gitHubCliFailureFields = {
   command: Schema.Literal("gh"),
@@ -214,7 +247,7 @@ export class GitHubCli extends Context.Service<
 
     /**
      * Lists open pull requests for an explicit `owner/name` repository via
-     * `gh pr list --repo`. Unlike the other methods, `cwd` is only a working
+     * GitHub's GraphQL API. Unlike the other methods, `cwd` is only a working
      * directory for the process — it does not need to be a checkout of the
      * repository.
      */
@@ -375,23 +408,23 @@ export const make = Effect.gen(function* () {
       execute({
         cwd: input.cwd,
         args: [
-          "pr",
-          "list",
-          "--repo",
-          input.repository,
-          "--state",
-          "open",
-          "--limit",
-          String(input.limit ?? 50),
-          "--json",
-          "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,createdAt,isDraft,author,comments,reviews,reviewDecision,statusCheckRollup",
+          "api",
+          "graphql",
+          "-F",
+          `owner=${input.repository.slice(0, input.repository.indexOf("/"))}`,
+          "-F",
+          `name=${input.repository.slice(input.repository.indexOf("/") + 1)}`,
+          "-F",
+          `limit=${String(input.limit ?? 50)}`,
+          "-f",
+          `query=${REPOSITORY_PULL_REQUESTS_QUERY}`,
         ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
           raw.length === 0
             ? Effect.succeed([])
-            : Effect.sync(() => decodeGitHubPullRequestListJson(raw)).pipe(
+            : Effect.sync(() => decodeGitHubRepositoryPullRequestListJson(raw)).pipe(
                 Effect.flatMap((decoded) =>
                   Result.isSuccess(decoded)
                     ? Effect.succeed(decoded.success)

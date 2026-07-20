@@ -1,5 +1,7 @@
 import { assert, it, afterEach, describe, vi } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -33,22 +35,33 @@ afterEach(() => {
 });
 
 const openPullRequestJson = (number: number, overrides: Record<string, unknown> = {}) =>
-  JSON.stringify([
-    {
-      number,
-      title: `PR ${number}`,
-      url: `https://github.com/acme/widgets/pull/${number}`,
-      baseRefName: "main",
-      headRefName: `feature-${number}`,
-      state: "OPEN",
-      mergedAt: null,
-      updatedAt: "2026-07-01T10:00:00Z",
-      createdAt: "2026-06-30T09:00:00Z",
-      isDraft: false,
-      author: { login: "octocat" },
-      ...overrides,
+  JSON.stringify({
+    data: {
+      repository: {
+        pullRequests: {
+          nodes: [
+            {
+              number,
+              title: `PR ${number}`,
+              url: `https://github.com/acme/widgets/pull/${number}`,
+              baseRefName: "main",
+              headRefName: `feature-${number}`,
+              state: "OPEN",
+              updatedAt: "2026-07-01T10:00:00Z",
+              createdAt: "2026-06-30T09:00:00Z",
+              isDraft: false,
+              author: { login: "octocat" },
+              comments: { totalCount: 0 },
+              reviews: { totalCount: 0 },
+              reviewDecision: null,
+              commits: { nodes: [] },
+              ...overrides,
+            },
+          ],
+        },
+      },
     },
-  ]);
+  });
 
 describe("parseGitHubRepoRemote", () => {
   it("accepts owner/name slugs", () => {
@@ -117,15 +130,16 @@ describe("ProjectPullRequests.layer", () => {
 
       const call = mockRun.mock.calls[0]?.[0];
       assert.ok(call);
-      assert.include(call.args, "--repo");
-      assert.include(call.args, "acme/widgets");
+      assert.include(call.args, "graphql");
+      assert.include(call.args, "owner=acme");
+      assert.include(call.args, "name=widgets");
     }).pipe(Effect.provide(layer)),
   );
 
   it.effect("isolates per-repo failures and reports unparseable remotes", () =>
     Effect.gen(function* () {
       mockRun.mockImplementation((input) =>
-        input.args.includes("acme/widgets")
+        input.args.includes("name=widgets")
           ? Effect.succeed(processOutput(openPullRequestJson(3)))
           : Effect.fail(
               new VcsProcessExitError({
@@ -167,6 +181,81 @@ describe("ProjectPullRequests.layer", () => {
       yield* service.list({ cwd: "/tmp", repos });
 
       assert.strictEqual(mockRun.mock.calls.length, 1);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("shares an in-flight repository lookup across concurrent callers", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      mockRun.mockImplementation(() =>
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as(processOutput(openPullRequestJson(11))),
+        ),
+      );
+
+      const service = yield* ProjectPullRequests;
+      const input = {
+        cwd: "/tmp",
+        repos: [{ name: "widgets", remote: "acme/widgets", default: true }],
+      };
+      const requests = yield* Effect.all([service.list(input), service.list(input)], {
+        concurrency: "unbounded",
+      }).pipe(Effect.forkChild);
+
+      yield* Deferred.await(started);
+      assert.strictEqual(mockRun.mock.calls.length, 1);
+      yield* Deferred.succeed(release, undefined);
+      const results = yield* Fiber.join(requests);
+
+      assert.strictEqual(mockRun.mock.calls.length, 1);
+      assert.strictEqual(results[0]?.pullRequests[0]?.number, 11);
+      assert.strictEqual(results[1]?.pullRequests[0]?.number, 11);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("shares repository lookups across projects with different working directories", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValue(Effect.succeed(processOutput(openPullRequestJson(12))));
+
+      const service = yield* ProjectPullRequests;
+      const repos = [{ name: "widgets", remote: "acme/widgets", default: true }];
+      yield* service.list({ cwd: "/projects/one", repos });
+      yield* service.list({ cwd: "/projects/two", repos });
+
+      assert.strictEqual(mockRun.mock.calls.length, 1);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("retries repository lookups after a failed request", () =>
+    Effect.gen(function* () {
+      mockRun
+        .mockReturnValueOnce(
+          Effect.fail(
+            new VcsProcessExitError({
+              operation: "GitHubCli.execute",
+              command: "gh",
+              cwd: "/tmp",
+              exitCode: 1,
+              detail: "Process exited with a non-zero status.",
+              failureKind: "command-failed",
+            }),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(processOutput(openPullRequestJson(13))));
+
+      const service = yield* ProjectPullRequests;
+      const input = {
+        cwd: "/tmp",
+        repos: [{ name: "widgets", remote: "acme/widgets", default: true }],
+      };
+      const failed = yield* service.list(input);
+      const retried = yield* service.list(input);
+
+      assert.lengthOf(failed.errors, 1);
+      assert.strictEqual(retried.pullRequests[0]?.number, 13);
+      assert.strictEqual(mockRun.mock.calls.length, 2);
     }).pipe(Effect.provide(layer)),
   );
 });
