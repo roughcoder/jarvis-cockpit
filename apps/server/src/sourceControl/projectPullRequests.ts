@@ -1,6 +1,9 @@
-import * as Clock from "effect/Clock";
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
+import * as Data from "effect/Data";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
@@ -12,7 +15,12 @@ import { transportSafeSourceControlErrorValue } from "./SourceControlProvider.ts
 
 const PULL_REQUEST_LIST_LIMIT = 50;
 const CACHE_TTL_MS = 25_000;
+const CACHE_CAPACITY = 256;
 const REPO_CONCURRENCY = 4;
+
+class RepoCacheKey extends Data.Class<{
+  readonly slug: string;
+}> {}
 
 export interface ProjectPullRequestsListResult {
   readonly pullRequests: ReadonlyArray<ProjectPullRequest>;
@@ -97,11 +105,6 @@ function projectPullRequestFromRecord(
   };
 }
 
-interface CacheEntry {
-  readonly expiresAtMs: number;
-  readonly pullRequests: ReadonlyArray<ProjectPullRequest>;
-}
-
 export class ProjectPullRequests extends Context.Service<
   ProjectPullRequests,
   {
@@ -120,29 +123,24 @@ export class ProjectPullRequests extends Context.Service<
     ProjectPullRequests,
     Effect.gen(function* () {
       const gitHubCli = yield* GitHubCli;
-      // Process-global TTL cache: the service layer is built once per server
-      // process, so concurrent clients polling the same project share results.
-      const cache = new Map<string, CacheEntry>();
-
-      const listRepo = Effect.fn("ProjectPullRequests.listRepo")(function* (input: {
-        readonly cwd: string;
-        readonly slug: string;
-      }) {
-        const now = yield* Clock.currentTimeMillis;
-        const cached = cache.get(input.slug);
-        if (cached && cached.expiresAtMs > now) {
-          return cached.pullRequests;
-        }
+      const commandCwd = process.cwd();
+      const fetchRepo = Effect.fn("ProjectPullRequests.fetchRepo")(function* (input: RepoCacheKey) {
         const records = yield* gitHubCli.listRepositoryPullRequests({
-          cwd: input.cwd,
+          cwd: commandCwd,
           repository: input.slug,
           limit: PULL_REQUEST_LIST_LIMIT,
         });
         const pullRequests = records
           .filter((record) => record.state === "open")
           .map((record) => projectPullRequestFromRecord(input.slug, record));
-        cache.set(input.slug, { expiresAtMs: now + CACHE_TTL_MS, pullRequests });
         return pullRequests;
+      });
+      // Cache lookup starts only once per repository key. Effect Cache shares
+      // concurrent misses and begins the TTL after the GitHub request settles.
+      const cache = yield* Cache.makeWith(fetchRepo, {
+        capacity: CACHE_CAPACITY,
+        timeToLive: (exit) =>
+          Exit.isSuccess(exit) ? Duration.millis(CACHE_TTL_MS) : Duration.zero,
       });
 
       const list: ProjectPullRequests["Service"]["list"] = Effect.fn("ProjectPullRequests.list")(
@@ -164,7 +162,7 @@ export class ProjectPullRequests extends Context.Service<
           const results = yield* Effect.forEach(
             [...slugs],
             (slug) =>
-              listRepo({ cwd: input.cwd, slug }).pipe(
+              Cache.get(cache, new RepoCacheKey({ slug })).pipe(
                 Effect.map((pullRequests) => ({ slug, pullRequests })),
                 Effect.catch((error) =>
                   Effect.succeed({

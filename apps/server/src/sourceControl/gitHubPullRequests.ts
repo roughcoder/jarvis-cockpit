@@ -4,7 +4,7 @@ import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { PositiveInt, TrimmedNonEmptyString } from "@t3tools/contracts";
+import { NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "@t3tools/contracts";
 import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
 
 export interface NormalizedGitHubPullRequestRecord {
@@ -28,6 +28,12 @@ export interface NormalizedGitHubPullRequestRecord {
   readonly headRepositoryOwnerLogin?: string | null;
 }
 
+const GitHubStatusCheckSchema = Schema.Struct({
+  status: Schema.optional(Schema.NullOr(Schema.String)),
+  conclusion: Schema.optional(Schema.NullOr(Schema.String)),
+  state: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
 const GitHubPullRequestSchema = Schema.Struct({
   number: PositiveInt,
   title: TrimmedNonEmptyString,
@@ -49,17 +55,7 @@ const GitHubPullRequestSchema = Schema.Struct({
   comments: Schema.optional(Schema.Array(Schema.Unknown)),
   reviews: Schema.optional(Schema.Array(Schema.Unknown)),
   reviewDecision: Schema.optional(Schema.NullOr(Schema.String)),
-  statusCheckRollup: Schema.optional(
-    Schema.NullOr(
-      Schema.Array(
-        Schema.Struct({
-          status: Schema.optional(Schema.NullOr(Schema.String)),
-          conclusion: Schema.optional(Schema.NullOr(Schema.String)),
-          state: Schema.optional(Schema.NullOr(Schema.String)),
-        }),
-      ),
-    ),
-  ),
+  statusCheckRollup: Schema.optional(Schema.NullOr(Schema.Array(GitHubStatusCheckSchema))),
   isCrossRepository: Schema.optional(Schema.Boolean),
   headRepository: Schema.optional(
     Schema.NullOr(
@@ -75,6 +71,54 @@ const GitHubPullRequestSchema = Schema.Struct({
       }),
     ),
   ),
+});
+
+const GitHubRepositoryPullRequestSchema = Schema.Struct({
+  number: PositiveInt,
+  title: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+  baseRefName: TrimmedNonEmptyString,
+  headRefName: TrimmedNonEmptyString,
+  state: Schema.String,
+  updatedAt: Schema.OptionFromNullOr(Schema.DateTimeUtcFromString),
+  createdAt: Schema.OptionFromNullOr(Schema.DateTimeUtcFromString),
+  isDraft: Schema.Boolean,
+  author: Schema.NullOr(
+    Schema.Struct({
+      login: Schema.String,
+    }),
+  ),
+  comments: Schema.Struct({ totalCount: NonNegativeInt }),
+  reviews: Schema.Struct({ totalCount: NonNegativeInt }),
+  reviewDecision: Schema.NullOr(Schema.String),
+  commits: Schema.Struct({
+    nodes: Schema.Array(
+      Schema.NullOr(
+        Schema.Struct({
+          commit: Schema.Struct({
+            statusCheckRollup: Schema.NullOr(
+              Schema.Struct({
+                state: Schema.String,
+                contexts: Schema.Struct({
+                  totalCount: NonNegativeInt,
+                }),
+              }),
+            ),
+          }),
+        }),
+      ),
+    ),
+  }),
+});
+
+const GitHubRepositoryPullRequestListSchema = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.Struct({
+      pullRequests: Schema.Struct({
+        nodes: Schema.Array(Schema.NullOr(GitHubRepositoryPullRequestSchema)),
+      }),
+    }),
+  }),
 });
 
 function trimOptionalString(value: string | null | undefined): string | null {
@@ -190,6 +234,9 @@ function normalizeGitHubPullRequestRecord(
 const decodeGitHubPullRequestList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeGitHubPullRequest = decodeJsonResult(GitHubPullRequestSchema);
 const decodeGitHubPullRequestEntry = Schema.decodeUnknownExit(GitHubPullRequestSchema);
+const decodeGitHubRepositoryPullRequestList = decodeJsonResult(
+  GitHubRepositoryPullRequestListSchema,
+);
 
 export const formatGitHubJsonDecodeError = formatSchemaError;
 
@@ -222,4 +269,50 @@ export function decodeGitHubPullRequestJson(
     return Result.succeed(normalizeGitHubPullRequestRecord(result.success));
   }
   return Result.fail(result.failure);
+}
+
+export function decodeGitHubRepositoryPullRequestListJson(
+  raw: string,
+): Result.Result<
+  ReadonlyArray<NormalizedGitHubPullRequestRecord>,
+  Cause.Cause<Schema.SchemaError>
+> {
+  const result = decodeGitHubRepositoryPullRequestList(raw);
+  if (Result.isFailure(result)) {
+    return Result.fail(result.failure);
+  }
+
+  return Result.succeed(
+    result.success.data.repository.pullRequests.nodes.flatMap((pullRequest) => {
+      if (pullRequest === null) {
+        return [];
+      }
+      const checkRollup = pullRequest.commits.nodes.find((commit) => commit !== null)?.commit
+        .statusCheckRollup;
+      const checksCount = checkRollup?.contexts.totalCount ?? 0;
+      const authorLogin = trimOptionalString(pullRequest.author?.login);
+      return [
+        {
+          number: pullRequest.number,
+          title: pullRequest.title,
+          url: pullRequest.url,
+          baseRefName: pullRequest.baseRefName,
+          headRefName: pullRequest.headRefName,
+          state: normalizeGitHubPullRequestState({ state: pullRequest.state }),
+          updatedAt: pullRequest.updatedAt,
+          createdAt: pullRequest.createdAt,
+          isDraft: pullRequest.isDraft,
+          ...(authorLogin ? { authorLogin } : {}),
+          commentCount: pullRequest.comments.totalCount,
+          reviewCount: pullRequest.reviews.totalCount,
+          reviewDecision: normalizeReviewDecision(pullRequest.reviewDecision),
+          checksStatus:
+            checksCount > 0
+              ? normalizeChecksStatus([{ state: checkRollup?.state }])
+              : "not_reported",
+          checksCount,
+        },
+      ];
+    }),
+  );
 }
