@@ -683,13 +683,16 @@ export const JarvisProjectFile = Schema.Struct({
   name: OptionalPossiblyEmptyPublicString,
   label: OptionalPossiblyEmptyPublicString,
   title: OptionalPossiblyEmptyPublicString,
+  channel: OptionalPossiblyEmptyPublicString,
   session_id: OptionalPossiblyEmptyPublicString,
   original_path: OptionalPossiblyEmptyPublicString,
   content_hash: OptionalPossiblyEmptyPublicString,
   artifact_type: OptionalPossiblyEmptyPublicString,
+  mime_type: OptionalPossiblyEmptyPublicString,
   uploaded_by: OptionalPossiblyEmptyPublicString,
   observed_at: Schema.optional(Schema.NullOr(IsoDateTime)),
   retracted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  retracted_at: OptionalPossiblyEmptyPublicString,
   ingestion: Schema.optionalKey(JsonObject).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   metadata: Schema.optionalKey(JsonObject).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
@@ -699,6 +702,7 @@ export const JarvisProjectFilesResponse = Schema.Struct({
   api_version: Schema.Literal("v1"),
   schema_version: Schema.Number,
   project_id: JarvisProjectId,
+  query: OptionalPossiblyEmptyPublicString,
   files: Schema.Array(JarvisProjectFile).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type JarvisProjectFilesResponse = typeof JarvisProjectFilesResponse.Type;
@@ -1469,6 +1473,7 @@ export type JarvisProjectMemoryWriteResult = typeof JarvisProjectMemoryWriteResu
 
 export const JarvisProjectFilesResult = Schema.Struct({
   ok: Schema.Boolean,
+  query: Schema.optionalKey(Schema.String),
   files: Schema.optionalKey(Schema.Array(JarvisProjectFile)),
   error: Schema.optionalKey(JarvisReadError),
 });

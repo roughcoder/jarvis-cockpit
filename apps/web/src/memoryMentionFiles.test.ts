@@ -30,6 +30,13 @@ describe("memory mention files", () => {
     expect(projectFileMentionText(item)).toBe("@memory:doc-roadmap");
   });
 
+  it("falls back from filename to title before legacy label fields", () => {
+    const item = file({ doc_id: "doc-launch", name: "legacy-name.md", title: "Launch spec" });
+
+    expect(projectFileMentionLabel(item)).toBe("Launch spec");
+    expect(projectFileMentionText(item)).toBe("@memory:doc-launch");
+  });
+
   it("uses tolerant display fields and filters out retracted files", () => {
     const results = searchMemoryMentionFiles(
       [
@@ -46,6 +53,23 @@ describe("memory mention files", () => {
         label: "api-notes.md",
         description: "doc-a",
         mentionText: "@api-notes.md",
+      },
+    ]);
+  });
+
+  it("can preserve server-ranked query results without local substring filtering", () => {
+    const results = searchMemoryMentionFiles(
+      [file({ doc_id: "doc-a", filename: "launch-spec.md" })],
+      "fuzzy unrelated",
+      { filter: false },
+    );
+
+    expect(results).toEqual([
+      {
+        docId: "doc-a",
+        label: "launch-spec.md",
+        description: "doc-a",
+        mentionText: "@launch-spec.md",
       },
     ]);
   });

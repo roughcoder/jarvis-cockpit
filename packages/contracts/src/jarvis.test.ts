@@ -247,11 +247,23 @@ it.effect("decodes tolerant Jarvis project file rows", () =>
       api_version: "v1",
       schema_version: 1,
       project_id: "jarvis",
+      query: "launch",
       files: [
         {
-          doc_id: "doc-file-name",
-          filename: "Launch Plan.md",
+          artifact_type: "spec",
+          channel: "cockpit",
+          content_hash: "sha256:c358...",
+          doc_id: "launch-spec-0f743529a2ae",
+          filename: "launch-spec.md",
+          ingestion: { queued: true, response: { ok: true } },
+          mime_type: "text/markdown",
+          observed_at: "2026-07-20T00:29:56+00:00",
+          original_path: ".../vault/projects/jarvis/files/launch-spec-0f743529a2ae.md",
           retracted: false,
+          retracted_at: "",
+          session_id: "project:jarvis:uploads:launch-spec-0f743529a2ae",
+          title: "Launch spec",
+          uploaded_by: "neil",
         },
         {
           doc_id: "doc-name",
@@ -265,7 +277,11 @@ it.effect("decodes tolerant Jarvis project file rows", () =>
       ],
     });
 
-    assert.strictEqual(parsed.files[0]?.filename, "Launch Plan.md");
+    assert.strictEqual(parsed.query, "launch");
+    assert.strictEqual(parsed.files[0]?.filename, "launch-spec.md");
+    assert.strictEqual(parsed.files[0]?.title, "Launch spec");
+    assert.strictEqual(parsed.files[0]?.mime_type, "text/markdown");
+    assert.strictEqual(parsed.files[0]?.channel, "cockpit");
     assert.strictEqual(parsed.files[1]?.name, "api-notes.md");
     assert.strictEqual(parsed.files[1]?.retracted, false);
     assert.strictEqual(parsed.files[2]?.label, "Operator Notes");

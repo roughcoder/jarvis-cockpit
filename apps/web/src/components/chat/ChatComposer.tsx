@@ -592,6 +592,7 @@ export interface ChatComposerProps {
   terminalOpen: boolean;
   gitCwd: string | null;
   memoryMentionFiles?: ReadonlyArray<JarvisProjectFile>;
+  memoryMentionFilesQuery?: string | null;
   memoryMentionFilesPending?: boolean;
 
   // Refs the parent needs kept in sync
@@ -631,6 +632,7 @@ export interface ChatComposerProps {
   scheduleComposerFocus: () => void;
   setThreadError: (threadId: ThreadId | null, error: string | null) => void;
   onExpandImage: (preview: ExpandedImagePreview) => void;
+  onMemoryMentionQueryChange?: (query: string) => void;
 }
 
 // --------------------------------------------------------------------------
@@ -687,6 +689,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     terminalOpen,
     gitCwd,
     memoryMentionFiles = EMPTY_MEMORY_MENTION_FILES,
+    memoryMentionFilesQuery = null,
     memoryMentionFilesPending = false,
     promptRef,
     composerRef,
@@ -711,6 +714,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     scheduleComposerFocus,
     setThreadError,
     onExpandImage,
+    onMemoryMentionQueryChange,
   } = props;
 
   // ------------------------------------------------------------------
@@ -1319,25 +1323,32 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerTriggerKind = composerTrigger?.kind ?? null;
   const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
   const isPathTrigger = composerTriggerKind === "path";
+  useEffect(() => {
+    onMemoryMentionQueryChange?.(isPathTrigger ? pathTriggerQuery : "");
+  }, [isPathTrigger, onMemoryMentionQueryChange, pathTriggerQuery]);
   const workspaceEntries = useComposerPathSearch({
     environmentId,
     cwd: isPathTrigger ? gitCwd : null,
     query: isPathTrigger ? pathTriggerQuery : null,
   });
-  const memoryMentionItems = useMemo(
-    () =>
-      isPathTrigger
-        ? searchMemoryMentionFiles(memoryMentionFiles, pathTriggerQuery).map((file) => ({
-            id: `memory:${file.docId}`,
-            type: "memory-file" as const,
-            docId: file.docId,
-            label: file.label,
-            description: file.description,
-            mentionText: file.mentionText,
-          }))
-        : [],
-    [isPathTrigger, memoryMentionFiles, pathTriggerQuery],
-  );
+  const memoryMentionItems = useMemo(() => {
+    if (!isPathTrigger) {
+      return [];
+    }
+    const serverQueryMatchesTrigger =
+      memoryMentionFilesQuery !== null &&
+      memoryMentionFilesQuery.trim().toLowerCase() === pathTriggerQuery.trim().toLowerCase();
+    return searchMemoryMentionFiles(memoryMentionFiles, pathTriggerQuery, {
+      filter: !serverQueryMatchesTrigger,
+    }).map((file) => ({
+      id: `memory:${file.docId}`,
+      type: "memory-file" as const,
+      docId: file.docId,
+      label: file.label,
+      description: file.description,
+      mentionText: file.mentionText,
+    }));
+  }, [isPathTrigger, memoryMentionFiles, memoryMentionFilesQuery, pathTriggerQuery]);
 
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];

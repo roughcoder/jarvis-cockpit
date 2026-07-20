@@ -1,7 +1,5 @@
 import type { JarvisProjectFile } from "@t3tools/contracts";
 
-import { basenameOfPath } from "./pierre-icons";
-
 export interface MemoryMentionFile {
   readonly docId: string;
   readonly label: string;
@@ -16,18 +14,12 @@ function clean(value: string | null | undefined): string | null {
   return trimmed && trimmed.length > 0 ? trimmed : null;
 }
 
-function basenameFromOriginalPath(file: JarvisProjectFile): string | null {
-  const path = clean(file.original_path);
-  return path ? clean(basenameOfPath(path)) : null;
-}
-
 export function projectFileMentionLabel(file: JarvisProjectFile): string {
   return (
     clean(file.filename) ??
+    clean(file.title) ??
     clean(file.name) ??
     clean(file.label) ??
-    clean(file.title) ??
-    basenameFromOriginalPath(file) ??
     String(file.doc_id)
   );
 }
@@ -44,8 +36,10 @@ export function projectFileMentionDescription(file: JarvisProjectFile): string {
 export function searchMemoryMentionFiles(
   files: ReadonlyArray<JarvisProjectFile>,
   query: string,
+  options: { readonly filter?: boolean } = {},
 ): MemoryMentionFile[] {
   const normalizedQuery = query.trim().toLowerCase();
+  const shouldFilter = options.filter ?? true;
   const results: MemoryMentionFile[] = [];
 
   for (const file of files) {
@@ -68,7 +62,7 @@ export function searchMemoryMentionFiles(
       .join("\n")
       .toLowerCase();
 
-    if (normalizedQuery.length > 0 && !searchText.includes(normalizedQuery)) {
+    if (shouldFilter && normalizedQuery.length > 0 && !searchText.includes(normalizedQuery)) {
       continue;
     }
 

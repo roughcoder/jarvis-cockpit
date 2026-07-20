@@ -1742,11 +1742,19 @@ function ChatViewContent(props: StandardChatViewProps) {
     activeIsJarvisWorkerThread && activeThread?.jarvisRegistryProjectId
       ? activeThread.jarvisRegistryProjectId
       : null;
+  const [jarvisWorkerMemoryMentionQuery, setJarvisWorkerMemoryMentionQuery] = useState("");
+  const jarvisWorkerMemoryMentionRequestQuery = jarvisWorkerMemoryMentionQuery.trim();
   const jarvisWorkerProjectFilesQuery = useEnvironmentQuery(
     activeThread && jarvisWorkerMemoryProjectId
       ? serverEnvironment.jarvisProjectFiles({
           environmentId: activeThread.environmentId,
-          input: { projectId: jarvisWorkerMemoryProjectId, includeRetracted: false },
+          input: {
+            projectId: jarvisWorkerMemoryProjectId,
+            includeRetracted: false,
+            ...(jarvisWorkerMemoryMentionRequestQuery.length > 0
+              ? { query: jarvisWorkerMemoryMentionRequestQuery }
+              : {}),
+          },
         })
       : null,
   );
@@ -5557,7 +5565,12 @@ function ChatViewContent(props: StandardChatViewProps) {
                       {...(activeIsJarvisWorkerThread
                         ? {
                             memoryMentionFiles: jarvisWorkerMemoryMentionFiles,
+                            memoryMentionFilesQuery:
+                              jarvisWorkerProjectFilesQuery.data?.ok === true
+                                ? (jarvisWorkerProjectFilesQuery.data.query ?? null)
+                                : null,
                             memoryMentionFilesPending: jarvisWorkerProjectFilesQuery.isPending,
+                            onMemoryMentionQueryChange: setJarvisWorkerMemoryMentionQuery,
                           }
                         : {})}
                       promptRef={promptRef}

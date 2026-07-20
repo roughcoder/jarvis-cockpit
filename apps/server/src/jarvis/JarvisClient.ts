@@ -145,9 +145,13 @@ export interface JarvisClient {
   readonly getProjectMemory: (
     projectId: string,
   ) => Effect.Effect<JarvisProjectMemoryResponse, JarvisClientError>;
+  readonly getProjectFilesResponse: (
+    projectId: string,
+    options?: { readonly includeRetracted?: boolean; readonly query?: string },
+  ) => Effect.Effect<JarvisProjectFilesResponse, JarvisClientError>;
   readonly getProjectFiles: (
     projectId: string,
-    options?: { readonly includeRetracted?: boolean },
+    options?: { readonly includeRetracted?: boolean; readonly query?: string },
   ) => Effect.Effect<ReadonlyArray<JarvisProjectFile>, JarvisClientError>;
   readonly getProjectThreads: (
     projectId: string,
@@ -1258,11 +1262,20 @@ export function makeJarvisCockpitClient(input: {
       requestJson("projects.memory", `/v1/projects/${encodeURIComponent(projectId)}/memory`).pipe(
         Effect.flatMap(decodeFor("projects.memory", decodeProjectMemoryResponse)),
       ),
+    getProjectFilesResponse: (projectId, options) =>
+      requestJson(
+        "projects.files",
+        appendQuery(`/v1/projects/${encodeURIComponent(projectId)}/files`, {
+          include_retracted: options?.includeRetracted ? "true" : undefined,
+          query: firstTrimmed(options?.query) ?? undefined,
+        }),
+      ).pipe(Effect.flatMap(decodeFor("projects.files", decodeProjectFilesResponse))),
     getProjectFiles: (projectId, options) =>
       requestJson(
         "projects.files",
         appendQuery(`/v1/projects/${encodeURIComponent(projectId)}/files`, {
           include_retracted: options?.includeRetracted ? "true" : undefined,
+          query: firstTrimmed(options?.query) ?? undefined,
         }),
       ).pipe(
         Effect.flatMap(decodeFor("projects.files", decodeProjectFilesResponse)),
@@ -1710,6 +1723,10 @@ export function makeJarvisClient(config: {
         withClient("projects.get", (client) => client.getProject(projectId)),
       getProjectMemory: (projectId) =>
         withClient("projects.memory", (client) => client.getProjectMemory(projectId)),
+      getProjectFilesResponse: (projectId, options) =>
+        withClient("projects.files", (client) =>
+          client.getProjectFilesResponse(projectId, options),
+        ),
       getProjectFiles: (projectId, options) =>
         withClient("projects.files", (client) => client.getProjectFiles(projectId, options)),
       getProjectThreads: (projectId, options) =>
@@ -1973,6 +1990,7 @@ function makeMissingConfigurationClient(message: string): JarvisClient {
     getProjects: () => fail("jarvis.client.configure"),
     getProject: () => fail("jarvis.client.configure"),
     getProjectMemory: () => fail("jarvis.client.configure"),
+    getProjectFilesResponse: () => fail("jarvis.client.configure"),
     getProjectFiles: () => fail("jarvis.client.configure"),
     getProjectThreads: () => fail("jarvis.client.configure"),
     getProjectThread: () => fail("jarvis.client.configure"),
@@ -2425,13 +2443,32 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       cockpitProjectId,
       [
         {
+          artifact_type: "spec",
+          channel: "cockpit",
+          content_hash: "sha256:c358...",
+          doc_id: "launch-spec-0f743529a2ae",
+          filename: "launch-spec.md",
+          ingestion: { queued: true, response: { ok: true } },
+          mime_type: "text/markdown",
+          observed_at: "2026-07-20T00:29:56+00:00",
+          original_path: ".../vault/projects/jarvis/files/launch-spec-0f743529a2ae.md",
+          retracted: false,
+          retracted_at: "",
+          session_id: "project:jarvis:uploads:launch-spec-0f743529a2ae",
+          title: "Launch spec",
+          uploaded_by: "neil",
+          metadata: { source: "fixture" },
+        },
+        {
           doc_id: "fixture-cockpit-spec",
           filename: "cockpit-spec.md",
           title: "Cockpit API Spec",
+          channel: "cockpit",
           session_id: "project:jarvis-cockpit:uploads:fixture-cockpit-spec",
           original_path: "projects/jarvis-cockpit/files/fixture-cockpit-spec.md",
           content_hash: "sha256:fixture",
           artifact_type: "spec",
+          mime_type: "text/markdown",
           uploaded_by: "fixture",
           observed_at: now,
           retracted: false,
@@ -2442,10 +2479,12 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
           doc_id: "fixture-cockpit-roadmap",
           filename: "Cockpit Roadmap.md",
           title: "Cockpit Roadmap",
+          channel: "cockpit",
           session_id: "project:jarvis-cockpit:uploads:fixture-cockpit-roadmap",
           original_path: "projects/jarvis-cockpit/files/Cockpit Roadmap.md",
           content_hash: "sha256:fixture-roadmap",
           artifact_type: "plan",
+          mime_type: "text/markdown",
           uploaded_by: "fixture",
           observed_at: now,
           retracted: false,
@@ -2456,13 +2495,16 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
           doc_id: "fixture-retracted-notes",
           filename: "retracted-notes.md",
           title: "Retracted notes",
+          channel: "cockpit",
           session_id: "project:jarvis-cockpit:uploads:fixture-retracted-notes",
           original_path: "projects/jarvis-cockpit/files/retracted-notes.md",
           content_hash: "sha256:fixture-retracted",
           artifact_type: "note",
+          mime_type: "text/markdown",
           uploaded_by: "fixture",
           observed_at: now,
           retracted: true,
+          retracted_at: now,
           ingestion: { queued: false },
           metadata: { source: "fixture" },
         },
@@ -3384,12 +3426,31 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
             }),
           );
     },
-    getProjectFiles: (candidateProjectId, options) =>
-      Effect.succeed(
-        (projectFiles.get(candidateProjectId) ?? []).filter(
-          (file) => options?.includeRetracted || !file.retracted,
-        ),
-      ),
+    getProjectFilesResponse: (candidateProjectId, options) => {
+      const query = firstTrimmed(options?.query);
+      const includeRetracted = options?.includeRetracted;
+      const files = fixtureSearchProjectFiles(projectFiles.get(candidateProjectId) ?? [], {
+        ...(includeRetracted === undefined ? {} : { includeRetracted }),
+        query,
+      });
+      return Effect.succeed({
+        api_version: "v1" as const,
+        schema_version: 1,
+        project_id: JarvisProjectId.make(candidateProjectId),
+        ...(query === null ? {} : { query }),
+        files,
+      });
+    },
+    getProjectFiles: (candidateProjectId, options) => {
+      const query = firstTrimmed(options?.query);
+      const includeRetracted = options?.includeRetracted;
+      return Effect.succeed(
+        fixtureSearchProjectFiles(projectFiles.get(candidateProjectId) ?? [], {
+          ...(includeRetracted === undefined ? {} : { includeRetracted }),
+          query,
+        }),
+      );
+    },
     getProjectThreads: (candidateProjectId, options) =>
       Effect.succeed(
         (projectThreads.get(candidateProjectId) ?? []).filter(
@@ -3554,11 +3615,14 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       const docId = `fixture-${fixtureIdSlug(input.filename)}-${generatedProjectFileCount}`;
       const file: JarvisProjectFile = {
         doc_id: docId,
+        filename: input.filename,
         title: input.title ?? input.filename,
+        channel: "cockpit",
         session_id: `project:${candidateProjectId}:uploads:${docId}`,
         original_path: `projects/${candidateProjectId}/files/${input.filename}`,
         content_hash: `sha256:${docId}`,
         artifact_type: input.artifact_type ?? "spec",
+        mime_type: input.mime_type ?? "text/plain",
         uploaded_by: "fixture",
         observed_at: now,
         retracted: false,
@@ -4352,17 +4416,52 @@ function projectFileUploadFormData(input: JarvisProjectFileUploadInput): FormDat
 function projectFileJson(file: JarvisProjectFile): JsonObjectType {
   return {
     doc_id: file.doc_id,
+    filename: file.filename ?? "",
     title: file.title ?? "",
+    channel: file.channel ?? "",
     session_id: file.session_id ?? "",
     original_path: file.original_path ?? "",
     content_hash: file.content_hash ?? "",
     artifact_type: file.artifact_type ?? "",
+    mime_type: file.mime_type ?? "",
     uploaded_by: file.uploaded_by ?? "",
     observed_at: file.observed_at ?? "",
     retracted: file.retracted,
+    retracted_at: file.retracted_at ?? "",
     ingestion: file.ingestion ?? {},
     metadata: file.metadata ?? {},
   };
+}
+
+function fixtureSearchProjectFiles(
+  files: ReadonlyArray<JarvisProjectFile>,
+  options: { readonly includeRetracted?: boolean; readonly query?: string | null },
+): JarvisProjectFile[] {
+  const visibleFiles = files.filter((file) => options.includeRetracted || !file.retracted);
+  const query = firstTrimmed(options.query);
+  if (query === null) {
+    return [...visibleFiles];
+  }
+  const normalizedQuery = query.toLowerCase();
+  return visibleFiles
+    .filter((file) => fixtureProjectFileSearchText(file).includes(normalizedQuery))
+    .slice(0, 20);
+}
+
+function fixtureProjectFileSearchText(file: JarvisProjectFile): string {
+  return [
+    file.filename,
+    file.title,
+    file.name,
+    file.label,
+    file.doc_id,
+    file.original_path,
+    file.artifact_type,
+    file.mime_type,
+  ]
+    .flatMap((value) => (typeof value === "string" ? [value] : []))
+    .join("\n")
+    .toLowerCase();
 }
 
 function firstTrimmed(...values: ReadonlyArray<unknown>): string | null {

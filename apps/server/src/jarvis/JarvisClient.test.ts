@@ -679,11 +679,13 @@ it.effect("cockpit client calls project memory and file endpoints", () =>
         });
         const path = new URL(String(url)).pathname;
         if (path.endsWith("/files") && (init?.method ?? "GET") === "GET") {
+          const query = new URL(String(url)).searchParams.get("query") ?? undefined;
           return jsonResponse({
             api_version: "v1",
             schema_version: 1,
             project_id: "dogfood",
-            files: [{ doc_id: "spec-1", title: "Spec", retracted: false }],
+            ...(query === undefined ? {} : { query }),
+            files: [{ doc_id: "spec-1", filename: "spec.md", title: "Spec", retracted: false }],
           });
         }
         return jsonResponse({ ok: true, result: "done", doc_id: "spec-1" });
@@ -698,7 +700,11 @@ it.effect("cockpit client calls project memory and file endpoints", () =>
       replacement: "new",
       confirm: true,
     });
-    const files = yield* client.getProjectFiles("dogfood", { includeRetracted: true });
+    const filesResponse = yield* client.getProjectFilesResponse("dogfood", {
+      includeRetracted: true,
+      query: "Launch spec",
+    });
+    const files = filesResponse.files;
     yield* client.uploadProjectFile("dogfood", {
       filename: "spec.md",
       content_base64: NodeBuffer.Buffer.from("# Spec").toString("base64"),
@@ -719,12 +725,17 @@ it.effect("cockpit client calls project memory and file endpoints", () =>
         ["POST", "http://jarvis.local:8787/v1/projects/dogfood/decisions"],
         ["POST", "http://jarvis.local:8787/v1/projects/dogfood/memory/forget"],
         ["POST", "http://jarvis.local:8787/v1/projects/dogfood/memory/correct"],
-        ["GET", "http://jarvis.local:8787/v1/projects/dogfood/files?include_retracted=true"],
+        [
+          "GET",
+          "http://jarvis.local:8787/v1/projects/dogfood/files?include_retracted=true&query=Launch+spec",
+        ],
         ["POST", "http://jarvis.local:8787/v1/projects/dogfood/files"],
         ["DELETE", "http://jarvis.local:8787/v1/projects/dogfood/files/spec-1"],
       ],
     );
+    assert.strictEqual(filesResponse.query, "Launch spec");
     assert.strictEqual(files[0]?.doc_id, "spec-1");
+    assert.strictEqual(files[0]?.filename, "spec.md");
     assert.strictEqual(requests[0]?.bodyKind, "json");
     assert.strictEqual(
       (requests[0]?.body as { metadata?: { surface?: string } } | undefined)?.metadata?.surface,

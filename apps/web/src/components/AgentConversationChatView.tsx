@@ -232,10 +232,16 @@ export function AgentConversationChatView({
       input: { projectId },
     }),
   );
+  const [memoryMentionQuery, setMemoryMentionQuery] = useState("");
+  const memoryMentionRequestQuery = memoryMentionQuery.trim();
   const filesQuery = useEnvironmentQuery(
     serverEnvironment.jarvisProjectFiles({
       environmentId,
-      input: { projectId, includeRetracted: false },
+      input: {
+        projectId,
+        includeRetracted: false,
+        ...(memoryMentionRequestQuery.length > 0 ? { query: memoryMentionRequestQuery } : {}),
+      },
     }),
   );
   const sendTurn = useAtomCommand(serverEnvironment.sendJarvisProjectThreadTurn, {
@@ -1632,7 +1638,11 @@ export function AgentConversationChatView({
                     terminalOpen={false}
                     gitCwd={conversationWorkspaceCwd}
                     memoryMentionFiles={files}
+                    memoryMentionFilesQuery={
+                      filesQuery.data?.ok === true ? (filesQuery.data.query ?? null) : null
+                    }
                     memoryMentionFilesPending={filesQuery.isPending}
+                    onMemoryMentionQueryChange={setMemoryMentionQuery}
                     promptRef={promptRef}
                     composerImagesRef={composerImagesRef}
                     composerTerminalContextsRef={composerTerminalContextsRef}
