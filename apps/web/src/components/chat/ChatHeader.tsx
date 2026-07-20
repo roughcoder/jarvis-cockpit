@@ -6,7 +6,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
 import ProjectScriptsControl, {
@@ -17,6 +17,7 @@ import { OpenInPicker } from "./OpenInPicker";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { cn } from "~/lib/utils";
 import { ChatHeaderTitle } from "./ChatHeaderTitle";
+import { buildConversationRoutineContext, RoutineLauncherControl } from "../routines";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -24,6 +25,7 @@ interface ChatHeaderProps {
   draftId?: DraftId;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
+  routineProjectId: string | null;
   openInCwd: string | null;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
@@ -52,12 +54,17 @@ export function shouldShowOpenInPicker(input: {
   );
 }
 
+export function shouldShowRoutineLauncher(routineProjectId: string | null): boolean {
+  return routineProjectId !== null;
+}
+
 export const ChatHeader = memo(function ChatHeader({
   activeThreadEnvironmentId,
   activeThreadId,
   draftId,
   activeThreadTitle,
   activeProjectName,
+  routineProjectId,
   openInCwd,
   activeProjectScripts,
   preferredScriptId,
@@ -76,6 +83,14 @@ export const ChatHeader = memo(function ChatHeader({
     activeThreadEnvironmentId,
     primaryEnvironmentId,
   });
+  const routineContext = useMemo(
+    () =>
+      buildConversationRoutineContext({
+        conversationTitle: activeThreadTitle,
+        projectName: activeProjectName ?? null,
+      }),
+    [activeProjectName, activeThreadTitle],
+  );
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
@@ -88,6 +103,14 @@ export const ChatHeader = memo(function ChatHeader({
           rightPanelOpen ? "pr-0" : "pr-16",
         )}
       >
+        {shouldShowRoutineLauncher(routineProjectId) ? (
+          <RoutineLauncherControl
+            context={routineContext}
+            environmentId={activeThreadEnvironmentId}
+            projectId={routineProjectId}
+            showLabel
+          />
+        ) : null}
         {activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}

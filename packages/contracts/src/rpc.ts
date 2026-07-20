@@ -174,6 +174,19 @@ import {
   JarvisProjectThreadTurnRpcResult,
   JarvisProjectThreadUserInputInput,
   JarvisProjectUpdateInput,
+  JarvisRoutineResolveInput,
+  JarvisRoutineResolutionResult,
+  JarvisRoutineResult,
+  JarvisRoutineRunInput,
+  JarvisRoutineRunResult,
+  JarvisRoutinesResult,
+  JarvisRoutineScheduleCreateInput,
+  JarvisRoutineScheduleActionInput,
+  JarvisRoutineScheduleDeleteResult,
+  JarvisRoutineSchedulePatchInput,
+  JarvisRoutineScheduleResult,
+  JarvisRoutineScheduleRunResult,
+  JarvisRoutineSchedulesResult,
   JarvisRetentionPlanResult,
   JarvisRetentionPruneInput,
   JarvisRetentionPruneResult,
@@ -274,6 +287,15 @@ export const WS_METHODS = {
   serverGetJarvisProjectPullRequests: "server.getJarvisProjectPullRequests",
   serverGetJarvisProjectThreads: "server.getJarvisProjectThreads",
   serverGetJarvisProjectThread: "server.getJarvisProjectThread",
+  serverGetJarvisRoutines: "server.getJarvisRoutines",
+  serverGetJarvisRoutine: "server.getJarvisRoutine",
+  serverResolveJarvisRoutine: "server.resolveJarvisRoutine",
+  serverRunJarvisRoutine: "server.runJarvisRoutine",
+  serverGetJarvisRoutineSchedules: "server.getJarvisRoutineSchedules",
+  serverCreateJarvisRoutineSchedule: "server.createJarvisRoutineSchedule",
+  serverUpdateJarvisRoutineSchedule: "server.updateJarvisRoutineSchedule",
+  serverDeleteJarvisRoutineSchedule: "server.deleteJarvisRoutineSchedule",
+  serverRunJarvisRoutineSchedule: "server.runJarvisRoutineSchedule",
   serverValidateJarvisWork: "server.validateJarvisWork",
   serverPruneJarvisWorkerWorktrees: "server.pruneJarvisWorkerWorktrees",
   serverGetJarvisRetentionPlan: "server.getJarvisRetentionPlan",
@@ -472,6 +494,93 @@ export const WsServerGetJarvisProjectThreadRpc = Rpc.make(WS_METHODS.serverGetJa
   success: JarvisProjectThreadDetailResult,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
+
+export const WsServerGetJarvisRoutinesRpc = Rpc.make(WS_METHODS.serverGetJarvisRoutines, {
+  payload: Schema.Struct({}),
+  success: JarvisRoutinesResult,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerGetJarvisRoutineRpc = Rpc.make(WS_METHODS.serverGetJarvisRoutine, {
+  payload: Schema.Struct({
+    routineId: Schema.String,
+    version: Schema.optional(Schema.Number),
+  }),
+  success: JarvisRoutineResult,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerResolveJarvisRoutineRpc = Rpc.make(WS_METHODS.serverResolveJarvisRoutine, {
+  payload: Schema.Struct({
+    routineId: Schema.String,
+    input: JarvisRoutineResolveInput,
+  }),
+  success: JarvisRoutineResolutionResult,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerRunJarvisRoutineRpc = Rpc.make(WS_METHODS.serverRunJarvisRoutine, {
+  payload: Schema.Struct({
+    routineId: Schema.String,
+    input: JarvisRoutineRunInput,
+  }),
+  success: JarvisRoutineRunResult,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerGetJarvisRoutineSchedulesRpc = Rpc.make(
+  WS_METHODS.serverGetJarvisRoutineSchedules,
+  {
+    payload: Schema.Struct({}),
+    success: JarvisRoutineSchedulesResult,
+    error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerCreateJarvisRoutineScheduleRpc = Rpc.make(
+  WS_METHODS.serverCreateJarvisRoutineSchedule,
+  {
+    payload: Schema.Struct({ input: JarvisRoutineScheduleCreateInput }),
+    success: JarvisRoutineScheduleResult,
+    error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerUpdateJarvisRoutineScheduleRpc = Rpc.make(
+  WS_METHODS.serverUpdateJarvisRoutineSchedule,
+  {
+    payload: Schema.Struct({
+      scheduleId: Schema.String,
+      input: JarvisRoutineSchedulePatchInput,
+    }),
+    success: JarvisRoutineScheduleResult,
+    error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerDeleteJarvisRoutineScheduleRpc = Rpc.make(
+  WS_METHODS.serverDeleteJarvisRoutineSchedule,
+  {
+    payload: Schema.Struct({
+      scheduleId: Schema.String,
+      input: JarvisRoutineScheduleActionInput,
+    }),
+    success: JarvisRoutineScheduleDeleteResult,
+    error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerRunJarvisRoutineScheduleRpc = Rpc.make(
+  WS_METHODS.serverRunJarvisRoutineSchedule,
+  {
+    payload: Schema.Struct({
+      scheduleId: Schema.String,
+      input: JarvisRoutineScheduleActionInput,
+    }),
+    success: JarvisRoutineScheduleRunResult,
+    error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+  },
+);
 
 export const WsSubscribeJarvisProjectThreadRpc = Rpc.make(WS_METHODS.subscribeJarvisProjectThread, {
   payload: Schema.Struct({
@@ -1222,6 +1331,15 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetJarvisProjectFilesRpc,
   WsServerGetJarvisProjectThreadsRpc,
   WsServerGetJarvisProjectThreadRpc,
+  WsServerGetJarvisRoutinesRpc,
+  WsServerGetJarvisRoutineRpc,
+  WsServerResolveJarvisRoutineRpc,
+  WsServerRunJarvisRoutineRpc,
+  WsServerGetJarvisRoutineSchedulesRpc,
+  WsServerCreateJarvisRoutineScheduleRpc,
+  WsServerUpdateJarvisRoutineScheduleRpc,
+  WsServerDeleteJarvisRoutineScheduleRpc,
+  WsServerRunJarvisRoutineScheduleRpc,
   WsSubscribeJarvisProjectThreadRpc,
   WsServerValidateJarvisWorkRpc,
   WsServerPruneJarvisWorkerWorktreesRpc,

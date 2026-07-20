@@ -3,6 +3,7 @@ import type { JarvisProjectThread, JarvisWorkerSession } from "@t3tools/contract
 import type { ChatTreeNode } from "./chatTree.logic";
 
 const JARVIS_THREAD_ID_PREFIX = "jarvis-session_";
+const PROJECT_CONVERSATION_PIN_PREFIX = "jarvis-project-conversation";
 
 export type ProjectConversationTreeItem =
   | {
@@ -57,6 +58,43 @@ function sessionField(
 
 export function workerSessionThreadId(sessionRef: string): string {
   return `${JARVIS_THREAD_ID_PREFIX}${sessionRef}`;
+}
+
+export function projectConversationPinKeyPrefix(environmentId: string, projectId: string): string {
+  return `${PROJECT_CONVERSATION_PIN_PREFIX}:${encodeURIComponent(environmentId)}:${encodeURIComponent(projectId)}:`;
+}
+
+export function projectConversationPinKey(
+  environmentId: string,
+  projectId: string,
+  threadId: string,
+): string {
+  return `${projectConversationPinKeyPrefix(environmentId, projectId)}${encodeURIComponent(threadId)}`;
+}
+
+/**
+ * Selects the shallowest pinned nodes while retaining each selected node's
+ * complete descendant tree. Pinning a parent therefore pins the family once,
+ * and explicitly pinned descendants are not duplicated beneath it.
+ */
+export function pinnedProjectConversationTreeRoots(
+  tree: ReadonlyArray<ChatTreeNode<ProjectConversationTreeItem>>,
+  pinnedThreadIds: ReadonlySet<string>,
+): ChatTreeNode<ProjectConversationTreeItem>[] {
+  const pinnedRoots: ChatTreeNode<ProjectConversationTreeItem>[] = [];
+  const collect = (node: ChatTreeNode<ProjectConversationTreeItem>): void => {
+    if (pinnedThreadIds.has(node.conversation.thread_id)) {
+      pinnedRoots.push(node);
+      return;
+    }
+    for (const child of node.children) {
+      collect(child);
+    }
+  };
+  for (const node of tree) {
+    collect(node);
+  }
+  return pinnedRoots;
 }
 
 export function projectConversationArchiveTarget(

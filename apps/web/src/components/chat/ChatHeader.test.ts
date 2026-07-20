@@ -1,7 +1,7 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { shouldShowOpenInPicker } from "./ChatHeader";
+import { shouldShowOpenInPicker, shouldShowRoutineLauncher } from "./ChatHeader";
 
 describe("shouldShowOpenInPicker", () => {
   const primaryEnvironmentId = EnvironmentId.make("environment-primary");
@@ -44,5 +44,15 @@ describe("shouldShowOpenInPicker", () => {
         primaryEnvironmentId,
       }),
     ).toBe(false);
+  });
+});
+
+describe("shouldShowRoutineLauncher", () => {
+  it("shows the launcher for a mapped Jarvis project", () => {
+    expect(shouldShowRoutineLauncher("jarvis-project-42")).toBe(true);
+  });
+
+  it("omits the launcher when a thread has no Jarvis registry project", () => {
+    expect(shouldShowRoutineLauncher(null)).toBe(false);
   });
 });

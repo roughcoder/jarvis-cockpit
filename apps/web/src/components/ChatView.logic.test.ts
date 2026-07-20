@@ -15,6 +15,7 @@ import {
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
   resolveSendEnvMode,
+  routineProjectIdForThread,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
 
@@ -71,6 +72,21 @@ const readySession = {
   lastError: null,
   updatedAt: "2026-03-29T00:00:10.000Z",
 };
+
+describe("routineProjectIdForThread", () => {
+  it("uses the Jarvis registry project instead of the synthetic worker project", () => {
+    const thread = makeThread({
+      projectId: ProjectId.make("synthetic-worker-project"),
+      jarvisRegistryProjectId: "jarvis-project-42",
+    });
+
+    expect(routineProjectIdForThread(thread)).toBe("jarvis-project-42");
+  });
+
+  it("returns null for chats that are not linked to a Jarvis project", () => {
+    expect(routineProjectIdForThread(makeThread())).toBeNull();
+  });
+});
 
 describe("buildThreadTurnInterruptInput", () => {
   it("targets the session's active running turn", () => {

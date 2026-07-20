@@ -13,7 +13,6 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArchiveIcon,
-  BotIcon,
   BrainIcon,
   ExternalLinkIcon,
   GitBranchIcon,
@@ -730,21 +729,9 @@ export function ProjectView({ environmentId, projectId }: ProjectViewProps) {
               />
               Refresh deck
             </Button>
-            <Button size="sm" variant="outline" render={<Link to="/settings/projects" />}>
+            <Button size="sm" variant="outline" render={<Link to="/projects/manage" />}>
               <ExternalLinkIcon className="size-4" />
               Settings
-            </Button>
-            <Button
-              size="sm"
-              render={
-                <Link
-                  to="/jarvis-project/$environmentId/$projectId/orchestration"
-                  params={{ environmentId, projectId }}
-                />
-              }
-            >
-              <BotIcon className="size-4" />
-              Orchestration
             </Button>
           </div>
         </div>
@@ -1322,45 +1309,6 @@ export function ProjectView({ environmentId, projectId }: ProjectViewProps) {
           </AlertDialogFooter>
         </AlertDialogPopup>
       </AlertDialog>
-    </div>
-  );
-}
-
-export function ProjectOrchestrationPlaceholderView({
-  environmentId,
-  projectId,
-}: ProjectViewProps) {
-  return (
-    <div className="flex min-h-0 flex-1 items-center justify-center bg-background px-4 py-6 text-foreground">
-      <div className="w-full max-w-xl rounded-lg border border-border/70 bg-muted/20 p-6">
-        <div className="flex items-center gap-3">
-          <span className="flex size-9 items-center justify-center rounded-md border border-border bg-background">
-            <BotIcon className="size-4 text-muted-foreground" />
-          </span>
-          <div className="min-w-0">
-            <h1 className="text-xl font-semibold text-foreground">
-              Orchestration chat — coming soon
-            </h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {projectId} in {environmentId}
-            </p>
-          </div>
-        </div>
-        <div className="mt-5">
-          <Button
-            size="sm"
-            variant="outline"
-            render={
-              <Link
-                to="/jarvis-project/$environmentId/$projectId"
-                params={{ environmentId, projectId }}
-              />
-            }
-          >
-            Back to project
-          </Button>
-        </div>
-      </div>
     </div>
   );
 }

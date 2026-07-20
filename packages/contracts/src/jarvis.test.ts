@@ -20,6 +20,8 @@ import {
   JarvisRetentionPruneResponse,
   JarvisRetentionSettingsResponse,
   JarvisRetentionSettingsUpdateInput,
+  JarvisRoutinesResult,
+  JarvisRoutineSchedulesResult,
   JarvisRunsSnapshot,
   JarvisSessionCheckpointsResponse,
   JarvisSessionCheckpointsPage,
@@ -71,12 +73,90 @@ const decodeProjectThreadControl = Schema.decodeUnknownEffect(JarvisProjectThrea
 const decodeWorkerWorktreePruneResponse = Schema.decodeUnknownEffect(
   JarvisWorkerWorktreePruneResponse,
 );
+const decodeRoutines = Schema.decodeUnknownEffect(JarvisRoutinesResult);
+const decodeRoutineSchedules = Schema.decodeUnknownEffect(JarvisRoutineSchedulesResult);
 const encodeProjectThreadDetail = Schema.encodeEffect(JarvisProjectThreadDetailResponse);
 const encodeProjectThreadTurn = Schema.encodeEffect(JarvisProjectThreadTurnInput);
 
 const generatedAt = "2026-07-01T12:00:00+00:00";
 const sessionRef = "sessref_macbook-worker_sess_123";
 const runId = "run_123";
+
+it.effect("decodes rich routine parameters and scheduled bindings", () =>
+  Effect.gen(function* () {
+    const routines = yield* decodeRoutines({
+      ok: true,
+      api_version: "v1",
+      schema_version: 1,
+      routines: [
+        {
+          routine_id: "pull-request-review",
+          version: 1,
+          name: "Pull request review",
+          summary: "Review a pull request.",
+          description: "Run two independent reviewers and synthesise their findings.",
+          builtin: true,
+          target_types: ["pull_request"],
+          parameters: [
+            {
+              name: "reviewers",
+              label: "Reviewers",
+              description: "Provider/model combinations.",
+              type: "model_ref",
+              required: true,
+              default: null,
+              options_source: "runtime.models",
+              allow_multiple: true,
+              sensitive: false,
+              choices: [],
+              min_items: 2,
+              max_items: 2,
+            },
+          ],
+          execution: {
+            chat_type: "orchestrator",
+            default_engine: "codex",
+            supported_engines: ["codex", "claude"],
+          },
+        },
+      ],
+    });
+    const schedules = yield* decodeRoutineSchedules({
+      ok: true,
+      api_version: "v1",
+      schema_version: 1,
+      schedules: [
+        {
+          schedule_id: "sched_review",
+          name: "Weekday review",
+          routine_id: "pull-request-review",
+          routine_version: 1,
+          project_id: "jarvis-cockpit",
+          target: { pull_request: { repo: "roughcoder/jarvis-cockpit", number: 42 } },
+          params: { reviewers: [{ engine: "codex", model: "gpt-5.5" }] },
+          engine: "codex",
+          model: "gpt-5.5",
+          effort: "high",
+          speed: "",
+          worker_id: "macbook-worker",
+          hour: 9,
+          minute: 30,
+          weekdays: [0, 1, 2, 3, 4],
+          timezone: "Europe/London",
+          enabled: true,
+          created_by: "fixture",
+          last_fired_date: "",
+          created_at: generatedAt,
+          updated_at: generatedAt,
+        },
+      ],
+    });
+
+    assert.strictEqual(routines.routines?.[0]?.parameters[0]?.type, "model_ref");
+    assert.strictEqual(routines.routines?.[0]?.parameters[0]?.min_items, 2);
+    assert.deepStrictEqual(schedules.schedules?.[0]?.weekdays, [0, 1, 2, 3, 4]);
+  }),
+);
 
 const sessionFixture = {
   session_ref: sessionRef,

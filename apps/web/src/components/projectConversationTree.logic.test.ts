@@ -4,8 +4,11 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   projectConversationArchiveTarget,
   projectConversationDescendantArchiveTargets,
+  projectConversationPinKey,
+  projectConversationPinKeyPrefix,
   projectConversationTreeItems,
   projectConversationTreeDescendants,
+  pinnedProjectConversationTreeRoots,
   workerSessionThreadId,
 } from "./projectConversationTree.logic";
 import { buildChatTree } from "./chatTree.logic";
@@ -217,5 +220,74 @@ describe("project conversation archive helpers", () => {
       { kind: "project-thread", threadId: "follow-up" },
       { kind: "worker-session", sessionRef: "sessref_worker_child-1" },
     ]);
+  });
+});
+
+describe("project conversation pin helpers", () => {
+  it("builds scoped keys that distinguish environments and projects", () => {
+    expect(projectConversationPinKey("local", "cockpit", "review/42")).toBe(
+      `${projectConversationPinKeyPrefix("local", "cockpit")}review%2F42`,
+    );
+    expect(projectConversationPinKey("remote", "cockpit", "review/42")).not.toBe(
+      projectConversationPinKey("local", "cockpit", "review/42"),
+    );
+  });
+
+  it("keeps descendants nested when their parent is pinned", () => {
+    const parent = projectThread();
+    const nestedThread = projectThread({
+      thread_id: "follow-up",
+      session_id: "project:cockpit:follow-up",
+      parent_chat_id: parent.thread_id,
+      title: "Follow-up",
+    });
+    const tree = buildChatTree(
+      projectConversationTreeItems({
+        projectId: "cockpit",
+        projectThreads: [parent, nestedThread],
+        workerSessions: [
+          workerSession({
+            session_ref: "sessref_worker_grandchild",
+            session_id: "grandchild",
+            parent_chat_id: nestedThread.thread_id,
+          }),
+        ],
+        includeArchived: false,
+      }),
+    );
+
+    const pinned = pinnedProjectConversationTreeRoots(
+      tree,
+      new Set([parent.thread_id, nestedThread.thread_id]),
+    );
+
+    expect(pinned).toHaveLength(1);
+    expect(pinned[0]?.conversation.thread_id).toBe(parent.thread_id);
+    expect(pinned[0]?.children[0]?.conversation.thread_id).toBe(nestedThread.thread_id);
+    expect(pinned[0]?.children[0]?.children[0]?.conversation.thread_id).toBe(
+      workerSessionThreadId("sessref_worker_grandchild"),
+    );
+  });
+
+  it("promotes a pinned child to a pinned root when its parent is not pinned", () => {
+    const parent = projectThread();
+    const child = projectThread({
+      thread_id: "follow-up",
+      session_id: "project:cockpit:follow-up",
+      parent_chat_id: parent.thread_id,
+    });
+    const tree = buildChatTree(
+      projectConversationTreeItems({
+        projectId: "cockpit",
+        projectThreads: [parent, child],
+        workerSessions: [],
+        includeArchived: false,
+      }),
+    );
+
+    expect(
+      pinnedProjectConversationTreeRoots(tree, new Set([child.thread_id]))[0]?.conversation
+        .thread_id,
+    ).toBe(child.thread_id);
   });
 });

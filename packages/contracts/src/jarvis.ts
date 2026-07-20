@@ -46,6 +46,12 @@ export type JarvisArtifactId = typeof JarvisArtifactId.Type;
 export const JarvisRequestId = makeJarvisId("JarvisRequestId");
 export type JarvisRequestId = typeof JarvisRequestId.Type;
 
+export const JarvisRoutineId = makeJarvisId("JarvisRoutineId");
+export type JarvisRoutineId = typeof JarvisRoutineId.Type;
+
+export const JarvisRoutineScheduleId = makeJarvisId("JarvisRoutineScheduleId");
+export type JarvisRoutineScheduleId = typeof JarvisRoutineScheduleId.Type;
+
 export const JarvisProviderId = TrimmedNonEmptyString;
 export type JarvisProviderId = typeof JarvisProviderId.Type;
 
@@ -517,6 +523,8 @@ export const JarvisRouteCapabilityGroup = Schema.Literals([
   "memory",
   "conversation",
   "worker-dispatch",
+  "routine",
+  "schedule",
   "mcp",
   "activity",
 ]);
@@ -1551,6 +1559,257 @@ export const JarvisProjectThreadControlRpcResult = Schema.Struct({
   error: Schema.optionalKey(JarvisReadError),
 });
 export type JarvisProjectThreadControlRpcResult = typeof JarvisProjectThreadControlRpcResult.Type;
+
+/** A reusable process input exposed by the Jarvis routine catalog. */
+export const JarvisRoutineParameterType = Schema.Literals([
+  "string",
+  "text",
+  "boolean",
+  "integer",
+  "date",
+  "enum",
+  "repository_ref",
+  "pull_request_ref",
+  "model_ref",
+  "worker_ref",
+]);
+export type JarvisRoutineParameterType = typeof JarvisRoutineParameterType.Type;
+
+export const JarvisRoutineParameterDefaultSource = Schema.Literals([
+  "literal",
+  "today",
+  "target",
+  "project",
+  "requester",
+]);
+export type JarvisRoutineParameterDefaultSource = typeof JarvisRoutineParameterDefaultSource.Type;
+
+export const JarvisRoutineParameterOptionsSource = Schema.Literals([
+  "",
+  "github.repositories",
+  "project.repositories",
+  "runtime.models",
+  "runtime.workers",
+  "review.dimensions",
+]);
+export type JarvisRoutineParameterOptionsSource = typeof JarvisRoutineParameterOptionsSource.Type;
+
+export const JarvisRoutineParameterDefault = Schema.Struct({
+  source: JarvisRoutineParameterDefaultSource,
+  value: Schema.optionalKey(Schema.Json),
+});
+export type JarvisRoutineParameterDefault = typeof JarvisRoutineParameterDefault.Type;
+
+export const JarvisRoutineParameter = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  description: Schema.String,
+  type: JarvisRoutineParameterType,
+  required: Schema.Boolean,
+  default: Schema.NullOr(JarvisRoutineParameterDefault),
+  options_source: JarvisRoutineParameterOptionsSource,
+  allow_multiple: Schema.Boolean,
+  sensitive: Schema.Boolean,
+  choices: Schema.Array(Schema.String),
+  min_items: NonNegativeInt,
+  max_items: NonNegativeInt,
+});
+export type JarvisRoutineParameter = typeof JarvisRoutineParameter.Type;
+
+export const JarvisRoutineExecution = Schema.Struct({
+  chat_type: TrimmedNonEmptyString,
+  default_engine: Schema.String,
+  supported_engines: Schema.Array(TrimmedNonEmptyString),
+});
+export type JarvisRoutineExecution = typeof JarvisRoutineExecution.Type;
+
+export const JarvisRoutine = Schema.Struct({
+  routine_id: JarvisRoutineId,
+  version: NonNegativeInt,
+  name: TrimmedNonEmptyString,
+  summary: Schema.String,
+  description: Schema.String,
+  builtin: Schema.Boolean,
+  // The runtime may add target kinds without requiring a Cockpit release.
+  target_types: Schema.Array(TrimmedNonEmptyString),
+  parameters: Schema.Array(JarvisRoutineParameter),
+  execution: JarvisRoutineExecution,
+});
+export type JarvisRoutine = typeof JarvisRoutine.Type;
+
+export const JarvisRoutineContextInput = Schema.Struct({
+  routine_version: Schema.optionalKey(NonNegativeInt),
+  project_id: Schema.optionalKey(JarvisProjectId),
+  target: Schema.optionalKey(JsonObject),
+  params: Schema.optionalKey(JsonObject),
+});
+export type JarvisRoutineContextInput = typeof JarvisRoutineContextInput.Type;
+
+export const JarvisRoutineResolution = Schema.Struct({
+  values: JsonObject,
+  missing: Schema.Array(TrimmedNonEmptyString),
+  ready: Schema.Boolean,
+  rendered_prompt: Schema.String,
+});
+export type JarvisRoutineResolution = typeof JarvisRoutineResolution.Type;
+
+export const JarvisRoutineResolveInput = JarvisRoutineContextInput;
+export type JarvisRoutineResolveInput = typeof JarvisRoutineResolveInput.Type;
+
+export const JarvisRoutineRunInput = Schema.Struct({
+  routine_version: Schema.optionalKey(NonNegativeInt),
+  project_id: JarvisProjectId,
+  target: Schema.optionalKey(JsonObject),
+  params: Schema.optionalKey(JsonObject),
+  title: Schema.optionalKey(TrimmedNonEmptyString),
+  prompt: Schema.optionalKey(TrimmedNonEmptyString),
+  engine: Schema.optionalKey(TrimmedNonEmptyString),
+  model: Schema.optionalKey(TrimmedNonEmptyString),
+  effort: Schema.optionalKey(TrimmedNonEmptyString),
+  speed: Schema.optionalKey(TrimmedNonEmptyString),
+  worker_id: Schema.optionalKey(TrimmedNonEmptyString),
+  parent_chat_id: Schema.optionalKey(JarvisProjectThreadId),
+  idempotency_key: TrimmedNonEmptyString,
+});
+export type JarvisRoutineRunInput = typeof JarvisRoutineRunInput.Type;
+
+export const JarvisRoutineRun = Schema.Struct({
+  run_id: JarvisRunId,
+  routine_id: JarvisRoutineId,
+  routine_version: NonNegativeInt,
+  status: TrimmedNonEmptyString,
+  project_id: JarvisProjectId,
+  thread_id: JarvisProjectThreadId,
+  trigger: JsonObject,
+});
+export type JarvisRoutineRun = typeof JarvisRoutineRun.Type;
+
+const JarvisVersionedRoutineResultFields = {
+  ok: Schema.Boolean,
+  api_version: Schema.optionalKey(Schema.Literal("v1")),
+  schema_version: Schema.optionalKey(Schema.Number),
+  error: Schema.optionalKey(JarvisReadError),
+} as const;
+
+export const JarvisRoutinesResult = Schema.Struct({
+  ...JarvisVersionedRoutineResultFields,
+  routines: Schema.optionalKey(Schema.Array(JarvisRoutine)),
+});
+export type JarvisRoutinesResult = typeof JarvisRoutinesResult.Type;
+
+export const JarvisRoutineResult = Schema.Struct({
+  ...JarvisVersionedRoutineResultFields,
+  routine: Schema.optionalKey(JarvisRoutine),
+});
+export type JarvisRoutineResult = typeof JarvisRoutineResult.Type;
+
+export const JarvisRoutineResolutionResult = Schema.Struct({
+  ...JarvisVersionedRoutineResultFields,
+  routine: Schema.optionalKey(JarvisRoutine),
+  resolution: Schema.optionalKey(JarvisRoutineResolution),
+});
+export type JarvisRoutineResolutionResult = typeof JarvisRoutineResolutionResult.Type;
+
+export const JarvisRoutineRunResult = Schema.Struct({
+  ...JarvisVersionedRoutineResultFields,
+  run: Schema.optionalKey(JarvisRoutineRun),
+  thread: Schema.optionalKey(JarvisProjectThread),
+});
+export type JarvisRoutineRunResult = typeof JarvisRoutineRunResult.Type;
+
+const JarvisRoutineScheduleTuningFields = {
+  target: Schema.optionalKey(JsonObject),
+  params: Schema.optionalKey(JsonObject),
+  engine: Schema.optionalKey(TrimmedNonEmptyString),
+  model: Schema.optionalKey(TrimmedNonEmptyString),
+  effort: Schema.optionalKey(TrimmedNonEmptyString),
+  speed: Schema.optionalKey(TrimmedNonEmptyString),
+  worker_id: Schema.optionalKey(TrimmedNonEmptyString),
+} as const;
+
+export const JarvisRoutineSchedule = Schema.Struct({
+  schedule_id: JarvisRoutineScheduleId,
+  name: TrimmedNonEmptyString,
+  routine_id: JarvisRoutineId,
+  routine_version: NonNegativeInt,
+  project_id: JarvisProjectId,
+  target: JsonObject,
+  params: JsonObject,
+  engine: Schema.String,
+  model: Schema.String,
+  effort: Schema.String,
+  speed: Schema.String,
+  worker_id: Schema.String,
+  hour: NonNegativeInt,
+  minute: NonNegativeInt,
+  weekdays: Schema.Array(NonNegativeInt),
+  timezone: TrimmedNonEmptyString,
+  enabled: Schema.Boolean,
+  created_by: Schema.String,
+  last_fired_date: Schema.String,
+  created_at: Schema.String,
+  updated_at: Schema.String,
+});
+export type JarvisRoutineSchedule = typeof JarvisRoutineSchedule.Type;
+
+export const JarvisRoutineScheduleCreateInput = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  routine_id: JarvisRoutineId,
+  routine_version: Schema.optionalKey(NonNegativeInt),
+  project_id: JarvisProjectId,
+  ...JarvisRoutineScheduleTuningFields,
+  hour: NonNegativeInt,
+  minute: NonNegativeInt,
+  weekdays: Schema.optionalKey(Schema.Array(NonNegativeInt)),
+  timezone: Schema.optionalKey(TrimmedNonEmptyString),
+  enabled: Schema.optionalKey(Schema.Boolean),
+  idempotency_key: TrimmedNonEmptyString,
+});
+export type JarvisRoutineScheduleCreateInput = typeof JarvisRoutineScheduleCreateInput.Type;
+
+export const JarvisRoutineSchedulePatchInput = Schema.Struct({
+  name: Schema.optionalKey(TrimmedNonEmptyString),
+  ...JarvisRoutineScheduleTuningFields,
+  hour: Schema.optionalKey(NonNegativeInt),
+  minute: Schema.optionalKey(NonNegativeInt),
+  weekdays: Schema.optionalKey(Schema.Array(NonNegativeInt)),
+  timezone: Schema.optionalKey(TrimmedNonEmptyString),
+  enabled: Schema.optionalKey(Schema.Boolean),
+  idempotency_key: TrimmedNonEmptyString,
+});
+export type JarvisRoutineSchedulePatchInput = typeof JarvisRoutineSchedulePatchInput.Type;
+
+export const JarvisRoutineScheduleActionInput = Schema.Struct({
+  idempotency_key: TrimmedNonEmptyString,
+});
+export type JarvisRoutineScheduleActionInput = typeof JarvisRoutineScheduleActionInput.Type;
+
+export const JarvisRoutineSchedulesResult = Schema.Struct({
+  ...JarvisVersionedRoutineResultFields,
+  schedules: Schema.optionalKey(Schema.Array(JarvisRoutineSchedule)),
+});
+export type JarvisRoutineSchedulesResult = typeof JarvisRoutineSchedulesResult.Type;
+
+export const JarvisRoutineScheduleResult = Schema.Struct({
+  ...JarvisVersionedRoutineResultFields,
+  schedule: Schema.optionalKey(JarvisRoutineSchedule),
+});
+export type JarvisRoutineScheduleResult = typeof JarvisRoutineScheduleResult.Type;
+
+export const JarvisRoutineScheduleDeleteResult = Schema.Struct({
+  ...JarvisVersionedRoutineResultFields,
+  schedule_id: Schema.optionalKey(JarvisRoutineScheduleId),
+  deleted: Schema.optionalKey(Schema.Boolean),
+});
+export type JarvisRoutineScheduleDeleteResult = typeof JarvisRoutineScheduleDeleteResult.Type;
+
+export const JarvisRoutineScheduleRunResult = Schema.Struct({
+  ...JarvisVersionedRoutineResultFields,
+  schedule: Schema.optionalKey(JarvisRoutineSchedule),
+  run: Schema.optionalKey(JarvisRoutineRun),
+  thread: Schema.optionalKey(JarvisProjectThread),
+});
+export type JarvisRoutineScheduleRunResult = typeof JarvisRoutineScheduleRunResult.Type;
 
 export const JarvisWorkerWorktreePruneInput = Schema.Struct({
   workerId: JarvisWorkerId,

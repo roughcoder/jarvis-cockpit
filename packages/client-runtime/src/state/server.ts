@@ -292,6 +292,60 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverGetJarvisProjectThread,
       maxEntries: FINITE_QUERY_FAMILY_MAX_ENTRIES,
     }),
+    jarvisRoutines: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:jarvis-routines",
+      tag: WS_METHODS.serverGetJarvisRoutines,
+      refreshIntervalMs: 30_000,
+    }),
+    jarvisRoutine: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:jarvis-routine",
+      tag: WS_METHODS.serverGetJarvisRoutine,
+      maxEntries: FINITE_QUERY_FAMILY_MAX_ENTRIES,
+    }),
+    resolveJarvisRoutine: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:resolve-jarvis-routine",
+      tag: WS_METHODS.serverResolveJarvisRoutine,
+      scheduler: configScheduler,
+      concurrency: {
+        mode: "latest",
+        key: ({ environmentId, input }) => `${environmentId}:${input.routineId}`,
+      },
+    }),
+    runJarvisRoutine: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:run-jarvis-routine",
+      tag: WS_METHODS.serverRunJarvisRoutine,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    jarvisRoutineSchedules: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:jarvis-routine-schedules",
+      tag: WS_METHODS.serverGetJarvisRoutineSchedules,
+      refreshIntervalMs: 30_000,
+    }),
+    createJarvisRoutineSchedule: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:create-jarvis-routine-schedule",
+      tag: WS_METHODS.serverCreateJarvisRoutineSchedule,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    updateJarvisRoutineSchedule: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:update-jarvis-routine-schedule",
+      tag: WS_METHODS.serverUpdateJarvisRoutineSchedule,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    deleteJarvisRoutineSchedule: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:delete-jarvis-routine-schedule",
+      tag: WS_METHODS.serverDeleteJarvisRoutineSchedule,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
+    runJarvisRoutineSchedule: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:run-jarvis-routine-schedule",
+      tag: WS_METHODS.serverRunJarvisRoutineSchedule,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     jarvisProjectThreadStream: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:jarvis-project-thread-stream",
       tag: WS_METHODS.subscribeJarvisProjectThread,

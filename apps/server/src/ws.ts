@@ -404,12 +404,7 @@ function projectThreadMessageEquals(
   left: JarvisProjectThreadMessage,
   right: JarvisProjectThreadMessage,
 ): boolean {
-  return (
-    left.role === right.role &&
-    left.peer_id === right.peer_id &&
-    left.content === right.content &&
-    left.observed_at === right.observed_at
-  );
+  return Equal.equals(left, right);
 }
 
 function projectThreadMetadataEquals(
@@ -682,6 +677,15 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverGetJarvisProjectFiles, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetJarvisProjectThreads, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetJarvisProjectThread, AuthOrchestrationReadScope],
+  [WS_METHODS.serverGetJarvisRoutines, AuthOrchestrationReadScope],
+  [WS_METHODS.serverGetJarvisRoutine, AuthOrchestrationReadScope],
+  [WS_METHODS.serverResolveJarvisRoutine, AuthOrchestrationReadScope],
+  [WS_METHODS.serverRunJarvisRoutine, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverGetJarvisRoutineSchedules, AuthOrchestrationReadScope],
+  [WS_METHODS.serverCreateJarvisRoutineSchedule, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverUpdateJarvisRoutineSchedule, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverDeleteJarvisRoutineSchedule, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverRunJarvisRoutineSchedule, AuthOrchestrationOperateScope],
   [WS_METHODS.subscribeJarvisProjectThread, AuthOrchestrationReadScope],
   [WS_METHODS.serverValidateJarvisWork, AuthOrchestrationReadScope],
   [WS_METHODS.serverPruneJarvisWorkerWorktrees, AuthOrchestrationOperateScope],
@@ -2025,6 +2029,118 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "server",
             },
+          ),
+        [WS_METHODS.serverGetJarvisRoutines]: () =>
+          observeRpcEffect(
+            WS_METHODS.serverGetJarvisRoutines,
+            jarvisClient
+              .getRoutines()
+              .pipe(
+                Effect.catch((error) =>
+                  Effect.succeed(jarvisFailureResult(error, "Jarvis routines request failed.")),
+                ),
+              ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverGetJarvisRoutine]: ({ routineId, version }) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetJarvisRoutine,
+            jarvisClient
+              .getRoutine(routineId, version)
+              .pipe(
+                Effect.catch((error) =>
+                  Effect.succeed(jarvisFailureResult(error, "Jarvis routine request failed.")),
+                ),
+              ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverResolveJarvisRoutine]: ({ routineId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverResolveJarvisRoutine,
+            jarvisClient
+              .resolveRoutine(routineId, input)
+              .pipe(
+                Effect.catch((error) =>
+                  Effect.succeed(
+                    jarvisFailureResult(error, "Jarvis routine parameter resolution failed."),
+                  ),
+                ),
+              ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverRunJarvisRoutine]: ({ routineId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverRunJarvisRoutine,
+            jarvisClient
+              .runRoutine(routineId, input)
+              .pipe(
+                Effect.catch((error) =>
+                  Effect.succeed(jarvisFailureResult(error, "Jarvis routine launch failed.")),
+                ),
+              ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverGetJarvisRoutineSchedules]: () =>
+          observeRpcEffect(
+            WS_METHODS.serverGetJarvisRoutineSchedules,
+            jarvisClient
+              .getRoutineSchedules()
+              .pipe(
+                Effect.catch((error) =>
+                  Effect.succeed(jarvisFailureResult(error, "Jarvis schedules request failed.")),
+                ),
+              ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverCreateJarvisRoutineSchedule]: ({ input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverCreateJarvisRoutineSchedule,
+            jarvisClient
+              .createRoutineSchedule(input)
+              .pipe(
+                Effect.catch((error) =>
+                  Effect.succeed(jarvisFailureResult(error, "Jarvis schedule creation failed.")),
+                ),
+              ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverUpdateJarvisRoutineSchedule]: ({ scheduleId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverUpdateJarvisRoutineSchedule,
+            jarvisClient
+              .updateRoutineSchedule(scheduleId, input)
+              .pipe(
+                Effect.catch((error) =>
+                  Effect.succeed(jarvisFailureResult(error, "Jarvis schedule update failed.")),
+                ),
+              ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverDeleteJarvisRoutineSchedule]: ({ scheduleId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverDeleteJarvisRoutineSchedule,
+            jarvisClient
+              .deleteRoutineSchedule(scheduleId, input)
+              .pipe(
+                Effect.catch((error) =>
+                  Effect.succeed(jarvisFailureResult(error, "Jarvis schedule deletion failed.")),
+                ),
+              ),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverRunJarvisRoutineSchedule]: ({ scheduleId, input }) =>
+          observeRpcEffect(
+            WS_METHODS.serverRunJarvisRoutineSchedule,
+            jarvisClient
+              .runRoutineSchedule(scheduleId, input)
+              .pipe(
+                Effect.catch((error) =>
+                  Effect.succeed(
+                    jarvisFailureResult(error, "Jarvis scheduled routine launch failed."),
+                  ),
+                ),
+              ),
+            { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.subscribeJarvisProjectThread]: ({ projectId, threadId }) =>
           observeRpcStreamEffect(
@@ -3434,6 +3550,15 @@ function isUnsupportedJarvisRetentionError(error: unknown): boolean {
 
 function jarvisRetentionFailureMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message.trim().length > 0 ? error.message : fallback;
+}
+
+function jarvisFailureResult(error: unknown, fallback: string) {
+  return {
+    ok: false as const,
+    error: {
+      message: error instanceof Error && error.message.trim().length > 0 ? error.message : fallback,
+    },
+  };
 }
 
 export const websocketRpcRouteLayer = Layer.unwrap(

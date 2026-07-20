@@ -1,12 +1,16 @@
 import {
   ArchiveIcon,
   ArrowUpDownIcon,
+  CalendarClockIcon,
   ChevronRightIcon,
   CloudIcon,
   ContainerIcon,
+  FolderGit2Icon,
   FolderOpenIcon,
+  GitPullRequestIcon,
   Globe2Icon,
   LoaderIcon,
+  PinIcon,
   RocketIcon,
   SearchIcon,
   SettingsIcon,
@@ -14,6 +18,7 @@ import {
   TerminalIcon,
   TriangleAlertIcon,
   TrashIcon,
+  WorkflowIcon,
 } from "lucide-react";
 import {
   ChangeRequestStatusIcon,
@@ -32,6 +37,7 @@ import {
   type ContextMenuItem,
   type EnvironmentId,
   type JarvisProjectThread,
+  type JarvisWorkerProfile,
   type JarvisWorkerSession,
   ProjectId,
   type ScopedThreadRef,
@@ -127,7 +133,6 @@ import {
 } from "../jarvisProjectConversations.logic";
 import { isActiveProjectConversationStatus } from "./projectConversationHeader.logic";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import { formatRelativeTimeLabel } from "../timestampFormat";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { Kbd } from "./ui/kbd";
 import {
@@ -195,8 +200,8 @@ import {
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
   useThreadJumpHintVisibility,
-  type JarvisProjectConversationEngineIconKey,
   type ThreadStatusPill,
+  type JarvisProjectConversationEngineIconKey,
   type SidebarProjectView,
   type SidebarSurfaceCopy,
 } from "./Sidebar.logic";
@@ -205,6 +210,10 @@ import { buildChatTree, type ChatTreeNode } from "./chatTree.logic";
 import {
   projectConversationDescendantArchiveTargets,
   projectConversationArchiveTarget,
+  projectConversationPinKey,
+  projectConversationPinKeyPrefix,
+  projectConversationTreeDescendants,
+  pinnedProjectConversationTreeRoots,
   projectConversationTreeItems,
   type ProjectConversationArchiveTarget,
   type ProjectConversationTreeItem,
@@ -248,6 +257,9 @@ const SIDEBAR_LIST_ANIMATION_OPTIONS = {
 const EMPTY_THREAD_JUMP_LABELS = new Map<string, string>();
 const SIDEBAR_ICON_ACTION_BUTTON_CLASS =
   "inline-flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-md px-[calc(--spacing(1)-1px)] text-muted-foreground/60 hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring";
+const SIDEBAR_ROW_ACTION_SURFACE_CLASS =
+  "rounded-lg bg-sidebar-accent before:pointer-events-none before:absolute before:inset-y-0 before:-left-5 before:w-5 before:bg-[linear-gradient(to_right,transparent,var(--sidebar-accent))]";
+const EMPTY_JARVIS_WORKER_PROFILES: ReadonlyArray<JarvisWorkerProfile> = [];
 
 type PendingJarvisWorkDelete = {
   readonly targetKind: JarvisLifecycleTargetKind;
@@ -451,7 +463,6 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         })
       : null,
   );
-  const isHighlighted = isActive || isSelected;
   const handleOpenDiscoveredPort = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       const port = discoveredPorts[0];
@@ -725,7 +736,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         onContextMenu={handleRowContextMenu}
       >
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-          {prStatus && (
+          {prStatus && !threadStatus && (
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -810,17 +821,13 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               <TooltipPopup side="top">{terminalStatus.label}</TooltipPopup>
             </Tooltip>
           )}
-          <div
-            className={`flex min-w-12 justify-end ${
-              isRemoteThread ? "max-sm:min-w-24" : "max-sm:min-w-20"
-            }`}
-          >
+          <div className="flex items-center">
             {jarvisSessionRef !== null ? (
               <Tooltip>
                 <TooltipTrigger
                   render={
                     <div
-                      className={`absolute top-1/2 right-0.5 z-20 -translate-y-1/2 transition-opacity duration-150 ${archiveActionClassName}`}
+                      className={`absolute top-1/2 right-0.5 z-20 -translate-y-1/2 transition-opacity duration-150 ${SIDEBAR_ROW_ACTION_SURFACE_CLASS} ${archiveActionClassName}`}
                     >
                       <button
                         type="button"
@@ -854,7 +861,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
             ) : !isThreadRunning ? (
               appSettingsConfirmThreadArchive ? (
                 <div
-                  className={`absolute top-1/2 right-0.5 z-20 -translate-y-1/2 transition-opacity duration-150 ${archiveActionClassName}`}
+                  className={`absolute top-1/2 right-0.5 z-20 -translate-y-1/2 transition-opacity duration-150 ${SIDEBAR_ROW_ACTION_SURFACE_CLASS} ${archiveActionClassName}`}
                 >
                   <button
                     type="button"
@@ -873,7 +880,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                   <TooltipTrigger
                     render={
                       <div
-                        className={`absolute top-1/2 right-0.5 z-20 -translate-y-1/2 transition-opacity duration-150 ${archiveActionClassName}`}
+                        className={`absolute top-1/2 right-0.5 z-20 -translate-y-1/2 transition-opacity duration-150 ${SIDEBAR_ROW_ACTION_SURFACE_CLASS} ${archiveActionClassName}`}
                       >
                         <button
                           type="button"
@@ -924,19 +931,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                     </TooltipTrigger>
                     <TooltipPopup side="top">{jumpLabel}</TooltipPopup>
                   </Tooltip>
-                ) : (
-                  <span
-                    className={`text-[10px] tabular-nums ${
-                      isHighlighted
-                        ? "text-foreground/72 dark:text-foreground/82"
-                        : "text-muted-foreground/40"
-                    }`}
-                  >
-                    {formatRelativeTimeLabel(
-                      thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
-                    )}
-                  </span>
-                )}
+                ) : null}
               </span>
             </span>
           </div>
@@ -963,6 +958,7 @@ interface SidebarProjectThreadListProps {
   activeRouteThreadKey: string | null;
   activeProjectConversationRoute: ProjectConversationRouteParams | null;
   threadJumpLabelByKey: ReadonlyMap<string, string>;
+  sidebarThreadPreviewCount: SidebarThreadPreviewCount;
   appSettingsConfirmThreadArchive: boolean;
   renamingThreadKey: string | null;
   renamingTitle: string;
@@ -1008,11 +1004,15 @@ function SidebarJarvisProjectConversations({
   projectId,
   projectName,
   activeThreadId,
+  previewLimit,
+  pinnedOnly = false,
 }: {
   readonly environmentId: EnvironmentId;
   readonly projectId: string;
   readonly projectName: string;
   readonly activeThreadId: string | null;
+  readonly previewLimit: number;
+  readonly pinnedOnly?: boolean;
 }) {
   const navigate = useNavigate();
   const activeRouteThreadId = useParams({
@@ -1020,7 +1020,14 @@ function SidebarJarvisProjectConversations({
     select: (params) => params.threadId ?? null,
   });
   const { isMobile, setOpenMobile } = useSidebar();
+  const pinnedProjectConversationKeys = useUiStateStore(
+    (state) => state.pinnedProjectConversationKeys,
+  );
+  const setProjectConversationPinned = useUiStateStore(
+    (state) => state.setProjectConversationPinned,
+  );
   const [showArchived, setShowArchived] = useState(false);
+  const [showAllConversations, setShowAllConversations] = useState(false);
   const [confirmingArchiveThreadId, setConfirmingArchiveThreadId] = useState<string | null>(null);
   const [pendingFamilyArchive, setPendingFamilyArchive] =
     useState<ChatTreeNode<ProjectConversationTreeItem> | null>(null);
@@ -1028,9 +1035,6 @@ function SidebarJarvisProjectConversations({
   const [collapsedConversationIds, setCollapsedConversationIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const createThread = useAtomCommand(serverEnvironment.createJarvisProjectThread, {
-    reportFailure: false,
-  });
   const archiveThread = useAtomCommand(serverEnvironment.archiveJarvisProjectThread, {
     reportFailure: false,
   });
@@ -1051,10 +1055,6 @@ function SidebarJarvisProjectConversations({
     projectThreadsQuery.data?.ok === true ? (projectThreadsQuery.data.threads ?? []) : [];
   const workerSessions: ReadonlyArray<JarvisWorkerSession> =
     snapshotQuery.data?.ok === true ? (snapshotQuery.data.snapshot?.sessions ?? []) : [];
-  const orchestratorTarget = useDefaultOrchestratorTarget(
-    environmentId,
-    snapshotQuery.data?.snapshot?.workers ?? [],
-  );
   const hasActiveWorkerSessions = workerSessions.some((session) =>
     ["created", "provisioning", "ready", "running", "waiting", "needs_input"].includes(
       session.status,
@@ -1085,6 +1085,49 @@ function SidebarJarvisProjectConversations({
     [conversations, projectId, showArchived, workerSessions],
   );
   const conversationTree = useMemo(() => buildChatTree(conversationItems), [conversationItems]);
+  const pinnedConversationKeySet = useMemo(
+    () => new Set(pinnedProjectConversationKeys),
+    [pinnedProjectConversationKeys],
+  );
+  const pinnedConversationThreadIds = useMemo(
+    () =>
+      new Set(
+        conversationItems.flatMap((conversation) =>
+          pinnedConversationKeySet.has(
+            projectConversationPinKey(environmentId, projectId, conversation.thread_id),
+          )
+            ? [conversation.thread_id]
+            : [],
+        ),
+      ),
+    [conversationItems, environmentId, pinnedConversationKeySet, projectId],
+  );
+  const pinnedConversationTree = useMemo(
+    () => pinnedProjectConversationTreeRoots(conversationTree, pinnedConversationThreadIds),
+    [conversationTree, pinnedConversationThreadIds],
+  );
+  const resolvedActiveThreadId = activeRouteThreadId ?? activeThreadId;
+  const visibleConversationTree = useMemo(() => {
+    if (showAllConversations || conversationTree.length <= previewLimit) {
+      return conversationTree;
+    }
+
+    const visibleRoots = conversationTree.slice(0, previewLimit);
+    if (!resolvedActiveThreadId) {
+      return visibleRoots;
+    }
+
+    const containsActiveThread = (node: ChatTreeNode<ProjectConversationTreeItem>): boolean =>
+      node.conversation.thread_id === resolvedActiveThreadId ||
+      node.children.some(containsActiveThread);
+    const activeRoot = conversationTree.find(containsActiveThread);
+    if (!activeRoot || visibleRoots.includes(activeRoot)) {
+      return visibleRoots;
+    }
+
+    return [...visibleRoots.slice(0, Math.max(0, previewLimit - 1)), activeRoot];
+  }, [conversationTree, previewLimit, resolvedActiveThreadId, showAllConversations]);
+  const hiddenConversationCount = conversationTree.length - visibleConversationTree.length;
   const showPending = !projectThreadsQuery.data && projectThreadsQuery.isPending;
   const showFailed = projectThreadsQuery.error !== null || projectThreadsQuery.data?.ok === false;
   const toggleConversationExpanded = useCallback((threadId: string) => {
@@ -1098,6 +1141,20 @@ function SidebarJarvisProjectConversations({
       return next;
     });
   }, []);
+  const isConversationPinned = useCallback(
+    (threadId: string) =>
+      pinnedConversationKeySet.has(projectConversationPinKey(environmentId, projectId, threadId)),
+    [environmentId, pinnedConversationKeySet, projectId],
+  );
+  const setConversationPinned = useCallback(
+    (threadId: string, pinned: boolean) => {
+      setProjectConversationPinned(
+        projectConversationPinKey(environmentId, projectId, threadId),
+        pinned,
+      );
+    },
+    [environmentId, projectId, setProjectConversationPinned],
+  );
   const navigateToProjectConversation = useCallback(
     (conversation: ProjectConversationTreeItem | JarvisProjectThread) => {
       if (isMobile) {
@@ -1123,55 +1180,6 @@ function SidebarJarvisProjectConversations({
     },
     [environmentId, isMobile, navigate, projectId, setOpenMobile],
   );
-  const handleCreateProjectConversation = useCallback(async () => {
-    if (!orchestratorTarget) {
-      toastManager.add({
-        type: "error",
-        title: "Could not create orchestrator",
-        description: "No orchestrator model is configured for this environment.",
-      });
-      return;
-    }
-    const title = `Conversation for ${projectName}`;
-    const result = await createThread({
-      environmentId,
-      input: {
-        projectId,
-        input: { title, ...orchestratorTarget },
-      },
-    });
-    if (result._tag === "Failure") {
-      if (!isAtomCommandInterrupted(result)) {
-        toastManager.add({
-          type: "error",
-          title: "Could not create project conversation",
-          description: formatProjectConversationFailure("create", squashAtomCommandFailure(result)),
-        });
-      }
-      return;
-    }
-    if (!result.value.ok || !result.value.thread) {
-      toastManager.add({
-        type: "error",
-        title: "Could not create project conversation",
-        description: formatProjectConversationFailure(
-          "create",
-          result.value.error?.message ?? "Jarvis did not return a project conversation.",
-        ),
-      });
-      return;
-    }
-    projectThreadsQuery.refresh();
-    navigateToProjectConversation(result.value.thread);
-  }, [
-    createThread,
-    environmentId,
-    navigateToProjectConversation,
-    orchestratorTarget,
-    projectId,
-    projectName,
-    projectThreadsQuery,
-  ]);
   const archiveTarget = useCallback(
     async (target: ProjectConversationArchiveTarget): Promise<boolean> => {
       const result =
@@ -1198,9 +1206,10 @@ function SidebarJarvisProjectConversations({
       }
       projectThreadsQuery.refresh();
       snapshotQuery.refresh();
+      setConversationPinned(conversation.thread_id, false);
       toastManager.add({ type: "success", title: "Conversation archived" });
     },
-    [archiveTarget, projectThreadsQuery, snapshotQuery],
+    [archiveTarget, projectThreadsQuery, setConversationPinned, snapshotQuery],
   );
   const handleArchiveFamily = useCallback(
     async (includeChildren: boolean) => {
@@ -1229,55 +1238,54 @@ function SidebarJarvisProjectConversations({
           description: `${completed} of ${targets.length} conversations were archived.`,
         });
       } else {
+        const archivedConversations = includeChildren
+          ? [node.conversation, ...projectConversationTreeDescendants(node)]
+          : [node.conversation];
+        for (const conversation of archivedConversations) {
+          setConversationPinned(conversation.thread_id, false);
+        }
         toastManager.add({
           type: "success",
           title: includeChildren ? "Conversation family archived" : "Parent conversation archived",
         });
       }
     },
-    [archiveTarget, pendingFamilyArchive, projectThreadsQuery, snapshotQuery],
+    [
+      archiveTarget,
+      pendingFamilyArchive,
+      projectThreadsQuery,
+      setConversationPinned,
+      snapshotQuery,
+    ],
   );
 
   if (showPending) {
+    if (pinnedOnly) return null;
     return (
-      <>
-        <SidebarProjectConversationCreateRow
-          onCreate={() => void handleCreateProjectConversation()}
-          disabled
-        />
-        <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
-          <div className="flex h-6 w-full items-center gap-1.5 px-2 text-[10px] text-muted-foreground/60">
-            <LoaderIcon className="size-3 animate-spin" />
-            <span>Checking conversations</span>
-          </div>
-        </SidebarMenuSubItem>
-      </>
+      <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
+        <div className="flex h-6 w-full items-center gap-1.5 px-2 text-[10px] text-muted-foreground/60">
+          <LoaderIcon className="size-3 animate-spin" />
+          <span>Checking conversations</span>
+        </div>
+      </SidebarMenuSubItem>
     );
   }
 
   if (showFailed) {
+    if (pinnedOnly) return null;
     return (
-      <>
-        <SidebarProjectConversationCreateRow
-          onCreate={() => void handleCreateProjectConversation()}
-          disabled={orchestratorTarget === null}
-        />
-        <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
-          <div className="flex h-6 w-full items-center px-2 text-[10px] text-destructive/80">
-            <span>Conversations unavailable</span>
-          </div>
-        </SidebarMenuSubItem>
-      </>
+      <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
+        <div className="flex h-6 w-full items-center px-2 text-[10px] text-destructive/80">
+          <span>Conversations unavailable</span>
+        </div>
+      </SidebarMenuSubItem>
     );
   }
 
   if (conversations.length === 0) {
+    if (pinnedOnly) return null;
     return (
       <>
-        <SidebarProjectConversationCreateRow
-          onCreate={() => void handleCreateProjectConversation()}
-          disabled={orchestratorTarget === null}
-        />
         <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
           <div className="flex h-6 w-full items-center px-2 text-[10px] text-muted-foreground/60">
             <span>No project conversations yet</span>
@@ -1291,17 +1299,42 @@ function SidebarJarvisProjectConversations({
     );
   }
 
+  if (pinnedOnly) {
+    if (pinnedConversationTree.length === 0) return null;
+    return (
+      <>
+        <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
+          <div className="flex h-6 items-center px-2 text-[10px] font-medium text-muted-foreground/60">
+            {projectName}
+          </div>
+        </SidebarMenuSubItem>
+        {pinnedConversationTree.map((node) =>
+          renderProjectConversationTreeNode({
+            node,
+            depth: 0,
+            activeThreadId: resolvedActiveThreadId,
+            confirmingArchiveThreadId,
+            collapsedConversationIds,
+            navigateToProjectConversation,
+            setConfirmingArchiveThreadId,
+            toggleConversationExpanded,
+            handleArchiveConversationItem,
+            setPendingFamilyArchive,
+            isConversationPinned,
+            setConversationPinned,
+          }),
+        )}
+      </>
+    );
+  }
+
   return (
     <>
-      <SidebarProjectConversationCreateRow
-        onCreate={() => void handleCreateProjectConversation()}
-        disabled={orchestratorTarget === null}
-      />
-      {conversationTree.map((node) =>
+      {visibleConversationTree.map((node) =>
         renderProjectConversationTreeNode({
           node,
           depth: 0,
-          activeThreadId: activeRouteThreadId ?? activeThreadId,
+          activeThreadId: resolvedActiveThreadId,
           confirmingArchiveThreadId,
           collapsedConversationIds,
           navigateToProjectConversation,
@@ -1309,8 +1342,23 @@ function SidebarJarvisProjectConversations({
           toggleConversationExpanded,
           handleArchiveConversationItem,
           setPendingFamilyArchive,
+          isConversationPinned,
+          setConversationPinned,
         }),
       )}
+      {hiddenConversationCount > 0 || showAllConversations ? (
+        <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
+          <button
+            type="button"
+            className="flex h-8 w-full items-center px-2 text-left text-xs font-medium text-muted-foreground/72 hover:text-foreground"
+            onClick={() => setShowAllConversations((current) => !current)}
+          >
+            {showAllConversations
+              ? "Show fewer"
+              : `Show ${hiddenConversationCount} more conversation${hiddenConversationCount === 1 ? "" : "s"}`}
+          </button>
+        </SidebarMenuSubItem>
+      ) : null}
       <SidebarProjectConversationArchivedToggle
         showArchived={showArchived}
         onToggle={() => setShowArchived((value) => !value)}
@@ -1366,6 +1414,8 @@ function renderProjectConversationTreeNode({
   toggleConversationExpanded,
   handleArchiveConversationItem,
   setPendingFamilyArchive,
+  isConversationPinned,
+  setConversationPinned,
 }: {
   readonly node: ChatTreeNode<ProjectConversationTreeItem>;
   readonly depth: number;
@@ -1379,6 +1429,8 @@ function renderProjectConversationTreeNode({
   readonly setPendingFamilyArchive: React.Dispatch<
     React.SetStateAction<ChatTreeNode<ProjectConversationTreeItem> | null>
   >;
+  readonly isConversationPinned: (threadId: string) => boolean;
+  readonly setConversationPinned: (threadId: string, pinned: boolean) => void;
 }) {
   const conversation = node.conversation;
   const hasChildren = node.children.length > 0;
@@ -1396,6 +1448,7 @@ function renderProjectConversationTreeNode({
             : conversation.status,
         )}
         archived={conversation.archived_at != null && conversation.archived_at !== ""}
+        isPinned={isConversationPinned(conversation.thread_id)}
         canArchive
         depth={depth}
         hasChildren={hasChildren}
@@ -1403,6 +1456,12 @@ function renderProjectConversationTreeNode({
         isActive={activeThreadId === conversation.thread_id}
         onClick={() => navigateToProjectConversation(conversation)}
         onToggleExpanded={() => toggleConversationExpanded(conversation.thread_id)}
+        onTogglePinned={() =>
+          setConversationPinned(
+            conversation.thread_id,
+            !isConversationPinned(conversation.thread_id),
+          )
+        }
         confirmingArchive={confirmingArchiveThreadId === conversation.thread_id}
         onStartArchiveConfirmation={() => {
           if (node.children.length > 0) {
@@ -1433,6 +1492,8 @@ function renderProjectConversationTreeNode({
               toggleConversationExpanded,
               handleArchiveConversationItem,
               setPendingFamilyArchive,
+              isConversationPinned,
+              setConversationPinned,
             }),
           )
         : null}
@@ -1467,6 +1528,7 @@ function SidebarProjectConversationRow({
   modelLabel,
   statusPill,
   archived,
+  isPinned,
   canArchive,
   depth,
   hasChildren,
@@ -1474,6 +1536,7 @@ function SidebarProjectConversationRow({
   isActive,
   onClick,
   onToggleExpanded,
+  onTogglePinned,
   confirmingArchive,
   onStartArchiveConfirmation,
   onCancelArchiveConfirmation,
@@ -1484,6 +1547,7 @@ function SidebarProjectConversationRow({
   readonly modelLabel: string | null;
   readonly statusPill: ThreadStatusPill | null;
   readonly archived: boolean;
+  readonly isPinned: boolean;
   readonly canArchive: boolean;
   readonly depth: number;
   readonly hasChildren: boolean;
@@ -1491,6 +1555,7 @@ function SidebarProjectConversationRow({
   readonly isActive: boolean;
   readonly onClick: () => void;
   readonly onToggleExpanded: () => void;
+  readonly onTogglePinned: () => void;
   readonly confirmingArchive: boolean;
   readonly onStartArchiveConfirmation: () => void;
   readonly onCancelArchiveConfirmation: () => void;
@@ -1535,6 +1600,14 @@ function SidebarProjectConversationRow({
     },
     [onToggleExpanded],
   );
+  const handleTogglePinned = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onTogglePinned();
+    },
+    [onTogglePinned],
+  );
   const handleRowKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLElement>) => {
       if (event.key !== "Enter" && event.key !== " ") {
@@ -1556,7 +1629,7 @@ function SidebarProjectConversationRow({
         render={rowButtonRender}
         size="sm"
         isActive={isActive}
-        className={`${resolveThreadRowClassName({ isActive, isSelected: false })} relative isolate gap-1.5 pr-8`}
+        className={`${resolveThreadRowClassName({ isActive, isSelected: false })} relative isolate gap-2`}
         style={{ paddingLeft: `${0.5 + depth * 0.875}rem` }}
         aria-expanded={hasChildren ? isExpanded : undefined}
         onClick={onClick}
@@ -1575,28 +1648,15 @@ function SidebarProjectConversationRow({
               className={`size-3 transition-transform ${isExpanded ? "rotate-90" : ""}`}
             />
           </button>
-        ) : (
-          <span className="size-4 shrink-0" aria-hidden="true" />
-        )}
-        {archived ? (
-          <ArchiveIcon
-            className={`size-3 shrink-0 ${isActive ? "text-foreground/72" : "text-muted-foreground/60"}`}
-          />
-        ) : EngineIcon ? (
-          <EngineIcon className="size-3.5 shrink-0" aria-hidden="true" />
         ) : null}
-        <span className="min-w-0 flex-1 truncate text-xs">{title}</span>
-        {modelLabel ? (
-          <span
-            className={`max-w-16 shrink-0 truncate text-[10px] leading-none ${
-              isActive ? "text-foreground/60" : "text-muted-foreground/60"
-            }`}
-            title={`Model: ${modelLabel}`}
-          >
-            {modelLabel}
-          </span>
-        ) : null}
-        {statusPill ? (
+        {EngineIcon ? <EngineIcon className="size-3.5 shrink-0" aria-hidden="true" /> : null}
+        <span
+          className="min-w-0 flex-1 truncate text-[13px]"
+          title={modelLabel ? `${title} · ${modelLabel}` : title}
+        >
+          {title}
+        </span>
+        {!archived && statusPill ? (
           <span className="inline-flex shrink-0 items-center">
             <ThreadStatusLabel status={statusPill} compact />
           </span>
@@ -1620,7 +1680,19 @@ function SidebarProjectConversationRow({
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <div className="pointer-events-none absolute top-1/2 right-0.5 z-20 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-conversation-row:pointer-events-auto group-hover/project-conversation-row:opacity-100 group-focus-within/project-conversation-row:pointer-events-auto group-focus-within/project-conversation-row:opacity-100">
+                  <div
+                    className={`pointer-events-none absolute top-1/2 right-0.5 z-20 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-conversation-row:pointer-events-auto group-hover/project-conversation-row:opacity-100 group-focus-within/project-conversation-row:pointer-events-auto group-focus-within/project-conversation-row:opacity-100 ${SIDEBAR_ROW_ACTION_SURFACE_CLASS}`}
+                  >
+                    <button
+                      type="button"
+                      data-thread-selection-safe
+                      aria-label={`${isPinned ? "Unpin" : "Pin"} ${title}`}
+                      className={SIDEBAR_ICON_ACTION_BUTTON_CLASS}
+                      onPointerDown={stopPropagationOnPointerDown}
+                      onClick={handleTogglePinned}
+                    >
+                      <PinIcon className={`size-3.5 ${isPinned ? "fill-current" : ""}`} />
+                    </button>
                     <button
                       type="button"
                       data-thread-selection-safe
@@ -1643,30 +1715,120 @@ function SidebarProjectConversationRow({
   );
 }
 
-function SidebarProjectConversationCreateRow({
-  onCreate,
-  disabled,
+function SidebarProjectConversationCreateAction({
+  environmentId,
+  projectId,
+  projectName,
 }: {
-  readonly onCreate: () => void;
-  readonly disabled: boolean;
+  readonly environmentId: EnvironmentId;
+  readonly projectId: string;
+  readonly projectName: string;
 }) {
-  const createButtonRender = useMemo(
-    () => <button type="button" disabled={disabled} />,
-    [disabled],
+  const navigate = useNavigate();
+  const { isMobile, setOpenMobile } = useSidebar();
+  const [creating, setCreating] = useState(false);
+  const createThread = useAtomCommand(serverEnvironment.createJarvisProjectThread, {
+    reportFailure: false,
+  });
+  const orchestratorTarget = useDefaultOrchestratorTarget(
+    environmentId,
+    EMPTY_JARVIS_WORKER_PROFILES,
+  );
+  const projectThreadsQuery = useEnvironmentQuery(
+    serverEnvironment.jarvisProjectThreads({
+      environmentId,
+      input: { projectId, includeArchived: false },
+    }),
+  );
+  const handleCreate = useCallback(
+    async (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!orchestratorTarget || creating) return;
+
+      setCreating(true);
+      const result = await createThread({
+        environmentId,
+        input: {
+          projectId,
+          input: { title: `Conversation for ${projectName}`, ...orchestratorTarget },
+        },
+      });
+      setCreating(false);
+
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          toastManager.add({
+            type: "error",
+            title: "Could not create project conversation",
+            description: formatProjectConversationFailure(
+              "create",
+              squashAtomCommandFailure(result),
+            ),
+          });
+        }
+        return;
+      }
+      if (!result.value.ok || !result.value.thread) {
+        toastManager.add({
+          type: "error",
+          title: "Could not create project conversation",
+          description: formatProjectConversationFailure(
+            "create",
+            result.value.error?.message ?? "Jarvis did not return a project conversation.",
+          ),
+        });
+        return;
+      }
+
+      projectThreadsQuery.refresh();
+      if (isMobile) setOpenMobile(false);
+      void navigate({
+        to: "/jarvis-project/$environmentId/$projectId/$threadId",
+        params: buildProjectConversationRouteParams({
+          environmentId,
+          projectId,
+          threadId: result.value.thread.thread_id,
+        }),
+      });
+    },
+    [
+      createThread,
+      creating,
+      environmentId,
+      isMobile,
+      navigate,
+      orchestratorTarget,
+      projectId,
+      projectName,
+      projectThreadsQuery,
+      setOpenMobile,
+    ],
   );
 
   return (
-    <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
-      <SidebarMenuSubButton
-        render={createButtonRender}
-        size="sm"
-        className={`${resolveThreadRowClassName({ isActive: false, isSelected: false })} gap-1.5`}
-        onClick={onCreate}
-      >
-        <SquarePenIcon className="size-3 shrink-0 text-muted-foreground/60" />
-        <span className="min-w-0 flex-1 truncate text-xs">New conversation</span>
-      </SidebarMenuSubButton>
-    </SidebarMenuSubItem>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={`New conversation in ${projectName}`}
+            className={SIDEBAR_ICON_ACTION_BUTTON_CLASS}
+            disabled={creating || orchestratorTarget === null}
+            onClick={(event) => void handleCreate(event)}
+          >
+            {creating ? (
+              <LoaderIcon className="size-3.5 animate-spin" />
+            ) : (
+              <SquarePenIcon className="size-3.5" />
+            )}
+          </button>
+        }
+      />
+      <TooltipPopup side="top">
+        {orchestratorTarget === null ? "Configure an orchestrator model" : "New conversation"}
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -1690,6 +1852,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     activeRouteThreadKey,
     activeProjectConversationRoute,
     threadJumpLabelByKey,
+    sidebarThreadPreviewCount,
     appSettingsConfirmThreadArchive,
     renamingThreadKey,
     renamingTitle,
@@ -1737,9 +1900,10 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
           projectId={jarvisRegistryProjectId}
           projectName={projectDisplayName}
           activeThreadId={activeProjectConversationThreadId}
+          previewLimit={sidebarThreadPreviewCount}
         />
       ) : null}
-      {shouldShowThreadPanel && showEmptyThreadState ? (
+      {shouldShowThreadPanel && showEmptyThreadState && !jarvisRegistryProjectId ? (
         <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
           <div
             data-thread-selection-safe
@@ -2223,7 +2387,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         const actionHandlers = new Map<string, () => Promise<void> | void>();
         if (project.sidebarSourceKind === "jarvis-registry") {
           actionHandlers.set("manage-project", () => {
-            void router.navigate({ to: "/settings/projects" });
+            void router.navigate({ to: "/projects/manage" });
           });
           const clicked = await api.contextMenu.show([{ id: "manage-project", label: "Manage" }], {
             x: event.clientX,
@@ -2434,27 +2598,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       }
       void router.navigate({
         to: "/jarvis-project/$environmentId/$projectId",
-        params: buildProjectRouteParams({
-          environmentId: project.environmentId,
-          projectId: project.jarvisRegistryProjectId,
-        }),
-      });
-    },
-    [isMobile, project.environmentId, project.jarvisRegistryProjectId, router, setOpenMobile],
-  );
-
-  const handleOpenProjectOrchestrationClick = useCallback(
-    (event: React.MouseEvent<HTMLButtonElement>) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (!project.jarvisRegistryProjectId) {
-        return;
-      }
-      if (isMobile) {
-        setOpenMobile(false);
-      }
-      void router.navigate({
-        to: "/jarvis-project/$environmentId/$projectId/orchestration",
         params: buildProjectRouteParams({
           environmentId: project.environmentId,
           projectId: project.jarvisRegistryProjectId,
@@ -2726,7 +2869,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         <SidebarMenuButton
           size="sm"
           className={cn(
-            "cursor-pointer gap-2 px-2 py-1.5 pr-8 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground max-sm:pr-14",
+            "h-9 cursor-pointer gap-2.5 rounded-xl px-2.5 pr-8 text-left hover:bg-sidebar-accent group-hover/project-header:bg-sidebar-accent group-hover/project-header:text-sidebar-accent-foreground max-sm:pr-14",
             project.sidebarSourceKind === "jarvis-registry" && "pr-16 max-sm:pr-20",
           )}
           onPointerDownCapture={handleProjectButtonPointerDownCapture}
@@ -2763,12 +2906,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             />
           )}
           {project.sidebarSourceKind === "jarvis-registry" ? (
-            <Globe2Icon className="size-3.5 shrink-0 text-muted-foreground/50" />
+            <FolderOpenIcon className="size-4 shrink-0 text-muted-foreground/65" />
           ) : (
-            <TerminalIcon className="size-3.5 shrink-0 text-muted-foreground/50" />
+            <TerminalIcon className="size-4 shrink-0 text-muted-foreground/65" />
           )}
           <span className="flex min-w-0 flex-1 items-center gap-2">
-            <span className="truncate text-xs font-medium text-foreground/90">
+            <span className="truncate text-sm font-medium text-foreground/90">
               {project.displayName}
             </span>
             {project.sidebarBadges.map((badge) => (
@@ -2803,21 +2946,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               />
               <TooltipPopup side="top">View project</TooltipPopup>
             </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    type="button"
-                    aria-label={`Open orchestration chat for ${project.displayName}`}
-                    className={SIDEBAR_ICON_ACTION_BUTTON_CLASS}
-                    onClick={handleOpenProjectOrchestrationClick}
-                  >
-                    <RocketIcon className="size-3.5" />
-                  </button>
-                }
+            {project.jarvisRegistryProjectId ? (
+              <SidebarProjectConversationCreateAction
+                environmentId={project.environmentId}
+                projectId={project.jarvisRegistryProjectId}
+                projectName={project.displayName}
               />
-              <TooltipPopup side="top">Orchestration chat</TooltipPopup>
-            </Tooltip>
+            ) : null}
           </div>
         ) : project.sidebarSourceKind === "jarvis-work-artifact" ? (
           <div className="pointer-events-none absolute top-[calc(50%+1px)] right-1 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
@@ -2887,6 +3022,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         activeRouteThreadKey={activeRouteThreadKey}
         activeProjectConversationRoute={activeProjectConversationRoute}
         threadJumpLabelByKey={threadJumpLabelByKey}
+        sidebarThreadPreviewCount={sidebarThreadPreviewCount}
         appSettingsConfirmThreadArchive={appSettingsConfirmThreadArchive}
         renamingThreadKey={renamingThreadKey}
         renamingTitle={renamingTitle}
@@ -3177,12 +3313,11 @@ function SidebarBrand() {
   return (
     <Link
       aria-label="Go to threads"
-      className="sidebar-brand ml-[var(--workspace-titlebar-content-left)] h-7 w-fit min-w-0 shrink-0 items-center gap-1 overflow-hidden rounded-md text-foreground outline-hidden ring-ring focus-visible:ring-2"
+      className="sidebar-brand ml-[var(--workspace-titlebar-content-left)] h-8 w-fit min-w-0 shrink-0 items-center gap-1.5 overflow-hidden rounded-lg text-foreground outline-hidden ring-ring focus-visible:ring-2"
       to="/"
     >
-      <T3Wordmark />
-      <span className="truncate text-sm font-medium tracking-tight text-muted-foreground">
-        Code
+      <span className="truncate text-[15px] font-semibold tracking-tight text-foreground/88">
+        Jarvis Cockpit
       </span>
       <span className="sidebar-brand-stage shrink-0 items-center whitespace-nowrap rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60">
         {stageLabel}
@@ -3201,22 +3336,6 @@ function useSidebarStageLabel() {
   });
 }
 
-function T3Wordmark() {
-  return (
-    <svg
-      aria-label="T3"
-      className="h-2.5 w-auto shrink-0 text-foreground"
-      viewBox="15.5309 37 94.3941 56.96"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <path
-        d="M33.4509 93V47.56H15.5309V37H64.3309V47.56H46.4109V93H33.4509ZM86.7253 93.96C82.832 93.96 78.9653 93.4533 75.1253 92.44C71.2853 91.3733 68.032 89.88 65.3653 87.96L70.4053 78.04C72.5386 79.5867 75.0186 80.8133 77.8453 81.72C80.672 82.6267 83.5253 83.08 86.4053 83.08C89.6586 83.08 92.2186 82.44 94.0853 81.16C95.952 79.88 96.8853 78.12 96.8853 75.88C96.8853 73.7467 96.0586 72.0667 94.4053 70.84C92.752 69.6133 90.0853 69 86.4053 69H80.4853V60.44L96.0853 42.76L97.5253 47.4H68.1653V37H107.365V45.4L91.8453 63.08L85.2853 59.32H89.0453C95.9253 59.32 101.125 60.8667 104.645 63.96C108.165 67.0533 109.925 71.0267 109.925 75.88C109.925 79.0267 109.099 81.9867 107.445 84.76C105.792 87.48 103.259 89.6933 99.8453 91.4C96.432 93.1067 92.0586 93.96 86.7253 93.96Z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
-
 const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -3228,18 +3347,18 @@ const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   }, [isMobile, navigate, setOpenMobile]);
 
   return (
-    <SidebarFooter className="p-2">
+    <SidebarFooter className="border-sidebar-border/70 border-t p-3">
       <SidebarProviderUpdatePill />
       <SidebarUpdatePill />
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton
             size="sm"
-            className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+            className="h-9 gap-3 rounded-xl px-3 text-muted-foreground/80 hover:bg-sidebar-accent hover:text-foreground"
             onClick={handleSettingsClick}
           >
             <SettingsIcon className="size-3.5" />
-            <span className="text-xs">Settings</span>
+            <span className="text-sm">Settings</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>
@@ -3279,12 +3398,19 @@ interface SidebarProjectsContentProps {
 const SidebarProjectsContent = memo(function SidebarProjectsContent(
   props: SidebarProjectsContentProps,
 ) {
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const { isMobile, setOpenMobile } = useSidebar();
   const routeProjectConversationRef = useParams({
     strict: false,
     select: (params) => resolveProjectConversationRouteParams(params),
   });
   const surfaceCopy = useMemo(() => resolveSidebarSurfaceCopy(), []);
   const addWorkLabel = "Start work";
+  const handlePrimaryNavigationClick = useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+  }, [isMobile, setOpenMobile]);
   const {
     showArm64IntelBuildWarning,
     arm64IntelBuildWarningDescription,
@@ -3316,6 +3442,25 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
   const primaryProjects = useMemo(
     () => sortedProjects.filter((project) => project.sidebarSourceKind !== "jarvis-work-artifact"),
     [sortedProjects],
+  );
+  const pinnedProjectConversationKeys = useUiStateStore(
+    (state) => state.pinnedProjectConversationKeys,
+  );
+  const pinnedRegistryProjects = useMemo(
+    () =>
+      primaryProjects.filter(
+        (project) =>
+          project.jarvisRegistryProjectId !== null &&
+          pinnedProjectConversationKeys.some((key) =>
+            key.startsWith(
+              projectConversationPinKeyPrefix(
+                project.environmentId,
+                project.jarvisRegistryProjectId!,
+              ),
+            ),
+          ),
+      ),
+    [pinnedProjectConversationKeys, primaryProjects],
   );
   // Parent-linked work is rendered once by SidebarJarvisProjectConversations. Work without a
   // registry-project link (runs Jarvis could not associate to a project) falls back to the
@@ -3354,26 +3499,84 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
 
   return (
     <SidebarContent className="gap-0">
-      <SidebarGroup className="px-2 pt-2 pb-1">
+      <SidebarGroup className="px-3 pt-2 pb-1">
         <SidebarMenu>
           <SidebarMenuItem>
             <CommandDialogTrigger
               render={
                 <SidebarMenuButton
                   size="sm"
-                  className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground focus-visible:ring-0"
+                  className="h-9 gap-2 rounded-xl border border-sidebar-border/80 bg-background/45 px-3 text-muted-foreground hover:bg-background/75 hover:text-foreground focus-visible:ring-2"
                   data-testid="command-palette-trigger"
                 />
               }
             >
-              <SearchIcon className="size-3.5 text-muted-foreground/70" />
-              <span className="flex-1 truncate text-left text-xs">Search</span>
+              <SearchIcon className="size-4 text-muted-foreground/80" />
+              <span className="flex-1 truncate text-left text-sm">Search</span>
               {commandPaletteShortcutLabel ? (
-                <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">
+                <Kbd className="h-5 min-w-0 rounded-md border-sidebar-border/70 bg-sidebar/75 px-1.5 text-[10px]">
                   {commandPaletteShortcutLabel}
                 </Kbd>
               ) : null}
             </CommandDialogTrigger>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarGroup>
+      <SidebarGroup className="px-3 pt-1 pb-2">
+        <SidebarMenu className="gap-1">
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              size="sm"
+              className="h-9 gap-3 rounded-xl px-3 text-sidebar-foreground/82 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+              onClick={openAddProject}
+            >
+              <RocketIcon className="size-4 text-muted-foreground/80" />
+              <span className="text-sm">{addWorkLabel}</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<Link to="/projects" onClick={handlePrimaryNavigationClick} />}
+              size="sm"
+              isActive={pathname === "/projects" || pathname.startsWith("/projects/")}
+              className="h-9 gap-3 rounded-xl px-3 text-sidebar-foreground/82 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground"
+            >
+              <FolderGit2Icon className="size-4 text-muted-foreground/80" />
+              <span className="text-sm">Projects</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<Link to="/pull-requests" onClick={handlePrimaryNavigationClick} />}
+              size="sm"
+              isActive={pathname === "/pull-requests"}
+              className="h-9 gap-3 rounded-xl px-3 text-sidebar-foreground/82 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground"
+            >
+              <GitPullRequestIcon className="size-4 text-muted-foreground/80" />
+              <span className="text-sm">Pull requests</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<Link to="/routines" onClick={handlePrimaryNavigationClick} />}
+              size="sm"
+              isActive={pathname === "/routines"}
+              className="h-9 gap-3 rounded-xl px-3 text-sidebar-foreground/82 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground"
+            >
+              <WorkflowIcon className="size-4 text-muted-foreground/80" />
+              <span className="text-sm">Routines</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<Link to="/scheduled" onClick={handlePrimaryNavigationClick} />}
+              size="sm"
+              isActive={pathname === "/scheduled"}
+              className="h-9 gap-3 rounded-xl px-3 text-sidebar-foreground/82 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground"
+            >
+              <CalendarClockIcon className="size-4 text-muted-foreground/80" />
+              <span className="text-sm">Scheduled</span>
+            </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarGroup>
@@ -3401,38 +3604,45 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
         </SidebarGroup>
       ) : null}
       <LocalSecondaryStatus />
-      <SidebarGroup className="px-2 py-2">
-        <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
-          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
+      {pinnedRegistryProjects.length > 0 ? (
+        <SidebarGroup className="px-3 pt-3 pb-1">
+          <div className="mb-1 flex items-center gap-2 px-2 text-xs font-medium text-muted-foreground/72">
+            <PinIcon className="size-3" />
+            <span>Pinned</span>
+          </div>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuSub className="mx-0.5 w-full translate-x-0 gap-0.5 overflow-hidden px-1 py-0 sm:mx-1 sm:px-1.5">
+                {pinnedRegistryProjects.map((project) => (
+                  <SidebarJarvisProjectConversations
+                    key={project.projectKey}
+                    environmentId={project.environmentId}
+                    projectId={project.jarvisRegistryProjectId!}
+                    projectName={project.displayName}
+                    activeThreadId={null}
+                    previewLimit={threadPreviewCount}
+                    pinnedOnly
+                  />
+                ))}
+              </SidebarMenuSub>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarGroup>
+      ) : null}
+      <SidebarGroup className="px-3 pt-3 pb-4">
+        <div className="mb-2 flex items-center justify-between px-2">
+          <span className="text-xs font-medium text-muted-foreground/72">
             {surfaceCopy.topLevelLabel}
           </span>
-          <div className="flex items-center gap-1">
-            <ProjectSortMenu
-              projectSortOrder={projectSortOrder}
-              threadSortOrder={threadSortOrder}
-              threadPreviewCount={threadPreviewCount}
-              surfaceCopy={surfaceCopy}
-              onProjectSortOrderChange={handleProjectSortOrderChange}
-              onThreadSortOrderChange={handleThreadSortOrderChange}
-              onThreadPreviewCountChange={handleThreadPreviewCountChange}
-            />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    type="button"
-                    aria-label={addWorkLabel}
-                    data-testid="sidebar-add-project-trigger"
-                    className="inline-flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-md px-[calc(--spacing(1)-1px)] text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
-                    onClick={openAddProject}
-                  />
-                }
-              >
-                <RocketIcon className="size-3.5" />
-              </TooltipTrigger>
-              <TooltipPopup side="right">{addWorkLabel}</TooltipPopup>
-            </Tooltip>
-          </div>
+          <ProjectSortMenu
+            projectSortOrder={projectSortOrder}
+            threadSortOrder={threadSortOrder}
+            threadPreviewCount={threadPreviewCount}
+            surfaceCopy={surfaceCopy}
+            onProjectSortOrderChange={handleProjectSortOrderChange}
+            onThreadSortOrderChange={handleThreadSortOrderChange}
+            onThreadPreviewCountChange={handleThreadPreviewCountChange}
+          />
         </div>
 
         {jarvisRegistryState === "pending" ? (
@@ -3480,7 +3690,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
         )}
         {unassignedWorkProjects.length > 0 ? (
           <details className="mt-3 group/unassigned" open={unassignedHasActiveProject || undefined}>
-            <summary className="flex cursor-pointer list-none items-center gap-1.5 px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/55 hover:text-muted-foreground">
+            <summary className="flex cursor-pointer list-none items-center gap-1.5 px-2 py-1 text-xs font-medium text-muted-foreground/65 hover:text-muted-foreground">
               <ChevronRightIcon className="size-3 transition-transform group-open/unassigned:rotate-90" />
               <span>Unassigned work</span>
             </summary>

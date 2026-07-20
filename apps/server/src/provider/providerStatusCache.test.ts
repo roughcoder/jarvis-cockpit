@@ -179,7 +179,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       version: null,
       status: "disabled",
       auth: { status: "unknown" },
-      message: "Codex is disabled in T3 Code settings.",
+      message: "Codex is disabled in Jarvis Cockpit settings.",
     });
 
     assert.deepStrictEqual(

@@ -19,6 +19,7 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 export interface PersistedUiState {
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
+  pinnedProjectConversationKeys?: string[];
   threadLastVisitedAtById?: Record<string, string>;
   collapsedProjectCwds?: string[];
   expandedProjectCwds?: string[];
@@ -33,6 +34,7 @@ export interface UiProjectState {
 }
 
 export interface UiThreadState {
+  pinnedProjectConversationKeys: string[];
   threadLastVisitedAtById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
 }
@@ -46,6 +48,7 @@ export interface UiState extends UiProjectState, UiThreadState, UiEndpointState 
 const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
+  pinnedProjectConversationKeys: [],
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
@@ -123,6 +126,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
   return {
     projectExpandedById,
     projectOrder,
+    pinnedProjectConversationKeys: sanitizeStringArray(parsed.pinnedProjectConversationKeys),
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
     threadChangedFilesExpandedById: sanitizePersistedThreadChangedFilesExpanded(
       parsed.threadChangedFilesExpandedById,
@@ -208,6 +212,7 @@ export function persistState(state: UiState): void {
       JSON.stringify({
         projectExpandedById,
         projectOrder: state.projectOrder,
+        pinnedProjectConversationKeys: state.pinnedProjectConversationKeys,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpandedById,
@@ -334,6 +339,27 @@ export function setDefaultAdvertisedEndpointKey(state: UiState, key: string | nu
   };
 }
 
+export function setProjectConversationPinned(
+  state: UiState,
+  conversationKey: string,
+  pinned: boolean,
+): UiState {
+  const key = conversationKey.trim();
+  if (!key) {
+    return state;
+  }
+  const currentlyPinned = state.pinnedProjectConversationKeys.includes(key);
+  if (currentlyPinned === pinned) {
+    return state;
+  }
+  return {
+    ...state,
+    pinnedProjectConversationKeys: pinned
+      ? [key, ...state.pinnedProjectConversationKeys]
+      : state.pinnedProjectConversationKeys.filter((candidate) => candidate !== key),
+  };
+}
+
 export function resolveProjectExpanded(
   projectExpandedById: Readonly<Record<string, boolean>>,
   preferenceKeys: readonly string[],
@@ -344,7 +370,7 @@ export function resolveProjectExpanded(
       return expanded;
     }
   }
-  return projectExpandedById[LEGACY_PROJECT_EXPANSION_DEFAULT_KEY] ?? true;
+  return projectExpandedById[LEGACY_PROJECT_EXPANSION_DEFAULT_KEY] ?? false;
 }
 
 export function setProjectExpanded(
@@ -416,6 +442,7 @@ interface UiStateStore extends UiState {
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
+  setProjectConversationPinned: (conversationKey: string, pinned: boolean) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderProjects: (
     currentProjectOrder: readonly string[],
@@ -434,6 +461,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
+  setProjectConversationPinned: (conversationKey, pinned) =>
+    set((state) => setProjectConversationPinned(state, conversationKey, pinned)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
   reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>

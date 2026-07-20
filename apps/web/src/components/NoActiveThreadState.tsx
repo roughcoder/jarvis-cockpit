@@ -217,7 +217,7 @@ export function NoActiveThreadState() {
         openStartWork();
         return;
       case "create-first-project":
-        void navigate({ to: "/settings/projects" });
+        void navigate({ to: "/projects/manage" });
         return;
       case "reconnect-brain":
         void navigate({ to: "/settings/jarvis" });

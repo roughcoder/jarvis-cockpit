@@ -471,11 +471,11 @@ export const make = Effect.gen(function* () {
           const auth = yield* serverAuth.getDescriptor();
           if (supportsLocalJarvisBrowserBootstrap(auth)) {
             yield* Effect.logInfo(
-              "Local Jarvis browser bootstrap enabled. Open T3 Code directly.",
+              "Local Jarvis browser bootstrap enabled. Open Jarvis Cockpit directly.",
             ).pipe(Effect.annotateLogs({ url: startupBrowserTarget }));
           } else {
             yield* Effect.logInfo(
-              "Authentication required. Open T3 Code using the pairing URL.",
+              "Authentication required. Open Jarvis Cockpit using the pairing URL.",
             ).pipe(Effect.annotateLogs({ pairingUrl: startupBrowserTarget }));
           }
         }
