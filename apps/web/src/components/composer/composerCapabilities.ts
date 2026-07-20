@@ -88,11 +88,11 @@ export function projectConversationCapabilities(input: {
   readonly catalog: ProjectConversationAttachmentCatalogInput | null | undefined;
   readonly engine: string | null | undefined;
   /**
-   * True once the conversation has a provisioned workspace. File mentions only
-   * resolve against a checked-out worktree, so a planning-only brain thread has
-   * nothing to tag and the trigger stays off until repos are attached.
+   * True once the conversation has a provisioned workspace. Project
+   * conversations can also tag durable memory files before a workspace exists.
    */
   readonly hasWorkspace?: boolean;
+  readonly hasProjectFiles?: boolean;
 }): ComposerCapabilities {
   return {
     attachments: projectConversationSupportsImageAttachments(input)
@@ -101,7 +101,7 @@ export function projectConversationCapabilities(input: {
     picker: "workspace-engine",
     approvalControl: false,
     interactionControl: false,
-    mentions: input.hasWorkspace === true,
+    mentions: input.hasWorkspace === true || input.hasProjectFiles === true,
     slashCommands: true,
     contextStrip: "brain-workspace",
     enterToSend: true,

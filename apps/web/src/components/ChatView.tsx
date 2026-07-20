@@ -1738,6 +1738,25 @@ function ChatViewContent(props: StandardChatViewProps) {
       ? serverEnvironment.jarvisSnapshot({ environmentId, input: {} })
       : null,
   );
+  const jarvisWorkerMemoryProjectId =
+    activeIsJarvisWorkerThread && activeThread?.jarvisRegistryProjectId
+      ? activeThread.jarvisRegistryProjectId
+      : null;
+  const jarvisWorkerProjectFilesQuery = useEnvironmentQuery(
+    activeThread && jarvisWorkerMemoryProjectId
+      ? serverEnvironment.jarvisProjectFiles({
+          environmentId: activeThread.environmentId,
+          input: { projectId: jarvisWorkerMemoryProjectId, includeRetracted: false },
+        })
+      : null,
+  );
+  const jarvisWorkerMemoryMentionFiles = useMemo(
+    () =>
+      jarvisWorkerProjectFilesQuery.data?.ok === true
+        ? (jarvisWorkerProjectFilesQuery.data.files ?? [])
+        : [],
+    [jarvisWorkerProjectFilesQuery.data],
+  );
   const jarvisWorkerWorkspaceEngineOptions = useMemo(
     () =>
       workspaceEngineOptionsFromWorkers(jarvisWorkerSnapshotQuery.data?.snapshot?.workers ?? []),
@@ -5535,6 +5554,12 @@ function ChatViewContent(props: StandardChatViewProps) {
                         : {})}
                       terminalOpen={Boolean(terminalUiState.terminalOpen)}
                       gitCwd={gitCwd}
+                      {...(activeIsJarvisWorkerThread
+                        ? {
+                            memoryMentionFiles: jarvisWorkerMemoryMentionFiles,
+                            memoryMentionFilesPending: jarvisWorkerProjectFilesQuery.isPending,
+                          }
+                        : {})}
                       promptRef={promptRef}
                       composerImagesRef={composerImagesRef}
                       composerTerminalContextsRef={composerTerminalContextsRef}

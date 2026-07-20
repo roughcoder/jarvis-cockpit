@@ -4,7 +4,7 @@ import {
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
-import { BotIcon } from "lucide-react";
+import { BotIcon, FileTextIcon } from "lucide-react";
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
@@ -28,6 +28,14 @@ export type ComposerCommandItem =
       pathKind: ProjectEntry["kind"];
       label: string;
       description: string;
+    }
+  | {
+      id: string;
+      type: "memory-file";
+      docId: string;
+      label: string;
+      description: string;
+      mentionText: string;
     }
   | {
       id: string;
@@ -85,6 +93,21 @@ function groupCommandItems(
 ): ComposerCommandGroup[] {
   if (triggerKind === "skill") {
     return items.length > 0 ? [{ id: "skills", label: "Skills", items }] : [];
+  }
+  if (triggerKind === "path") {
+    const pathItems = items.filter((item) => item.type === "path");
+    const memoryItems = items.filter((item) => item.type === "memory-file");
+    if (memoryItems.length === 0) {
+      return pathItems.length > 0 ? [{ id: "default", label: null, items: pathItems }] : [];
+    }
+    const groups: ComposerCommandGroup[] = [];
+    if (pathItems.length > 0) {
+      groups.push({ id: "workspace", label: "Workspace", items: pathItems });
+    }
+    if (memoryItems.length > 0) {
+      groups.push({ id: "memory", label: "Memory", items: memoryItems });
+    }
+    return groups;
   }
   if (triggerKind !== "slash-command" || !groupSlashCommandSections) {
     return [{ id: "default", label: null, items }];
@@ -233,6 +256,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           kind={props.item.pathKind}
           theme={props.resolvedTheme}
         />
+      ) : null}
+      {props.item.type === "memory-file" ? (
+        <FileTextIcon className="size-4 shrink-0 text-muted-foreground/80" />
       ) : null}
       {props.item.type === "slash-command" ? (
         <BotIcon className="size-4 shrink-0 text-muted-foreground/80" />

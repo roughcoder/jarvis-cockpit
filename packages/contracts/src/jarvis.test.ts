@@ -12,6 +12,7 @@ import {
   JarvisLifecycleResult,
   JarvisProjectThreadDetailResponse,
   JarvisProjectThreadControlResponse,
+  JarvisProjectFilesResponse,
   JarvisProjectThreadsResponse,
   JarvisProjectThreadTurnInput,
   JarvisRestoreCheckpointInput,
@@ -63,6 +64,7 @@ const decodeControlResult = Schema.decodeUnknownEffect(JarvisControlResult);
 const decodeLifecycleResult = Schema.decodeUnknownEffect(JarvisLifecycleResult);
 const decodeSseEvent = Schema.decodeUnknownEffect(JarvisCockpitEvent);
 const decodeProjectThreadDetail = Schema.decodeUnknownEffect(JarvisProjectThreadDetailResponse);
+const decodeProjectFiles = Schema.decodeUnknownEffect(JarvisProjectFilesResponse);
 const decodeProjectThreads = Schema.decodeUnknownEffect(JarvisProjectThreadsResponse);
 const decodeProjectThreadTurn = Schema.decodeUnknownEffect(JarvisProjectThreadTurnInput);
 const decodeProjectThreadControl = Schema.decodeUnknownEffect(JarvisProjectThreadControlResponse);
@@ -236,6 +238,38 @@ it.effect("decodes a Jarvis cockpit catalog fixture", () =>
     ]);
     assert.strictEqual(parsed.start_options?.defaults.repo, "roughcoder/jarvis");
     assert.deepStrictEqual(parsed.start_options?.engines, ["codex", "claude"]);
+  }),
+);
+
+it.effect("decodes tolerant Jarvis project file rows", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectFiles({
+      api_version: "v1",
+      schema_version: 1,
+      project_id: "jarvis",
+      files: [
+        {
+          doc_id: "doc-file-name",
+          filename: "Launch Plan.md",
+          retracted: false,
+        },
+        {
+          doc_id: "doc-name",
+          name: "api-notes.md",
+        },
+        {
+          doc_id: "doc-label",
+          label: "Operator Notes",
+          retracted: true,
+        },
+      ],
+    });
+
+    assert.strictEqual(parsed.files[0]?.filename, "Launch Plan.md");
+    assert.strictEqual(parsed.files[1]?.name, "api-notes.md");
+    assert.strictEqual(parsed.files[1]?.retracted, false);
+    assert.strictEqual(parsed.files[2]?.label, "Operator Notes");
+    assert.strictEqual(parsed.files[2]?.retracted, true);
   }),
 );
 

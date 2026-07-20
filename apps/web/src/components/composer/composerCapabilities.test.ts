@@ -79,11 +79,14 @@ describe("composer capabilities", () => {
     expect(projectConversationCapabilities({ catalog, engine: "claude" }).attachments).toBe(null);
   });
 
-  it("enables file mentions on project conversations only once a workspace exists", () => {
+  it("enables file mentions on project conversations with a workspace or memory files", () => {
     const input = { catalog: null, engine: "codex" };
 
     expect(projectConversationCapabilities(input).mentions).toBe(false);
     expect(projectConversationCapabilities({ ...input, hasWorkspace: false }).mentions).toBe(false);
+    expect(projectConversationCapabilities({ ...input, hasProjectFiles: true }).mentions).toBe(
+      true,
+    );
     expect(projectConversationCapabilities({ ...input, hasWorkspace: true }).mentions).toBe(true);
   });
 

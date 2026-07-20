@@ -679,6 +679,9 @@ export type JarvisProjectMemoryWriteResponse = typeof JarvisProjectMemoryWriteRe
 
 export const JarvisProjectFile = Schema.Struct({
   doc_id: TrimmedNonEmptyString,
+  filename: OptionalPossiblyEmptyPublicString,
+  name: OptionalPossiblyEmptyPublicString,
+  label: OptionalPossiblyEmptyPublicString,
   title: OptionalPossiblyEmptyPublicString,
   session_id: OptionalPossiblyEmptyPublicString,
   original_path: OptionalPossiblyEmptyPublicString,
