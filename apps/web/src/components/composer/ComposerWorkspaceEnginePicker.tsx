@@ -1,5 +1,5 @@
-import { memo } from "react";
-import { ChevronDownIcon, CpuIcon, ServerIcon } from "lucide-react";
+import { memo, type ReactNode } from "react";
+import { ChevronDownIcon, CpuIcon, GaugeIcon, ServerIcon, ZapIcon } from "lucide-react";
 
 import {
   type ProjectConversationWorkspaceEnginePreference,
@@ -22,7 +22,6 @@ import {
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
-  MenuSeparator,
   MenuSub,
   MenuSubPopup,
   MenuSubTrigger,
@@ -60,6 +59,7 @@ export const ComposerWorkspaceEnginePicker = memo(function ComposerWorkspaceEngi
     speed: props.staging.speed,
   });
   const showEffortRow = selectedEngine.efforts.length > 0;
+  const showModelRow = selectedEngine.models.length > 0;
   const showSpeedRow = selectedEngine.speeds.length > 0;
   const triggerLabel = selectedModel
     ? `${selectedEngine.label} · ${selectedModel.label}${selectedEffort ? ` ${selectedEffort.label}` : ""}`
@@ -90,7 +90,7 @@ export const ComposerWorkspaceEnginePicker = memo(function ComposerWorkspaceEngi
             >
               <span className="min-w-0 truncate">
                 {selectedModel
-                  ? `${selectedEngine.label} · ${selectedModel.label}`
+                  ? `${selectedEngine.label} · ${selectedModel.label}${selectedEffort ? " " : ""}`
                   : selectedEngine.label}
               </span>
               {selectedEffort ? (
@@ -106,73 +106,46 @@ export const ComposerWorkspaceEnginePicker = memo(function ComposerWorkspaceEngi
       </MenuTrigger>
       <MenuPopup align="end" side="top" className="min-w-60">
         <MenuGroup>
-          <MenuGroupLabel>Engine</MenuGroupLabel>
-          <MenuRadioGroup
-            value={props.staging.engine}
+          <EngineOptionSubmenu
+            groupLabel="Engines"
+            icon={<ServerIcon aria-hidden="true" className="size-4" />}
+            label="Engine"
+            value={selectedEngine.label}
+            options={props.engineOptions.map((option) => ({
+              id: option.value,
+              label: option.label,
+              description: option.description,
+            }))}
+            selectedId={selectedEngine.value}
+            defaultId={null}
             onValueChange={(value) =>
               props.onStagingChange(
                 setProjectConversationWorkspaceEngine(props.staging, value, props.engineOptions),
               )
             }
-          >
-            {props.engineOptions.map((option) => (
-              <MenuRadioItem key={option.value} value={option.value} className="py-2">
-                <div className="grid min-w-0 gap-0.5">
-                  <span className="font-medium text-foreground">{option.label}</span>
-                  <span className="text-muted-foreground text-xs leading-4">
-                    {option.description}
-                  </span>
-                </div>
-              </MenuRadioItem>
-            ))}
-          </MenuRadioGroup>
-        </MenuGroup>
-        <MenuSeparator />
-        <MenuGroup>
-          <MenuSub>
-            <MenuSubTrigger className="py-2">
-              <CpuIcon aria-hidden="true" className="size-4" />
-              <PickerSubmenuRow label="Model" value={selectedModel?.label ?? "No catalog"} />
-            </MenuSubTrigger>
-            <MenuSubPopup className="min-w-64">
-              <MenuGroup>
-                <MenuGroupLabel>{selectedEngine.label} models</MenuGroupLabel>
-                <MenuRadioGroup
-                  value={selectedModel?.id ?? ""}
-                  onValueChange={(value) =>
-                    props.onStagingChange(
-                      setProjectConversationWorkspaceModel(props.staging, value),
-                    )
-                  }
-                >
-                  {selectedEngine.models.length > 0 ? (
-                    selectedEngine.models.map((model) => (
-                      <MenuRadioItem key={model.id} value={model.id} className="py-2">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <span className="min-w-0 flex-1 truncate font-medium text-foreground">
-                            {model.label}
-                          </span>
-                          {model.id === selectedEngine.defaultModel ? (
-                            <span className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-muted-foreground text-[10px] uppercase leading-none">
-                              Default
-                            </span>
-                          ) : null}
-                        </div>
-                      </MenuRadioItem>
-                    ))
-                  ) : (
-                    <MenuRadioItem value="" disabled className="py-2">
-                      <span className="text-muted-foreground">No models reported</span>
-                    </MenuRadioItem>
-                  )}
-                </MenuRadioGroup>
-              </MenuGroup>
-            </MenuSubPopup>
-          </MenuSub>
+          />
+          {showModelRow ? (
+            <EngineOptionSubmenu
+              groupLabel={`${selectedEngine.label} models`}
+              icon={<CpuIcon aria-hidden="true" className="size-4" />}
+              label="Model"
+              value={selectedModel?.label ?? "Default"}
+              options={selectedEngine.models.map((model) => ({
+                id: model.id,
+                label: model.label,
+              }))}
+              selectedId={selectedModel?.id ?? ""}
+              defaultId={selectedEngine.defaultModel}
+              onValueChange={(value) =>
+                props.onStagingChange(setProjectConversationWorkspaceModel(props.staging, value))
+              }
+            />
+          ) : null}
           {showEffortRow ? (
-            <EnginePreferenceSubmenu
+            <EngineOptionSubmenu
               label="Effort"
               groupLabel={`${selectedEngine.label} efforts`}
+              icon={<GaugeIcon aria-hidden="true" className="size-4" />}
               value={selectedEffort?.label ?? "Default"}
               options={selectedEngine.efforts}
               selectedId={selectedEffort?.id ?? ""}
@@ -183,9 +156,10 @@ export const ComposerWorkspaceEnginePicker = memo(function ComposerWorkspaceEngi
             />
           ) : null}
           {showSpeedRow ? (
-            <EnginePreferenceSubmenu
+            <EngineOptionSubmenu
               label="Speed"
               groupLabel={`${selectedEngine.label} speeds`}
+              icon={<ZapIcon aria-hidden="true" className="size-4" />}
               value={selectedSpeed?.label ?? "Default"}
               options={selectedEngine.speeds}
               selectedId={selectedSpeed?.id ?? ""}
@@ -201,6 +175,12 @@ export const ComposerWorkspaceEnginePicker = memo(function ComposerWorkspaceEngi
   );
 });
 
+interface EngineSubmenuOption {
+  readonly id: string;
+  readonly label: string;
+  readonly description?: string;
+}
+
 function PickerSubmenuRow(props: { readonly label: string; readonly value: string }) {
   return (
     <div className="flex min-w-0 flex-1 items-center justify-between gap-6">
@@ -210,11 +190,14 @@ function PickerSubmenuRow(props: { readonly label: string; readonly value: strin
   );
 }
 
-function EnginePreferenceSubmenu(props: {
+function EngineOptionSubmenu(props: {
   readonly label: string;
   readonly groupLabel: string;
   readonly value: string;
-  readonly options: ReadonlyArray<ProjectConversationWorkspaceEnginePreference>;
+  readonly icon: ReactNode;
+  readonly options: ReadonlyArray<
+    EngineSubmenuOption | ProjectConversationWorkspaceEnginePreference
+  >;
   readonly selectedId: string;
   readonly defaultId: string | null;
   readonly onValueChange: (value: string) => void;
@@ -222,10 +205,10 @@ function EnginePreferenceSubmenu(props: {
   return (
     <MenuSub>
       <MenuSubTrigger className="py-2">
-        <CpuIcon aria-hidden="true" className="size-4" />
+        {props.icon}
         <PickerSubmenuRow label={props.label} value={props.value} />
       </MenuSubTrigger>
-      <MenuSubPopup className="min-w-64">
+      <MenuSubPopup className="min-w-72">
         <MenuGroup>
           <MenuGroupLabel>{props.groupLabel}</MenuGroupLabel>
           <MenuRadioGroup value={props.selectedId} onValueChange={props.onValueChange}>
