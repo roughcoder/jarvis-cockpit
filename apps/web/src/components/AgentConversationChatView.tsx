@@ -2,6 +2,7 @@ import { ApprovalRequestId, JarvisRequestId, ProjectId } from "@t3tools/contract
 import type {
   EnvironmentId,
   JarvisApprovalDecision,
+  JarvisProjectThread,
   JarvisTurnAttachment,
   JarvisTurnWorkspaceInput,
   ProviderApprovalDecision,
@@ -182,6 +183,26 @@ function showControlFailure(title: string, fallback: string, error: unknown): vo
   toastManager.add({ type: "error", title, description });
 }
 
+function absoluteWorkspacePathLabel(pathLabel: string | null | undefined): string | null {
+  const value = pathLabel?.trim();
+  if (!value) {
+    return null;
+  }
+  return value.startsWith("/") || /^[A-Za-z]:[\\/]/u.test(value) ? value : null;
+}
+
+function projectConversationWorkspaceCwd(
+  workspace: JarvisProjectThread["workspace"] | null | undefined,
+): string | null {
+  for (const worktree of workspace?.worktrees ?? []) {
+    const cwd = absoluteWorkspacePathLabel(worktree.path_label);
+    if (cwd) {
+      return cwd;
+    }
+  }
+  return null;
+}
+
 export function AgentConversationChatView({
   environmentId,
   projectId,
@@ -211,10 +232,16 @@ export function AgentConversationChatView({
       input: { projectId },
     }),
   );
+  const [memoryMentionQuery, setMemoryMentionQuery] = useState("");
+  const memoryMentionRequestQuery = memoryMentionQuery.trim();
   const filesQuery = useEnvironmentQuery(
     serverEnvironment.jarvisProjectFiles({
       environmentId,
-      input: { projectId, includeRetracted: false },
+      input: {
+        projectId,
+        includeRetracted: false,
+        ...(memoryMentionRequestQuery.length > 0 ? { query: memoryMentionRequestQuery } : {}),
+      },
     }),
   );
   const sendTurn = useAtomCommand(serverEnvironment.sendJarvisProjectThreadTurn, {
@@ -400,6 +427,7 @@ export function AgentConversationChatView({
   const projectName = project?.name ?? projectId;
   const archived = isProjectConversationArchived(conversation);
   const conversationWorkspace = conversation?.workspace ?? null;
+  const conversationWorkspaceCwd = projectConversationWorkspaceCwd(conversationWorkspace);
   const conversationWorkspaceEngine = conversationWorkspace?.engine ?? conversation?.engine;
   const archiveSummary = archivedProjectConversationSummary(conversation);
   const conversationTitle = resolveProjectConversationTitle({
@@ -427,8 +455,9 @@ export function AgentConversationChatView({
         catalog: null,
         engine: conversation?.engine,
         hasWorkspace: conversationWorkspace !== null,
+        hasProjectFiles: files.length > 0,
       }),
-    [conversation?.engine, conversationWorkspace],
+    [conversation?.engine, conversationWorkspace, files.length],
   );
   const composerDisabledReason =
     conversation === null
@@ -1607,7 +1636,13 @@ export function AgentConversationChatView({
                       onStagingChange: setWorkspaceStaging,
                     }}
                     terminalOpen={false}
-                    gitCwd={null}
+                    gitCwd={conversationWorkspaceCwd}
+                    memoryMentionFiles={files}
+                    memoryMentionFilesQuery={
+                      filesQuery.data?.ok === true ? (filesQuery.data.query ?? null) : null
+                    }
+                    memoryMentionFilesPending={filesQuery.isPending}
+                    onMemoryMentionQueryChange={setMemoryMentionQuery}
                     promptRef={promptRef}
                     composerImagesRef={composerImagesRef}
                     composerTerminalContextsRef={composerTerminalContextsRef}

@@ -1738,6 +1738,33 @@ function ChatViewContent(props: StandardChatViewProps) {
       ? serverEnvironment.jarvisSnapshot({ environmentId, input: {} })
       : null,
   );
+  const jarvisWorkerMemoryProjectId =
+    activeIsJarvisWorkerThread && activeThread?.jarvisRegistryProjectId
+      ? activeThread.jarvisRegistryProjectId
+      : null;
+  const [jarvisWorkerMemoryMentionQuery, setJarvisWorkerMemoryMentionQuery] = useState("");
+  const jarvisWorkerMemoryMentionRequestQuery = jarvisWorkerMemoryMentionQuery.trim();
+  const jarvisWorkerProjectFilesQuery = useEnvironmentQuery(
+    activeThread && jarvisWorkerMemoryProjectId
+      ? serverEnvironment.jarvisProjectFiles({
+          environmentId: activeThread.environmentId,
+          input: {
+            projectId: jarvisWorkerMemoryProjectId,
+            includeRetracted: false,
+            ...(jarvisWorkerMemoryMentionRequestQuery.length > 0
+              ? { query: jarvisWorkerMemoryMentionRequestQuery }
+              : {}),
+          },
+        })
+      : null,
+  );
+  const jarvisWorkerMemoryMentionFiles = useMemo(
+    () =>
+      jarvisWorkerProjectFilesQuery.data?.ok === true
+        ? (jarvisWorkerProjectFilesQuery.data.files ?? [])
+        : [],
+    [jarvisWorkerProjectFilesQuery.data],
+  );
   const jarvisWorkerWorkspaceEngineOptions = useMemo(
     () =>
       workspaceEngineOptionsFromWorkers(jarvisWorkerSnapshotQuery.data?.snapshot?.workers ?? []),
@@ -5535,6 +5562,17 @@ function ChatViewContent(props: StandardChatViewProps) {
                         : {})}
                       terminalOpen={Boolean(terminalUiState.terminalOpen)}
                       gitCwd={gitCwd}
+                      {...(activeIsJarvisWorkerThread
+                        ? {
+                            memoryMentionFiles: jarvisWorkerMemoryMentionFiles,
+                            memoryMentionFilesQuery:
+                              jarvisWorkerProjectFilesQuery.data?.ok === true
+                                ? (jarvisWorkerProjectFilesQuery.data.query ?? null)
+                                : null,
+                            memoryMentionFilesPending: jarvisWorkerProjectFilesQuery.isPending,
+                            onMemoryMentionQueryChange: setJarvisWorkerMemoryMentionQuery,
+                          }
+                        : {})}
                       promptRef={promptRef}
                       composerImagesRef={composerImagesRef}
                       composerTerminalContextsRef={composerTerminalContextsRef}

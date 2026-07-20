@@ -12,6 +12,7 @@ import {
   JarvisLifecycleResult,
   JarvisProjectThreadDetailResponse,
   JarvisProjectThreadControlResponse,
+  JarvisProjectFilesResponse,
   JarvisProjectThreadsResponse,
   JarvisProjectThreadTurnInput,
   JarvisRestoreCheckpointInput,
@@ -63,6 +64,7 @@ const decodeControlResult = Schema.decodeUnknownEffect(JarvisControlResult);
 const decodeLifecycleResult = Schema.decodeUnknownEffect(JarvisLifecycleResult);
 const decodeSseEvent = Schema.decodeUnknownEffect(JarvisCockpitEvent);
 const decodeProjectThreadDetail = Schema.decodeUnknownEffect(JarvisProjectThreadDetailResponse);
+const decodeProjectFiles = Schema.decodeUnknownEffect(JarvisProjectFilesResponse);
 const decodeProjectThreads = Schema.decodeUnknownEffect(JarvisProjectThreadsResponse);
 const decodeProjectThreadTurn = Schema.decodeUnknownEffect(JarvisProjectThreadTurnInput);
 const decodeProjectThreadControl = Schema.decodeUnknownEffect(JarvisProjectThreadControlResponse);
@@ -236,6 +238,54 @@ it.effect("decodes a Jarvis cockpit catalog fixture", () =>
     ]);
     assert.strictEqual(parsed.start_options?.defaults.repo, "roughcoder/jarvis");
     assert.deepStrictEqual(parsed.start_options?.engines, ["codex", "claude"]);
+  }),
+);
+
+it.effect("decodes tolerant Jarvis project file rows", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectFiles({
+      api_version: "v1",
+      schema_version: 1,
+      project_id: "jarvis",
+      query: "launch",
+      files: [
+        {
+          artifact_type: "spec",
+          channel: "cockpit",
+          content_hash: "sha256:c358...",
+          doc_id: "launch-spec-0f743529a2ae",
+          filename: "launch-spec.md",
+          ingestion: { queued: true, response: { ok: true } },
+          mime_type: "text/markdown",
+          observed_at: "2026-07-20T00:29:56+00:00",
+          original_path: ".../vault/projects/jarvis/files/launch-spec-0f743529a2ae.md",
+          retracted: false,
+          retracted_at: "",
+          session_id: "project:jarvis:uploads:launch-spec-0f743529a2ae",
+          title: "Launch spec",
+          uploaded_by: "neil",
+        },
+        {
+          doc_id: "doc-name",
+          name: "api-notes.md",
+        },
+        {
+          doc_id: "doc-label",
+          label: "Operator Notes",
+          retracted: true,
+        },
+      ],
+    });
+
+    assert.strictEqual(parsed.query, "launch");
+    assert.strictEqual(parsed.files[0]?.filename, "launch-spec.md");
+    assert.strictEqual(parsed.files[0]?.title, "Launch spec");
+    assert.strictEqual(parsed.files[0]?.mime_type, "text/markdown");
+    assert.strictEqual(parsed.files[0]?.channel, "cockpit");
+    assert.strictEqual(parsed.files[1]?.name, "api-notes.md");
+    assert.strictEqual(parsed.files[1]?.retracted, false);
+    assert.strictEqual(parsed.files[2]?.label, "Operator Notes");
+    assert.strictEqual(parsed.files[2]?.retracted, true);
   }),
 );
 

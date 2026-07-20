@@ -446,6 +446,7 @@ export const WsServerGetJarvisProjectFilesRpc = Rpc.make(WS_METHODS.serverGetJar
   payload: Schema.Struct({
     projectId: Schema.String,
     includeRetracted: Schema.optional(Schema.Boolean),
+    query: Schema.optional(Schema.String),
   }),
   success: JarvisProjectFilesResult,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),

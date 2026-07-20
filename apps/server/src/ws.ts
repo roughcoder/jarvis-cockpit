@@ -1943,18 +1943,19 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
-        [WS_METHODS.serverGetJarvisProjectFiles]: ({ projectId, includeRetracted }) =>
+        [WS_METHODS.serverGetJarvisProjectFiles]: ({ projectId, includeRetracted, query }) =>
           observeRpcEffect(
             WS_METHODS.serverGetJarvisProjectFiles,
             jarvisClient
-              .getProjectFiles(
-                projectId,
-                includeRetracted === undefined ? undefined : { includeRetracted },
-              )
+              .getProjectFilesResponse(projectId, {
+                ...(includeRetracted === undefined ? {} : { includeRetracted }),
+                ...(query === undefined ? {} : { query }),
+              })
               .pipe(
-                Effect.map((files) => ({
+                Effect.map((response) => ({
                   ok: true,
-                  files,
+                  ...(response.query == null ? {} : { query: response.query }),
+                  files: response.files,
                 })),
                 Effect.catch((error) =>
                   Effect.succeed({

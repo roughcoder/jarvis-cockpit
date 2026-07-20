@@ -1,6 +1,7 @@
 import type {
   ApprovalRequestId,
   EnvironmentId,
+  JarvisProjectFile,
   JarvisStartWorkInput,
   ModelSelection,
   PreviewAnnotationPayload,
@@ -136,6 +137,7 @@ import {
 } from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
+import { searchMemoryMentionFiles } from "../../memoryMentionFiles";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 import { serverEnvironment } from "../../state/server";
@@ -182,6 +184,8 @@ const COMPOSER_FLOATING_LAYER_SELECTOR = [
   '[data-slot="combobox-popup"]',
   '[data-slot="autocomplete-popup"]',
 ].join(",");
+const EMPTY_MEMORY_MENTION_FILES: ReadonlyArray<JarvisProjectFile> = [];
+const WORKSPACE_PATH_ITEMS_WITH_MEMORY_LIMIT = 5;
 
 function detectComposerTriggerForCapabilities(
   text: string,
@@ -587,6 +591,9 @@ export interface ChatComposerProps {
   idlePlaceholder?: string;
   terminalOpen: boolean;
   gitCwd: string | null;
+  memoryMentionFiles?: ReadonlyArray<JarvisProjectFile>;
+  memoryMentionFilesQuery?: string | null;
+  memoryMentionFilesPending?: boolean;
 
   // Refs the parent needs kept in sync
   promptRef: React.RefObject<string>;
@@ -625,6 +632,7 @@ export interface ChatComposerProps {
   scheduleComposerFocus: () => void;
   setThreadError: (threadId: ThreadId | null, error: string | null) => void;
   onExpandImage: (preview: ExpandedImagePreview) => void;
+  onMemoryMentionQueryChange?: (query: string) => void;
 }
 
 // --------------------------------------------------------------------------
@@ -680,6 +688,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     idlePlaceholder,
     terminalOpen,
     gitCwd,
+    memoryMentionFiles = EMPTY_MEMORY_MENTION_FILES,
+    memoryMentionFilesQuery = null,
+    memoryMentionFilesPending = false,
     promptRef,
     composerRef,
     composerImagesRef,
@@ -703,6 +714,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     scheduleComposerFocus,
     setThreadError,
     onExpandImage,
+    onMemoryMentionQueryChange,
   } = props;
 
   // ------------------------------------------------------------------
@@ -1311,24 +1323,50 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerTriggerKind = composerTrigger?.kind ?? null;
   const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
   const isPathTrigger = composerTriggerKind === "path";
+  useEffect(() => {
+    onMemoryMentionQueryChange?.(isPathTrigger ? pathTriggerQuery : "");
+  }, [isPathTrigger, onMemoryMentionQueryChange, pathTriggerQuery]);
   const workspaceEntries = useComposerPathSearch({
     environmentId,
     cwd: isPathTrigger ? gitCwd : null,
     query: isPathTrigger ? pathTriggerQuery : null,
   });
+  const memoryMentionItems = useMemo(() => {
+    if (!isPathTrigger) {
+      return [];
+    }
+    const serverQueryMatchesTrigger =
+      memoryMentionFilesQuery !== null &&
+      memoryMentionFilesQuery.trim().toLowerCase() === pathTriggerQuery.trim().toLowerCase();
+    return searchMemoryMentionFiles(memoryMentionFiles, pathTriggerQuery, {
+      filter: !serverQueryMatchesTrigger,
+    }).map((file) => ({
+      id: `memory:${file.docId}`,
+      type: "memory-file" as const,
+      docId: file.docId,
+      label: file.label,
+      description: file.description,
+      mentionText: file.mentionText,
+    }));
+  }, [isPathTrigger, memoryMentionFiles, memoryMentionFilesQuery, pathTriggerQuery]);
 
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
       if (!capabilities.mentions) return [];
-      return workspaceEntries.entries.map((entry) => ({
+      const workspacePathEntries =
+        memoryMentionItems.length > 0
+          ? workspaceEntries.entries.slice(0, WORKSPACE_PATH_ITEMS_WITH_MEMORY_LIMIT)
+          : workspaceEntries.entries;
+      const pathItems = workspacePathEntries.map((entry) => ({
         id: `path:${entry.kind}:${entry.path}`,
-        type: "path",
+        type: "path" as const,
         path: entry.path,
         pathKind: entry.kind,
         label: basenameOfPath(entry.path),
         description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
       }));
+      return [...pathItems, ...memoryMentionItems];
     }
     if (composerTrigger.kind === "slash-command") {
       if (!capabilities.slashCommands) return [];
@@ -1398,6 +1436,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     capabilities.interactionControl,
     capabilities.slashCommands,
     composerTrigger,
+    memoryMentionItems,
     selectedProvider,
     selectedProviderStatus,
     workspaceEntries.entries,
@@ -1476,7 +1515,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ]);
 
   const isComposerMenuLoading =
-    composerTriggerKind === "path" && pathTriggerQuery.length > 0 && workspaceEntries.isPending;
+    composerTriggerKind === "path" &&
+    pathTriggerQuery.length > 0 &&
+    (workspaceEntries.isPending || memoryMentionFilesPending);
   const composerMenuEmptyState = useMemo(() => {
     if (composerTriggerKind === "skill") {
       return "No skills found. Try / to browse provider commands.";
@@ -2014,6 +2055,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (!trigger) return;
       if (item.type === "path") {
         const replacement = `${serializeComposerFileLink(item.path)} `;
+        const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+          snapshot.value,
+          trigger.rangeEnd,
+          replacement,
+        );
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          replacementRangeEnd,
+          replacement,
+          { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+        );
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
+      if (item.type === "memory-file") {
+        const replacement = `${item.mentionText} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
           snapshot.value,
           trigger.rangeEnd,
