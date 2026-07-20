@@ -87,8 +87,8 @@ const makeEvent = (
   session_ref: "sessref_macbook-worker_sess_1" as JarvisSessionEvent["session_ref"],
   run_id: run.run_id,
   occurred_at: now,
-  turn_id: null,
-  message_id: null,
+  turn_id: undefined,
+  message_id: undefined,
   data: {},
   ...input,
 });
@@ -631,7 +631,7 @@ it("coalesces assistant deltas by turn when later chunks omit message ids", () =
       type: "assistant.delta",
       occurred_at: "2026-07-01T12:00:01+00:00",
       turn_id: "turn_1",
-      message_id: null,
+      message_id: undefined,
       data: {
         text: "lo",
       },
@@ -651,7 +651,7 @@ it("marks delta-only assistant replies complete when the turn completes", () => 
       event_id: "evt_delta_1" as JarvisSessionEvent["event_id"],
       type: "assistant.delta",
       turn_id: "turn_1",
-      message_id: null,
+      message_id: undefined,
       data: {
         text: "Done",
       },
@@ -761,7 +761,7 @@ it("treats stopped and interrupted Jarvis session events as settled turns", () =
       sequence: 2,
       type: "session.stopped",
       occurred_at: "2026-07-01T12:00:02+00:00",
-      turn_id: null,
+      turn_id: undefined,
     }),
   ];
 
@@ -785,7 +785,7 @@ it("ignores older session terminal events when a newer Jarvis turn is active", (
       sequence: 2,
       type: "session.stopped",
       occurred_at: "2026-07-01T12:00:02+00:00",
-      turn_id: null,
+      turn_id: undefined,
     }),
     makeEvent({
       event_id: "evt_started_2" as JarvisSessionEvent["event_id"],

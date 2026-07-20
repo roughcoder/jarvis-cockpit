@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { JarvisProjectId } from "@t3tools/contracts";
+import { JarvisProjectId, JarvisProjectThreadId } from "@t3tools/contracts";
 
 import {
   ARCHIVED_JARVIS_CONVERSATION_GOLDEN,
@@ -542,7 +542,7 @@ describe("Jarvis universal conversation adapter", () => {
           content: "cancelled child",
           observed_at: "2026-07-12T12:00:00.000Z",
           type: "child_terminal",
-          child_chat_id: "child-cancelled",
+          child_chat_id: JarvisProjectThreadId.make("child-cancelled"),
           title: "Cancelled reviewer",
           phase: "cancelled",
         },
@@ -551,7 +551,7 @@ describe("Jarvis universal conversation adapter", () => {
           content: "unknown child state",
           observed_at: "2026-07-12T12:00:01.000Z",
           type: "child_terminal",
-          child_chat_id: "child-future",
+          child_chat_id: JarvisProjectThreadId.make("child-future"),
           title: "Future reviewer",
           phase: "teleported",
         },

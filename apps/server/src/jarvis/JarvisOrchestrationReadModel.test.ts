@@ -642,7 +642,7 @@ it.effect("follows Jarvis session event pagination for thread details", () =>
               ? "2026-07-01T12:00:01+00:00"
               : "2026-07-01T12:00:00+00:00",
           turn_id: "turn_fixture_1",
-          message_id: null,
+          message_id: undefined,
           data:
             options?.after === "evt_page_1"
               ? { text: "Second page." }

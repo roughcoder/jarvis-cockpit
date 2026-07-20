@@ -120,7 +120,7 @@ const eventFixture = {
   type: "turn.started",
   occurred_at: "2026-07-01T12:00:01+00:00",
   turn_id: "turn_1",
-  message_id: null,
+  message_id: undefined,
   data: {
     prompt: "Continue from the current diff and run the tests.",
     provider_payload: {
@@ -1260,7 +1260,7 @@ it.effect("accepts unknown event types when the envelope is valid", () =>
   }),
 );
 
-it.effect("accepts empty provider correlation ids on session events", () =>
+it.effect("decodes empty provider correlation ids on session events as absent", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeEvent({
       ...eventFixture,
@@ -1269,8 +1269,68 @@ it.effect("accepts empty provider correlation ids on session events", () =>
       message_id: "",
     });
 
-    assert.strictEqual(parsed.turn_id, "");
-    assert.strictEqual(parsed.message_id, "");
+    assert.strictEqual(parsed.turn_id, undefined);
+    assert.strictEqual(parsed.message_id, undefined);
+  }),
+);
+
+// Live payload shape (2026-07-20): Jarvis sends `""` for run_id/turn_id/message_id
+// on session events that are not tied to a run. One empty field used to fail the
+// decode of the WHOLE page, which killed thread polling and hung project
+// conversations at "Loading project conversation".
+it.effect("decodes a live sessions.events page whose items carry empty ids", () =>
+  Effect.gen(function* () {
+    const page = yield* decodeEventsPage({
+      items: [
+        {
+          event_id: "evt_200",
+          sequence: 1,
+          session_ref: sessionRef,
+          run_id: runId,
+          type: "assistant.message",
+          occurred_at: generatedAt,
+          turn_id: "turn_1",
+          message_id: "message_1",
+          data: { text: "Working." },
+        },
+        {
+          event_id: "evt_201",
+          sequence: 2,
+          session_ref: sessionRef,
+          run_id: "",
+          type: "session.created",
+          occurred_at: generatedAt,
+          turn_id: "",
+          message_id: "",
+          data: {},
+        },
+      ],
+      cursor: "evt_201",
+      has_more: false,
+    });
+
+    assert.strictEqual(page.items.length, 2);
+    const [tied, untied] = page.items;
+    assert.strictEqual(tied?.run_id, runId);
+    assert.strictEqual(tied?.turn_id, "turn_1");
+    assert.strictEqual(tied?.message_id, "message_1");
+    // Absent, not the literal empty string — downstream consumers must not see "".
+    assert.strictEqual(untied?.run_id, undefined);
+    assert.strictEqual(untied?.turn_id, undefined);
+    assert.strictEqual(untied?.message_id, undefined);
+  }),
+);
+
+it.effect("decodes empty and whitespace-only thread ids as absent", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeEvent({
+      ...eventFixture,
+      run_id: "   ",
+      turn_id: null,
+    });
+
+    assert.strictEqual(parsed.run_id, undefined);
+    assert.strictEqual(parsed.turn_id, undefined);
   }),
 );
 
@@ -1705,7 +1765,7 @@ it.effect("decodes worker worktree prune responses with reclamation and fresh in
   }),
 );
 
-it.effect("decodes root project threads that report empty parent_chat_id", () =>
+it.effect("decodes empty parent_chat_id on root project threads as no parent", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeProjectThreads({
       api_version: "v1",
@@ -1726,7 +1786,7 @@ it.effect("decodes root project threads that report empty parent_chat_id", () =>
       ],
     });
 
-    assert.strictEqual(parsed.threads[0]?.parent_chat_id, "");
+    assert.strictEqual(parsed.threads[0]?.parent_chat_id, undefined);
   }),
 );
 
