@@ -156,6 +156,7 @@ describe("GitHub repository pull request summaries", () => {
                 pullRequest(1, { state: "FAILURE", contexts: { totalCount: 3 } }),
                 pullRequest(2, { state: "PENDING", contexts: { totalCount: 2 } }),
                 pullRequest(3, null),
+                pullRequest(4, { state: "EXPECTED", contexts: { totalCount: 0 } }),
               ],
             },
           },
@@ -173,6 +174,7 @@ describe("GitHub repository pull request summaries", () => {
         { checksStatus: "failing", checksCount: 3 },
         { checksStatus: "pending", checksCount: 2 },
         { checksStatus: "not_reported", checksCount: 0 },
+        { checksStatus: "pending", checksCount: 0 },
       ],
     );
   });

@@ -307,7 +307,7 @@ export function decodeGitHubRepositoryPullRequestListJson(
           reviewCount: pullRequest.reviews.totalCount,
           reviewDecision: normalizeReviewDecision(pullRequest.reviewDecision),
           checksStatus:
-            checksCount > 0
+            checkRollup !== null && checkRollup !== undefined
               ? normalizeChecksStatus([{ state: checkRollup?.state }])
               : "not_reported",
           checksCount,
