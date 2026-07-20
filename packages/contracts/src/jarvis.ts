@@ -181,6 +181,35 @@ const OptionalPossiblyEmptyPublicString = Schema.optional(
   Schema.NullOr(Schema.Union([TrimmedNonEmptyString, Schema.Literal("")])),
 );
 
+/**
+ * Optional identifier/reference field where Jarvis uses `""` to mean "not set".
+ *
+ * Jarvis sends `""` (not `null`, not an absent key) for id/ref fields that do
+ * not apply to a record — e.g. `run_id`/`turn_id`/`message_id` on session
+ * events that are not tied to a run or turn. A non-empty-string id schema
+ * rejects those, and because these live inside `Schema.Array` items a single
+ * empty field fails the decode of the WHOLE page, which kills the poller.
+ *
+ * So: absent, `null`, `undefined`, `""` and whitespace-only all decode to
+ * `undefined`. Anything else decodes through `id`, so consumers only ever see
+ * a valid branded id or "absent" — never the literal empty string.
+ */
+const OptionalPossiblyEmptyId = <Id extends Schema.Codec<string, string>>(id: Id) =>
+  Schema.optionalKey(
+    Schema.NullOr(Schema.UndefinedOr(Schema.String)).pipe(
+      Schema.decodeTo(
+        Schema.UndefinedOr(id),
+        SchemaTransformation.transformOrFail<string | undefined, string | null | undefined>({
+          decode: (value) =>
+            Effect.succeed(
+              typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined,
+            ),
+          encode: (value) => Effect.succeed(value),
+        }),
+      ),
+    ),
+  );
+
 const JarvisCapabilitySupportFields = {
   streaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   resume: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -897,9 +926,9 @@ export const JarvisProjectThread = Schema.Struct({
   conversation_id: Schema.optional(JarvisProjectThreadId),
   thread_id: JarvisProjectThreadId,
   project_id: JarvisProjectId,
-  // Root threads report `parent_chat_id: ""` (not null) on the wire; accept the
-  // empty string and let UI mappers normalize it to "no parent".
-  parent_chat_id: OptionalPossiblyEmptyPublicString,
+  // Root threads report `parent_chat_id: ""` (not null) on the wire; decode it
+  // to "no parent" so consumers never see the empty string.
+  parent_chat_id: OptionalPossiblyEmptyId(JarvisProjectThreadId),
   session_id: TrimmedNonEmptyString,
   title: TrimmedNonEmptyString,
   chat_type: Schema.optional(Schema.Literals(["assistant", "orchestrator"])),
@@ -934,22 +963,22 @@ export type JarvisProjectThread = typeof JarvisProjectThread.Type;
 export const JarvisProjectThreadMessage = Schema.Struct({
   // Durable public identities are optional during the compatibility window.
   // Consumers fall back to the complete legacy semantic envelope when absent.
-  event_id: OptionalPossiblyEmptyPublicString,
-  message_id: OptionalPossiblyEmptyPublicString,
-  call_id: OptionalPossiblyEmptyPublicString,
-  correlation_id: OptionalPossiblyEmptyPublicString,
+  event_id: OptionalPossiblyEmptyId(TrimmedNonEmptyString),
+  message_id: OptionalPossiblyEmptyId(TrimmedNonEmptyString),
+  call_id: OptionalPossiblyEmptyId(TrimmedNonEmptyString),
+  correlation_id: OptionalPossiblyEmptyId(TrimmedNonEmptyString),
   sequence: Schema.optional(NonNegativeInt),
   // Tolerant string (not a strict Literal) so an unknown role (e.g. a future "system"/"tool"
   // message) cannot fail the whole thread-detail decode and drop all history; the UI maps
   // "user" to the user side and everything else to the assistant side.
   role: TrimmedNonEmptyString,
-  peer_id: OptionalPossiblyEmptyPublicString,
+  peer_id: OptionalPossiblyEmptyId(TrimmedNonEmptyString),
   content: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   observed_at: IsoDateTime,
   type: OptionalPossiblyEmptyPublicString,
-  watch_id: OptionalPossiblyEmptyPublicString,
+  watch_id: OptionalPossiblyEmptyId(TrimmedNonEmptyString),
   child_chat_ids: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
-  child_chat_id: OptionalPossiblyEmptyPublicString,
+  child_chat_id: OptionalPossiblyEmptyId(JarvisProjectThreadId),
   title: OptionalPossiblyEmptyPublicString,
   phase: OptionalPossiblyEmptyPublicString,
   status: OptionalPossiblyEmptyPublicString,
@@ -1331,11 +1360,13 @@ export const JarvisSessionEvent = Schema.Struct({
   event_id: JarvisSessionEventId,
   sequence: NonNegativeInt,
   session_ref: JarvisSessionRef,
-  run_id: JarvisRunId,
+  // Session events are not always run/turn/message scoped; Jarvis reports the
+  // gap as `""` on all three. See OptionalPossiblyEmptyId.
+  run_id: OptionalPossiblyEmptyId(JarvisRunId),
   type: JarvisSessionEventType,
   occurred_at: IsoDateTime,
-  turn_id: OptionalPossiblyEmptyPublicString,
-  message_id: OptionalPossiblyEmptyPublicString,
+  turn_id: OptionalPossiblyEmptyId(TrimmedNonEmptyString),
+  message_id: OptionalPossiblyEmptyId(TrimmedNonEmptyString),
   data: JsonObject.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type JarvisSessionEvent = typeof JarvisSessionEvent.Type;

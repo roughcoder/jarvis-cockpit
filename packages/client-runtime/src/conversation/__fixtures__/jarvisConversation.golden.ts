@@ -7,7 +7,7 @@ const THREAD_ID = JarvisProjectThreadId.make("conversation-golden");
 const BASE = {
   thread_id: THREAD_ID,
   project_id: JarvisProjectId.make("project-golden"),
-  parent_chat_id: "parent-conversation",
+  parent_chat_id: JarvisProjectThreadId.make("parent-conversation"),
   session_id: "project:project-golden:orchestrator:conversation-golden",
   title: "Golden conversation",
   created_at: "2026-07-12T09:59:00.000Z",
@@ -152,7 +152,7 @@ export const ENRICHED_JARVIS_CONVERSATION_GOLDEN: JarvisConversationDetail = {
       observed_at: "2026-07-12T10:00:05.000Z",
       completed_at: "2026-07-12T10:00:05.000Z",
       type: "child_terminal",
-      child_chat_id: "child-1",
+      child_chat_id: JarvisProjectThreadId.make("child-1"),
       title: "Codex reviewer",
       phase: "completed",
     },

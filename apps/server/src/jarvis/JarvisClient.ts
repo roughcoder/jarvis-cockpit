@@ -99,18 +99,37 @@ export class JarvisClientError extends Error {
   readonly operation: string;
   readonly status: number | null;
   readonly responseBody: string | null;
+  /**
+   * For contract failures: the schema issue rendered with its path (e.g.
+   * `... at ["items"][1]["run_id"]`). Without this the log only said the
+   * response "did not match the expected contract", which cost real diagnosis
+   * time twice; the offending field must always be named.
+   */
+  readonly schemaIssue: string | null;
+  /**
+   * Bounded, redacted excerpt of the payload that failed to decode. Kept
+   * separate from `responseBody` (which means "HTTP error body" to
+   * `formatJarvisProjectTurnFailure` and `parseJarvisErrorBody`) so a contract
+   * failure carries its evidence without being mistaken for a server error
+   * envelope.
+   */
+  readonly payloadExcerpt: string | null;
 
   constructor(input: {
     readonly operation: string;
     readonly message: string;
     readonly status?: number | null;
     readonly responseBody?: string | null;
+    readonly schemaIssue?: string | null;
+    readonly payloadExcerpt?: string | null;
     readonly cause?: unknown;
   }) {
     super(input.message, { cause: input.cause });
     this.operation = input.operation;
     this.status = input.status ?? null;
     this.responseBody = input.responseBody ?? null;
+    this.schemaIssue = input.schemaIssue ?? null;
+    this.payloadExcerpt = input.payloadExcerpt ?? null;
   }
 }
 
@@ -487,12 +506,26 @@ const decodeRetentionPlanResponse = Schema.decodeUnknownEffect(JarvisRetentionPl
 const decodeRetentionPruneResponse = Schema.decodeUnknownEffect(JarvisRetentionPruneResponse);
 const decodeRetentionSettingsResponse = Schema.decodeUnknownEffect(JarvisRetentionSettingsResponse);
 
-const mapDecodeError = (operation: string) => (cause: unknown) =>
-  new JarvisClientError({
+const mapDecodeError = (operation: string, payload?: unknown) => (cause: unknown) => {
+  const schemaIssue = schemaIssueText(cause);
+  return new JarvisClientError({
     operation,
-    message: `Jarvis response for ${operation} did not match the expected contract.`,
+    message: `Jarvis response for ${operation} did not match the expected contract.${
+      schemaIssue === null ? "" : ` ${schemaIssue}`
+    }`,
+    schemaIssue,
+    payloadExcerpt: payload === undefined ? null : redactedPayloadExcerpt(payload),
     cause,
   });
+};
+
+function schemaIssueText(cause: unknown): string | null {
+  if (!Schema.isSchemaError(cause)) {
+    return null;
+  }
+  const text = cause.message.trim();
+  return text.length === 0 ? null : truncateResponseBody(text);
+}
 
 const decodeSessionCandidate = Schema.decodeUnknownEffect(JarvisWorkerSession);
 
@@ -552,7 +585,7 @@ const decodeSnapshotDroppingMalformedSessions =
 const decodeFor =
   <A>(operation: string, decoder: (input: unknown) => Effect.Effect<A, Schema.SchemaError>) =>
   (input: unknown): Effect.Effect<A, JarvisClientError> =>
-    decoder(input).pipe(Effect.mapError(mapDecodeError(operation)));
+    decoder(input).pipe(Effect.mapError(mapDecodeError(operation, input)));
 
 const withSurfaceMetadata = <Input extends object>(
   input: Input,
@@ -1448,10 +1481,7 @@ export function makeJarvisCockpitClient(input: {
           after: options?.after,
           limit: options?.limit,
         }),
-      ).pipe(
-        Effect.map((body) => normalizeSessionEventsPage(body, sessionRef)),
-        Effect.flatMap(decodeFor("sessions.events", decodeSessionEventsPage)),
-      ),
+      ).pipe(Effect.flatMap(decodeFor("sessions.events", decodeSessionEventsPage))),
     getRequests: (sessionRef, options) =>
       requestJson(
         "sessions.requests",
@@ -2522,8 +2552,8 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       run_id: runId,
       type: "session.created",
       occurred_at: now,
-      turn_id: null,
-      message_id: null,
+      turn_id: undefined,
+      message_id: undefined,
       data: {
         provider: "codex",
         engine: "codex",
@@ -2537,7 +2567,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       type: "input.requested",
       occurred_at: now,
       turn_id: "turn_fixture_1",
-      message_id: null,
+      message_id: undefined,
       data: {
         request_id: "input_fixture_1",
         prompt: "Choose the next worker action.",
@@ -2552,8 +2582,8 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       run_id: completedRunId,
       type: "session.created",
       occurred_at: now,
-      turn_id: null,
-      message_id: null,
+      turn_id: undefined,
+      message_id: undefined,
       data: {
         provider: "codex",
         engine: "codex",
@@ -2570,7 +2600,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
       type: "turn.completed",
       occurred_at: now,
       turn_id: "turn_fixture_completed_1",
-      message_id: null,
+      message_id: undefined,
       data: {
         model: "gpt-5.6-sol",
         effort: "high",
@@ -2879,8 +2909,8 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
     run_id: input.runId,
     type: input.type,
     occurred_at: now,
-    turn_id: input.turnId ?? null,
-    message_id: input.messageId ?? null,
+    turn_id: input.turnId ?? undefined,
+    message_id: input.messageId ?? undefined,
     data: input.data ?? {},
   });
 
@@ -4230,7 +4260,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
             type: "checkpoint.restored",
             occurred_at: now,
             turn_id: "turn_fixture_1",
-            message_id: null,
+            message_id: undefined,
             data: {
               checkpoint_id: restoreInput.checkpoint_id,
             },
@@ -4258,7 +4288,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
               typeof resumeInput?.turn_id === "string"
                 ? resumeInput.turn_id
                 : "turn_fixture_resume",
-            message_id: null,
+            message_id: undefined,
             data: {
               prompt:
                 typeof resumeInput?.prompt === "string"
@@ -4507,6 +4537,38 @@ function truncateResponseBody(text: string): string {
   return text.length <= 4_000 ? text : `${text.slice(0, 4_000)}...`;
 }
 
+const REDACTED_KEY_PATTERN = /token|secret|password|authorization|api[-_]?key|cookie|credential/i;
+
+/**
+ * Bounded, redacted rendering of a decoded-but-rejected payload, so a contract
+ * failure names the offending data instead of logging `responseBody: null`.
+ */
+function redactedPayloadExcerpt(payload: unknown): string {
+  try {
+    return truncateResponseBody(JSON.stringify(redactSecrets(payload)) ?? String(payload));
+  } catch {
+    return "<unserializable payload>";
+  }
+}
+
+function redactSecrets(value: unknown, depth = 0): unknown {
+  if (depth > 8) {
+    return "<depth-limited>";
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => redactSecrets(item, depth + 1));
+  }
+  if (!isRecord(value)) {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      REDACTED_KEY_PATTERN.test(key) ? "<redacted>" : redactSecrets(item, depth + 1),
+    ]),
+  );
+}
+
 function summarizeHttpError(operation: string, status: number, responseBody: string): string {
   const detail = extractHttpErrorDetail(responseBody);
   return `Jarvis request ${operation} failed with HTTP ${status}${detail ? `: ${detail}` : "."}`;
@@ -4543,25 +4605,4 @@ function errorDetailFromBody(body: unknown): string | null {
 
 function truncateErrorDetail(detail: string): string {
   return detail.length <= 300 ? detail : `${detail.slice(0, 300)}...`;
-}
-
-function normalizeSessionEventsPage(body: unknown, sessionRef: string): unknown {
-  if (!isRecord(body) || !Array.isArray(body.items)) {
-    return body;
-  }
-  return {
-    ...body,
-    items: body.items.map((item) => {
-      if (!isRecord(item)) {
-        return item;
-      }
-      const runId = typeof item.run_id === "string" ? item.run_id.trim() : "";
-      return runId.length > 0
-        ? item
-        : {
-            ...item,
-            run_id: `session:${sessionRef}`,
-          };
-    }),
-  };
 }

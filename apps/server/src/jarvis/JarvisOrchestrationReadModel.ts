@@ -465,8 +465,8 @@ function appendPendingRequestEvents(
         run_id: request.run_id,
         type: request.kind === "approval" ? "approval.requested" : "input.requested",
         occurred_at: request.created_at,
-        turn_id: null,
-        message_id: null,
+        turn_id: undefined,
+        message_id: undefined,
         data: {
           ...request.payload,
           request_id: request.request_id,

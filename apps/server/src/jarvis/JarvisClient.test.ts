@@ -1999,7 +1999,7 @@ it.effect("cockpit client preserves HTTP status for non-JSON error bodies", () =
   }),
 );
 
-it.effect("cockpit client normalizes empty run ids in session events", () =>
+it.effect("cockpit client decodes empty ids in session events as absent", () =>
   Effect.gen(function* () {
     const client = makeJarvisCockpitClient({
       baseUrl: new URL("http://jarvis.local:8787"),
@@ -2025,7 +2025,59 @@ it.effect("cockpit client normalizes empty run ids in session events", () =>
 
     const page = yield* client.getSessionEvents(sessionRef);
 
-    assert.strictEqual(page.items[0]?.run_id, `session:${sessionRef}`);
+    // Absent rather than a fabricated `session:<ref>` run id: the event genuinely
+    // is not tied to a run, and inventing one hid that from every consumer.
+    assert.strictEqual(page.items[0]?.run_id, undefined);
+    assert.strictEqual(page.items[0]?.turn_id, undefined);
+    assert.strictEqual(page.items[0]?.message_id, undefined);
+  }),
+);
+
+it.effect("contract failures name the offending field and keep the payload", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async () =>
+        jsonResponse({
+          items: [
+            {
+              event_id: "evt_1",
+              sequence: 1,
+              session_ref: sessionRef,
+              run_id: "run_1",
+              type: "assistant.message",
+              occurred_at: now,
+              // `sequence` must be a non-negative int; this is the malformed field.
+              data: {},
+            },
+            {
+              event_id: "evt_2",
+              sequence: -5,
+              session_ref: sessionRef,
+              run_id: "run_1",
+              type: "assistant.message",
+              occurred_at: now,
+              data: { api_key: "super-secret-value" },
+            },
+          ],
+          cursor: null,
+          has_more: false,
+        }),
+    });
+
+    const error = yield* Effect.flip(client.getSessionEvents(sessionRef));
+
+    assert.ok(error instanceof JarvisClientError);
+    assert.strictEqual(error.operation, "sessions.events");
+    // The schema issue must name the field path, not just "did not match".
+    assert.ok(error.schemaIssue !== null);
+    assert.ok(error.schemaIssue.includes("sequence"), error.schemaIssue);
+    assert.ok(error.message.includes("sequence"), error.message);
+    // The payload is retained as evidence, with secrets redacted.
+    assert.ok(error.payloadExcerpt !== null);
+    assert.ok(error.payloadExcerpt.includes("evt_2"));
+    assert.ok(!error.payloadExcerpt.includes("super-secret-value"), error.payloadExcerpt);
+    assert.ok(error.payloadExcerpt.includes("<redacted>"));
   }),
 );
 
