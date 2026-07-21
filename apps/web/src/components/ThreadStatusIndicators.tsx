@@ -4,7 +4,13 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import type { VcsStatusResult } from "@t3tools/contracts";
-import { CloudIcon, FolderGit2Icon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
+import {
+  CloudIcon,
+  FolderGit2Icon,
+  GitPullRequestIcon,
+  LoaderCircleIcon,
+  TerminalIcon,
+} from "lucide-react";
 import { useMemo } from "react";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { useProject } from "../state/entities";
@@ -130,34 +136,8 @@ export function ThreadWorktreeIndicator({
   );
 }
 
-export function ThreadStatusLabel({
-  status,
-  compact = false,
-}: {
-  status: ThreadStatusPill;
-  compact?: boolean;
-}) {
-  if (compact) {
-    return (
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <span
-              aria-label={status.label}
-              className={`inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
-            />
-          }
-        >
-          <span
-            className={`size-[9px] rounded-full ${status.dotClass} ${
-              status.pulse ? "animate-pulse" : ""
-            }`}
-          />
-        </TooltipTrigger>
-        <TooltipPopup side="top">{status.label}</TooltipPopup>
-      </Tooltip>
-    );
-  }
+export function ThreadStatusLabel({ status }: { status: ThreadStatusPill; compact?: boolean }) {
+  const isSpinning = status.label === "Working" || status.label === "Connecting";
 
   return (
     <Tooltip>
@@ -165,16 +145,20 @@ export function ThreadStatusLabel({
         render={
           <span
             aria-label={status.label}
-            className={`inline-flex items-center gap-1 text-[10px] ${status.colorClass}`}
+            className={`inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
           />
         }
       >
-        <span
-          className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${
-            status.pulse ? "animate-pulse" : ""
-          }`}
-        />
-        <span className="hidden md:inline">{status.label}</span>
+        {isSpinning ? (
+          <LoaderCircleIcon aria-hidden="true" className="size-3.5 animate-spin" />
+        ) : (
+          <span
+            aria-hidden="true"
+            className={`size-[9px] rounded-full ${status.dotClass} ${
+              status.pulse ? "animate-pulse" : ""
+            }`}
+          />
+        )}
       </TooltipTrigger>
       <TooltipPopup side="top">{status.label}</TooltipPopup>
     </Tooltip>
@@ -183,8 +167,8 @@ export function ThreadStatusLabel({
 
 /**
  * Non-interactive leading status icons for a thread row in compact contexts
- * like the command palette. Shows the change request state icon (if present) and the
- * thread status dot, matching the sidebar's leading indicators.
+ * like the command palette. Actionable, active, and unread thread status takes
+ * precedence; otherwise the change request state is shown.
  */
 export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummary }) {
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
@@ -222,7 +206,9 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
 
   return (
     <span className="inline-flex shrink-0 items-center gap-1.5">
-      {prStatus ? (
+      {threadStatus ? (
+        <ThreadStatusLabel status={threadStatus} />
+      ) : prStatus ? (
         <Tooltip>
           <TooltipTrigger
             render={
@@ -237,7 +223,6 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
           <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
         </Tooltip>
       ) : null}
-      {threadStatus ? <ThreadStatusLabel status={threadStatus} /> : null}
     </span>
   );
 }

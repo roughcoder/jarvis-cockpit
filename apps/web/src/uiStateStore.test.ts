@@ -12,6 +12,7 @@ import {
   reorderProjects,
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
+  setProjectConversationPinned,
   setProjectExpanded,
   setThreadChangedFilesExpanded,
   type UiState,
@@ -21,6 +22,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
     projectOrder: [],
+    pinnedProjectConversationKeys: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
@@ -64,7 +66,7 @@ describe("uiStateStore pure functions", () => {
       false,
     );
     expect(resolveProjectExpanded({ [legacyKey]: false }, ["new-logical", legacyKey])).toBe(false);
-    expect(resolveProjectExpanded({}, ["new-logical"])).toBe(true);
+    expect(resolveProjectExpanded({}, ["new-logical"])).toBe(false);
   });
 
   it("sets expansion for every stable key belonging to a logical project", () => {
@@ -140,6 +142,17 @@ describe("uiStateStore pure functions", () => {
       defaultAdvertisedEndpointKey: null,
     });
   });
+
+  it("pins project conversations in most-recent-first order", () => {
+    const first = setProjectConversationPinned(makeUiState(), "project-a:parent", true);
+    const second = setProjectConversationPinned(first, "project-b:review", true);
+
+    expect(second.pinnedProjectConversationKeys).toEqual(["project-b:review", "project-a:parent"]);
+    expect(setProjectConversationPinned(second, "project-b:review", true)).toBe(second);
+    expect(
+      setProjectConversationPinned(second, "project-a:parent", false).pinnedProjectConversationKeys,
+    ).toEqual(["project-b:review"]);
+  });
 });
 
 describe("parsePersistedState", () => {
@@ -150,6 +163,7 @@ describe("parsePersistedState", () => {
         invalid: "no" as unknown as boolean,
       },
       projectOrder: ["physical-b", "", "physical-a", "physical-b"],
+      pinnedProjectConversationKeys: ["project-a:parent", "", "project-a:parent"],
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
         invalid: "not-a-date",
@@ -168,6 +182,7 @@ describe("parsePersistedState", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      pinnedProjectConversationKeys: ["project-a:parent"],
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -192,7 +207,7 @@ describe("parsePersistedState", () => {
     expect(parsed.projectOrder).toEqual([projectBKey, projectAKey]);
     expect(resolveProjectExpanded(parsed.projectExpandedById, [projectAKey])).toBe(true);
     expect(resolveProjectExpanded(parsed.projectExpandedById, [projectBKey])).toBe(false);
-    expect(resolveProjectExpanded(parsed.projectExpandedById, ["unknown"])).toBe(true);
+    expect(resolveProjectExpanded(parsed.projectExpandedById, ["unknown"])).toBe(false);
   });
 
   it("preserves legacy expanded-only semantics for one-way migration", () => {
@@ -252,6 +267,7 @@ describe("uiStateStore persistence", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      pinnedProjectConversationKeys: ["project-a:parent"],
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -274,6 +290,7 @@ describe("uiStateStore persistence", () => {
         logical: false,
       },
       projectOrder: ["physical-b", "physical-a"],
+      pinnedProjectConversationKeys: ["project-a:parent"],
       threadLastVisitedAtById: {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
@@ -304,6 +321,6 @@ describe("uiStateStore persistence", () => {
     const persisted = JSON.parse(
       localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
     ) as PersistedUiState;
-    expect(resolveProjectExpanded(persisted.projectExpandedById ?? {}, ["unknown"])).toBe(true);
+    expect(resolveProjectExpanded(persisted.projectExpandedById ?? {}, ["unknown"])).toBe(false);
   });
 });

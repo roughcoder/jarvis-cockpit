@@ -30,6 +30,8 @@ const GROUP_LABELS: Record<JarvisRouteCapabilityGroup, string> = {
   memory: "Memory routes",
   conversation: "Conversation routes",
   "worker-dispatch": "Worker dispatch routes",
+  routine: "Routine routes",
+  schedule: "Schedule routes",
   mcp: "MCP routes",
   activity: "Activity routes",
 };
@@ -39,6 +41,8 @@ const GROUP_ORDER: ReadonlyArray<JarvisRouteCapabilityGroup> = [
   "memory",
   "conversation",
   "worker-dispatch",
+  "routine",
+  "schedule",
   "mcp",
   "activity",
 ];

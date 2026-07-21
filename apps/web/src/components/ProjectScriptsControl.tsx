@@ -194,7 +194,7 @@ export default function ProjectScriptsControl({
         autoOpenPreview: trimmedPreviewUrl.length > 0 ? autoOpenPreview : false,
       } satisfies NewProjectScriptInput;
     } catch (error) {
-      setValidationError(error instanceof Error ? error.message : "Failed to save action.");
+      setValidationError(error instanceof Error ? error.message : "Failed to save command.");
       return;
     }
 
@@ -204,7 +204,7 @@ export default function ProjectScriptsControl({
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
-        setValidationError(error instanceof Error ? error.message : "Failed to save action.");
+        setValidationError(error instanceof Error ? error.message : "Failed to save command.");
       }
       return;
     }
@@ -250,7 +250,7 @@ export default function ProjectScriptsControl({
   return (
     <>
       {primaryScript ? (
-        <Group aria-label="Project scripts">
+        <Group aria-label="Project commands">
           <Tooltip>
             <TooltipTrigger
               render={
@@ -272,7 +272,7 @@ export default function ProjectScriptsControl({
           <GroupSeparator className="hidden @3xl/header-actions:block" />
           <Menu highlightItemOnHover={false}>
             <MenuTrigger
-              render={<Button size="icon-xs" variant="outline" aria-label="Script actions" />}
+              render={<Button size="icon-xs" variant="outline" aria-label="Project commands" />}
             >
               <ChevronDownIcon className="size-4" />
             </MenuTrigger>
@@ -322,7 +322,7 @@ export default function ProjectScriptsControl({
               })}
               <MenuItem className={dropdownItemClassName} onClick={openAddDialog}>
                 <PlusIcon className="size-4" />
-                Add action
+                Add command
               </MenuItem>
             </MenuPopup>
           </Menu>
@@ -331,15 +331,20 @@ export default function ProjectScriptsControl({
         <Tooltip>
           <TooltipTrigger
             render={
-              <Button size="xs" variant="outline" aria-label="Add action" onClick={openAddDialog} />
+              <Button
+                size="xs"
+                variant="outline"
+                aria-label="Add project command"
+                onClick={openAddDialog}
+              />
             }
           >
             <PlusIcon className="size-3.5" />
             <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-              Add action
+              Add command
             </span>
           </TooltipTrigger>
-          <TooltipPopup side="top">Add action</TooltipPopup>
+          <TooltipPopup side="top">Add project command</TooltipPopup>
         </Tooltip>
       )}
 
@@ -366,9 +371,9 @@ export default function ProjectScriptsControl({
       >
         <DialogPopup>
           <DialogHeader>
-            <DialogTitle>{isEditing ? "Edit Action" : "Add Action"}</DialogTitle>
+            <DialogTitle>{isEditing ? "Edit project command" : "Add project command"}</DialogTitle>
             <DialogDescription>
-              Actions are project-scoped commands you can run from the top bar or keybindings.
+              Project commands are shell scripts you can run from the top bar or keybindings.
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
@@ -455,7 +460,7 @@ export default function ProjectScriptsControl({
                   onChange={(event) => setPreviewUrl(event.target.value)}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Open this URL in the in-app preview when this action runs.
+                  Open this URL in the in-app preview when this command runs.
                 </p>
               </div>
               <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm">
@@ -470,7 +475,7 @@ export default function ProjectScriptsControl({
                   previewUrl.trim().length === 0 ? "opacity-60" : ""
                 }`}
               >
-                <span>Open preview automatically when this action runs</span>
+                <span>Open preview automatically when this command runs</span>
                 <Switch
                   checked={autoOpenPreview}
                   disabled={previewUrl.trim().length === 0}
@@ -501,7 +506,7 @@ export default function ProjectScriptsControl({
               Cancel
             </Button>
             <Button form={addScriptFormId} type="submit">
-              {isEditing ? "Save changes" : "Save action"}
+              {isEditing ? "Save changes" : "Save command"}
             </Button>
           </DialogFooter>
         </DialogPopup>
@@ -510,13 +515,13 @@ export default function ProjectScriptsControl({
       <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete action "{name}"?</AlertDialogTitle>
-            <AlertDialogDescription>This action cannot be undone.</AlertDialogDescription>
+            <AlertDialogTitle>Delete project command "{name}"?</AlertDialogTitle>
+            <AlertDialogDescription>This command cannot be undone.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
             <Button variant="destructive" onClick={confirmDeleteScript}>
-              Delete action
+              Delete command
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

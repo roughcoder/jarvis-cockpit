@@ -34,7 +34,16 @@ describe("buildPrReviewOrchestratorPrompt", () => {
     expect(prompt).toContain('provider_instance_id="codex"');
     expect(prompt).toContain('model="gpt-5.5"');
     expect(prompt).toContain('worker_id="review-worker"');
+    expect(prompt.match(/`allow_nested_agents=false`/g)).toHaveLength(2);
     expect(prompt).toContain("CHILD_TASK (pass this exact complete text to each spawn)");
+    const childTask = prompt.match(/<child-task>\n([\s\S]*?)\n<\/child-task>/)?.[1];
+    expect(childTask).toBeDefined();
+    expect(childTask).toContain(
+      "Do not call Agent, Task, SendMessage, or Monitor, and do not launch any subagent or background task",
+    );
+    expect(childTask).toContain(
+      "Perform the review synchronously in this top-level session and do not end the turn until the complete final report is returned",
+    );
     expect(prompt).toContain("headRefOid: <full 40-character SHA>");
     expect(prompt).toContain("watch_child_work_sessions");
     expect(prompt).toContain("child_chat_ids");
@@ -46,6 +55,13 @@ describe("buildPrReviewOrchestratorPrompt", () => {
     expect(prompt).toContain("read_child_work_result");
     expect(prompt).toContain("gh pr view 42 --repo acme/widgets --json headRefOid");
     expect(prompt).toContain("gh pr diff 42 --repo acme/widgets");
+    expect(prompt).toContain(
+      "Run exactly `gh pr view 42 --repo acme/widgets --json headRefOid` directly",
+    );
+    expect(prompt).toContain("run exactly `gh pr diff 42 --repo acme/widgets` directly");
+    expect(prompt).toContain(
+      "do not use redirection, pipes, temporary files, or any filesystem writes",
+    );
     expect(prompt).toContain("not the checkout's current branch");
     expect(prompt).toContain("1-based line number in the file at the PR head");
     expect(prompt).toContain("not the ordinal line number of `gh pr diff` output");

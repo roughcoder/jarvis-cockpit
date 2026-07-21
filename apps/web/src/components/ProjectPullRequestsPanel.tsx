@@ -224,7 +224,7 @@ export function ProjectPullRequestsPanel({
                     }
                   >
                     <ScanEyeIcon className="size-3" />
-                    Review
+                    Run routine
                   </Button>
                 </div>
               </li>

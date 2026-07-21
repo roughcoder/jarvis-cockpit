@@ -832,7 +832,7 @@ describe("resolveThreadStatusPill", () => {
     ).toBeNull();
   });
 
-  it("shows completed when there is an unseen completion and no active blocker", () => {
+  it("shows a blue unread-reply indicator when there is an unseen completion", () => {
     expect(
       resolveThreadStatusPill({
         thread: {
@@ -847,7 +847,12 @@ describe("resolveThreadStatusPill", () => {
           },
         },
       }),
-    ).toMatchObject({ label: "Completed", pulse: false });
+    ).toMatchObject({
+      label: "Unread Reply",
+      colorClass: "text-blue-600 dark:text-blue-300/90",
+      dotClass: "bg-blue-500 dark:bg-blue-300/90",
+      pulse: false,
+    });
   });
 });
 
@@ -887,26 +892,26 @@ describe("resolveJarvisProjectConversationEngineIconKey", () => {
 });
 
 describe("resolveJarvisProjectConversationStatusPill", () => {
-  it("maps project-thread statuses to existing compact sidebar status labels", () => {
-    expect(resolveJarvisProjectConversationStatusPill("created")).toMatchObject({
-      label: "Idle",
-      pulse: false,
-    });
+  it("maps active project-thread statuses to spinning sidebar indicators", () => {
     expect(resolveJarvisProjectConversationStatusPill("running")).toMatchObject({
       label: "Working",
       pulse: true,
     });
+    expect(resolveJarvisProjectConversationStatusPill("joining")).toMatchObject({
+      label: "Connecting",
+      pulse: true,
+    });
   });
 
-  it("keeps completed legacy conversations idle and maps operational problems to errors", () => {
-    expect(resolveJarvisProjectConversationStatusPill("completed")).toMatchObject({
-      label: "Idle",
-      pulse: false,
-    });
-    expect(resolveJarvisProjectConversationStatusPill("idle")).toMatchObject({
-      label: "Idle",
-      pulse: false,
-    });
+  it("suppresses ordinary waiting and idle states instead of showing gray dots", () => {
+    expect(resolveJarvisProjectConversationStatusPill("created")).toBeNull();
+    expect(resolveJarvisProjectConversationStatusPill("completed")).toBeNull();
+    expect(resolveJarvisProjectConversationStatusPill("idle")).toBeNull();
+    expect(resolveJarvisProjectConversationStatusPill("paused")).toBeNull();
+    expect(resolveJarvisProjectConversationStatusPill("waiting_for_children")).toBeNull();
+  });
+
+  it("preserves actionable project-thread states", () => {
     expect(resolveJarvisProjectConversationStatusPill("working")).toMatchObject({
       label: "Working",
       pulse: true,
@@ -983,9 +988,9 @@ describe("resolveProjectStatusIndicator", () => {
     expect(
       resolveProjectStatusIndicator([
         {
-          label: "Completed",
-          colorClass: "text-emerald-600",
-          dotClass: "bg-emerald-500",
+          label: "Unread Reply",
+          colorClass: "text-blue-600",
+          dotClass: "bg-blue-500",
           pulse: false,
         },
         {
@@ -1004,13 +1009,13 @@ describe("resolveProjectStatusIndicator", () => {
     ).toMatchObject({ label: "Pending Approval", dotClass: "bg-amber-500" });
   });
 
-  it("prefers plan-ready over completed when no stronger action is needed", () => {
+  it("prefers plan-ready over an unread reply when no stronger action is needed", () => {
     expect(
       resolveProjectStatusIndicator([
         {
-          label: "Completed",
-          colorClass: "text-emerald-600",
-          dotClass: "bg-emerald-500",
+          label: "Unread Reply",
+          colorClass: "text-blue-600",
+          dotClass: "bg-blue-500",
           pulse: false,
         },
         {

@@ -4,6 +4,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   JarvisProjectId,
   JarvisRequestId,
+  JarvisRoutineId,
   JarvisWorkerId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -1073,6 +1074,198 @@ it.effect("cockpit client sends idempotency keys when pruning worker worktrees",
     assert.deepStrictEqual(requests[0]?.body, { idempotency_key: "prune-1" });
     assert.strictEqual(response.reclamation?.worktrees, 1);
     assert.strictEqual(response.worktree_inventory?.count, 0);
+  }),
+);
+
+it.effect("cockpit client routes routine and schedule operations to Jarvis", () =>
+  Effect.gen(function* () {
+    const requests: Array<{ url: string; method: string; body: unknown }> = [];
+    const routine = {
+      routine_id: JarvisRoutineId.make("pull-request-review"),
+      version: 1,
+      name: "Pull request review",
+      summary: "Review a pull request.",
+      description: "Run independent reviewers.",
+      builtin: true,
+      target_types: ["pull_request"],
+      parameters: [
+        {
+          name: "reviewers",
+          label: "Reviewers",
+          description: "Provider/model combinations.",
+          type: "model_ref",
+          required: true,
+          default: null,
+          options_source: "runtime.models",
+          allow_multiple: true,
+          sensitive: false,
+          choices: [],
+          min_items: 2,
+          max_items: 2,
+        },
+      ],
+      execution: {
+        chat_type: "orchestrator",
+        default_engine: "codex",
+        supported_engines: ["codex", "claude"],
+      },
+    };
+    const schedule = {
+      schedule_id: "sched_1",
+      name: "Weekday review",
+      routine_id: routine.routine_id,
+      routine_version: 1,
+      project_id: "jarvis-cockpit",
+      target: { pull_request: { repo: "roughcoder/jarvis-cockpit", number: 42 } },
+      params: { reviewers: [] },
+      engine: "codex",
+      model: "gpt-5.5",
+      effort: "high",
+      speed: "",
+      worker_id: "macbook-worker",
+      hour: 9,
+      minute: 30,
+      weekdays: [0, 1, 2, 3, 4],
+      timezone: "Europe/London",
+      enabled: true,
+      created_by: "fixture",
+      last_fired_date: "",
+      created_at: now,
+      updated_at: now,
+    };
+    const thread = {
+      thread_id: "thread_routine_1",
+      project_id: "jarvis-cockpit",
+      session_id: "project:jarvis-cockpit:orchestrator:thread_routine_1",
+      title: "Pull request review",
+      chat_type: "orchestrator",
+      created_at: now,
+      updated_at: now,
+      created_by: "fixture",
+    };
+    const runResponse = {
+      ok: true,
+      api_version: "v1",
+      schema_version: 1,
+      run: {
+        run_id: "routine_1",
+        routine_id: routine.routine_id,
+        routine_version: 1,
+        status: "started",
+        project_id: "jarvis-cockpit",
+        thread_id: thread.thread_id,
+        trigger: { type: "manual" },
+      },
+      thread,
+    };
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async (url, init) => {
+        const method = init?.method ?? "GET";
+        requests.push({
+          url: String(url),
+          method,
+          body: init?.body ? JSON.parse(String(init.body)) : null,
+        });
+        const path = new URL(String(url)).pathname;
+        if (path.endsWith("/resolve")) {
+          return jsonResponse({
+            ok: true,
+            api_version: "v1",
+            schema_version: 1,
+            routine,
+            resolution: {
+              values: { reviewers: [] },
+              missing: [],
+              ready: true,
+              rendered_prompt: "Review pull request 42.",
+            },
+          });
+        }
+        if (path.endsWith("/run")) {
+          return jsonResponse(
+            path.includes("/schedules/") ? { ...runResponse, schedule } : runResponse,
+          );
+        }
+        if (path === "/v1/routines") {
+          return jsonResponse({
+            ok: true,
+            api_version: "v1",
+            schema_version: 1,
+            routines: [routine],
+          });
+        }
+        if (path === `/v1/routines/${routine.routine_id}`) {
+          return jsonResponse({ ok: true, api_version: "v1", schema_version: 1, routine });
+        }
+        if (path === "/v1/schedules" && method === "GET") {
+          return jsonResponse({
+            ok: true,
+            api_version: "v1",
+            schema_version: 1,
+            schedules: [schedule],
+          });
+        }
+        if (path === "/v1/schedules" || method === "PATCH") {
+          return jsonResponse({ ok: true, api_version: "v1", schema_version: 1, schedule });
+        }
+        return jsonResponse({
+          ok: true,
+          api_version: "v1",
+          schema_version: 1,
+          schedule_id: schedule.schedule_id,
+          deleted: true,
+        });
+      },
+    });
+
+    yield* client.getRoutines();
+    yield* client.getRoutine(routine.routine_id);
+    yield* client.resolveRoutine(routine.routine_id, {
+      project_id: JarvisProjectId.make("jarvis-cockpit"),
+      params: { reviewers: [] },
+    });
+    yield* client.runRoutine(routine.routine_id, {
+      project_id: JarvisProjectId.make("jarvis-cockpit"),
+      params: { reviewers: [] },
+      idempotency_key: "routine-run-1",
+    });
+    yield* client.getRoutineSchedules();
+    yield* client.createRoutineSchedule({
+      name: schedule.name,
+      routine_id: routine.routine_id,
+      project_id: JarvisProjectId.make("jarvis-cockpit"),
+      hour: 9,
+      minute: 30,
+      idempotency_key: "schedule-create-1",
+    });
+    yield* client.updateRoutineSchedule(schedule.schedule_id, {
+      enabled: false,
+      idempotency_key: "schedule-update-1",
+    });
+    yield* client.deleteRoutineSchedule(schedule.schedule_id, {
+      idempotency_key: "schedule-delete-1",
+    });
+    yield* client.runRoutineSchedule(schedule.schedule_id, {
+      idempotency_key: "schedule-run-1",
+    });
+
+    assert.deepStrictEqual(
+      requests.map(({ method, url }) => [method, url]),
+      [
+        ["GET", "http://jarvis.local:8787/v1/routines"],
+        ["GET", "http://jarvis.local:8787/v1/routines/pull-request-review"],
+        ["POST", "http://jarvis.local:8787/v1/routines/pull-request-review/resolve"],
+        ["POST", "http://jarvis.local:8787/v1/routines/pull-request-review/run"],
+        ["GET", "http://jarvis.local:8787/v1/schedules"],
+        ["POST", "http://jarvis.local:8787/v1/schedules"],
+        ["PATCH", "http://jarvis.local:8787/v1/schedules/sched_1"],
+        ["DELETE", "http://jarvis.local:8787/v1/schedules/sched_1"],
+        ["POST", "http://jarvis.local:8787/v1/schedules/sched_1/run"],
+      ],
+    );
+    assert.deepStrictEqual(requests[7]?.body, { idempotency_key: "schedule-delete-1" });
+    assert.deepStrictEqual(requests[8]?.body, { idempotency_key: "schedule-run-1" });
   }),
 );
 

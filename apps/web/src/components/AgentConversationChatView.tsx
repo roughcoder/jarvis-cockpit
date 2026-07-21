@@ -131,6 +131,7 @@ import { cloneComposerImageForRetry } from "./ChatView.logic";
 import { ConversationContextPanel } from "./ConversationContextPanel";
 import { RightPanelTabs } from "./RightPanelTabs";
 import { RightPanelSheet } from "./RightPanelSheet";
+import { buildConversationRoutineContext, RoutineLauncherControl } from "./routines";
 import {
   cachedProjectConversationControlKey,
   projectConversationComposerRuntime,
@@ -284,6 +285,14 @@ export function AgentConversationChatView({
     threadDetailStream.data !== null && threadDetailStream.data !== undefined
       ? threadDetailStream.data
       : (conversations.find((candidate) => candidate.thread_id === String(threadId)) ?? null);
+  const routineContext = useMemo(
+    () =>
+      buildConversationRoutineContext({
+        conversationTitle: conversation?.title ?? "Project conversation",
+        projectName: project?.name ?? projectId,
+      }),
+    [conversation?.title, project?.name, projectId],
+  );
   const files = useMemo(
     () => visibleProjectFiles(filesQuery.data?.ok === true ? (filesQuery.data.files ?? []) : []),
     [filesQuery.data],
@@ -1433,6 +1442,12 @@ export function AgentConversationChatView({
             </div>
             <div className="flex shrink-0 items-center justify-end gap-2">
               {archived ? <Badge variant="secondary">Archived</Badge> : null}
+              <RoutineLauncherControl
+                context={routineContext}
+                environmentId={environmentId}
+                projectId={projectId}
+                showLabel
+              />
               <Tooltip>
                 <TooltipTrigger
                   render={

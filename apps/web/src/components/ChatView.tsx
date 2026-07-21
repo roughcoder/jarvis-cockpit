@@ -253,6 +253,7 @@ import {
   deriveLockedProvider,
   reconcileMountedTerminalThreadIds,
   resolveSendEnvMode,
+  routineProjectIdForThread,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   waitForStartedServerThread,
@@ -5401,6 +5402,7 @@ function ChatViewContent(props: StandardChatViewProps) {
             {...(routeKind === "draft" && draftId ? { draftId } : {})}
             activeThreadTitle={activeThread.title}
             activeProjectName={activeProject?.title}
+            routineProjectId={routineProjectIdForThread(activeThread)}
             openInCwd={gitCwd}
             activeProjectScripts={activeProject?.scripts}
             preferredScriptId={

@@ -1010,7 +1010,7 @@ function OpenCommandPaletteDialog(props: {
           return;
         }
         if (source.id === "create-project") {
-          await navigate({ to: "/settings/projects" });
+          await navigate({ to: "/projects/manage" });
           return;
         }
         if (source.id === "describe-work") {

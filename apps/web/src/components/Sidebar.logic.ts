@@ -210,9 +210,8 @@ export interface ThreadStatusPill {
   label:
     | "Working"
     | "Connecting"
-    | "Completed"
+    | "Unread Reply"
     | "Failed"
-    | "Idle"
     | "Pending Approval"
     | "Awaiting Input"
     | "Plan Ready";
@@ -252,16 +251,10 @@ const THREAD_STATUS_PILLS: Record<ThreadStatusPill["label"], ThreadStatusPill> =
     dotClass: "bg-violet-500 dark:bg-violet-300/90",
     pulse: false,
   },
-  Idle: {
-    label: "Idle",
-    colorClass: "text-muted-foreground/70",
-    dotClass: "bg-muted-foreground/45",
-    pulse: false,
-  },
-  Completed: {
-    label: "Completed",
-    colorClass: "text-emerald-600 dark:text-emerald-300/90",
-    dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
+  "Unread Reply": {
+    label: "Unread Reply",
+    colorClass: "text-blue-600 dark:text-blue-300/90",
+    dotClass: "bg-blue-500 dark:bg-blue-300/90",
     pulse: false,
   },
   Failed: {
@@ -279,8 +272,7 @@ const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   Working: 3,
   Connecting: 3,
   "Plan Ready": 2,
-  Completed: 1,
-  Idle: 0,
+  "Unread Reply": 1,
 };
 
 type ThreadStatusInput = Pick<
@@ -644,7 +636,7 @@ export function resolveThreadStatusPill(input: {
   }
 
   if (hasUnseenCompletion(thread)) {
-    return THREAD_STATUS_PILLS.Completed;
+    return THREAD_STATUS_PILLS["Unread Reply"];
   }
 
   return null;
@@ -687,13 +679,14 @@ export function resolveJarvisProjectConversationStatusPill(
     case "idle":
     case "paused":
     case "archived":
-      return THREAD_STATUS_PILLS.Idle;
-    case "running":
-    case "starting":
-    case "working":
-    case "joining":
     case "waiting_for_children":
+      return null;
+    case "running":
+    case "working":
       return THREAD_STATUS_PILLS.Working;
+    case "starting":
+    case "joining":
+      return THREAD_STATUS_PILLS.Connecting;
     case "waiting_for_approval":
       return THREAD_STATUS_PILLS["Pending Approval"];
     case "waiting_for_input":

@@ -44,6 +44,21 @@ import {
   JarvisProjectThreadTurnResult,
   type JarvisProjectThreadUserInputInput,
   JarvisProjectUpdateInput,
+  type JarvisRoutineResolveInput,
+  JarvisRoutineResolutionResult,
+  JarvisRoutineResult,
+  type JarvisRoutineRunInput,
+  JarvisRoutineRunResult,
+  JarvisRoutinesResult,
+  type JarvisRoutineScheduleCreateInput,
+  type JarvisRoutineScheduleActionInput,
+  JarvisRoutineScheduleDeleteResult,
+  JarvisRoutineScheduleId,
+  type JarvisRoutineSchedule,
+  type JarvisRoutineSchedulePatchInput,
+  JarvisRoutineScheduleResult,
+  JarvisRoutineScheduleRunResult,
+  JarvisRoutineSchedulesResult,
   JarvisRetentionPlanResponse,
   type JarvisRetentionPruneInput,
   JarvisRetentionPruneResponse,
@@ -180,6 +195,38 @@ export interface JarvisClient {
     projectId: string,
     threadId: string,
   ) => Effect.Effect<JarvisProjectThreadDetail, JarvisClientError>;
+  readonly getRoutines: () => Effect.Effect<JarvisRoutinesResult, JarvisClientError>;
+  readonly getRoutine: (
+    routineId: string,
+    version?: number,
+  ) => Effect.Effect<JarvisRoutineResult, JarvisClientError>;
+  readonly resolveRoutine: (
+    routineId: string,
+    input: JarvisRoutineResolveInput,
+  ) => Effect.Effect<JarvisRoutineResolutionResult, JarvisClientError>;
+  readonly runRoutine: (
+    routineId: string,
+    input: JarvisRoutineRunInput,
+  ) => Effect.Effect<JarvisRoutineRunResult, JarvisClientError>;
+  readonly getRoutineSchedules: () => Effect.Effect<
+    JarvisRoutineSchedulesResult,
+    JarvisClientError
+  >;
+  readonly createRoutineSchedule: (
+    input: JarvisRoutineScheduleCreateInput,
+  ) => Effect.Effect<JarvisRoutineScheduleResult, JarvisClientError>;
+  readonly updateRoutineSchedule: (
+    scheduleId: string,
+    input: JarvisRoutineSchedulePatchInput,
+  ) => Effect.Effect<JarvisRoutineScheduleResult, JarvisClientError>;
+  readonly deleteRoutineSchedule: (
+    scheduleId: string,
+    input: JarvisRoutineScheduleActionInput,
+  ) => Effect.Effect<JarvisRoutineScheduleDeleteResult, JarvisClientError>;
+  readonly runRoutineSchedule: (
+    scheduleId: string,
+    input: JarvisRoutineScheduleActionInput,
+  ) => Effect.Effect<JarvisRoutineScheduleRunResult, JarvisClientError>;
   readonly createProject: (
     input: JarvisProjectCreateInput,
   ) => Effect.Effect<JarvisProject, JarvisClientError>;
@@ -482,6 +529,17 @@ const decodeProjectThreadTurnResult = Schema.decodeUnknownEffect(JarvisProjectTh
 const decodeProjectThreadControlResponse = Schema.decodeUnknownEffect(
   JarvisProjectThreadControlResponse,
 );
+const decodeRoutinesResult = Schema.decodeUnknownEffect(JarvisRoutinesResult);
+const decodeRoutineResult = Schema.decodeUnknownEffect(JarvisRoutineResult);
+const decodeRoutineResultSync = Schema.decodeUnknownSync(JarvisRoutineResult);
+const decodeRoutineResolutionResult = Schema.decodeUnknownEffect(JarvisRoutineResolutionResult);
+const decodeRoutineRunResult = Schema.decodeUnknownEffect(JarvisRoutineRunResult);
+const decodeRoutineSchedulesResult = Schema.decodeUnknownEffect(JarvisRoutineSchedulesResult);
+const decodeRoutineScheduleResult = Schema.decodeUnknownEffect(JarvisRoutineScheduleResult);
+const decodeRoutineScheduleDeleteResult = Schema.decodeUnknownEffect(
+  JarvisRoutineScheduleDeleteResult,
+);
+const decodeRoutineScheduleRunResult = Schema.decodeUnknownEffect(JarvisRoutineScheduleRunResult);
 const decodeProjectThreadResponse = (operation: string, body: unknown) =>
   Effect.gen(function* () {
     const candidate = projectThreadPayloadFromResponse(operation, body);
@@ -1332,6 +1390,51 @@ export function makeJarvisCockpitClient(input: {
         Effect.flatMap(decodeFor("projects.threads.get", decodeProjectThreadDetailResponse)),
         Effect.map((response) => response.thread),
       ),
+    getRoutines: () =>
+      requestJson("routines.list", "/v1/routines").pipe(
+        Effect.flatMap(decodeFor("routines.list", decodeRoutinesResult)),
+      ),
+    getRoutine: (routineId, version) =>
+      requestJson(
+        "routines.get",
+        appendQuery(`/v1/routines/${encodeURIComponent(routineId)}`, { version }),
+      ).pipe(Effect.flatMap(decodeFor("routines.get", decodeRoutineResult))),
+    resolveRoutine: (routineId, routineInput) =>
+      postJson(
+        "routines.resolve",
+        `/v1/routines/${encodeURIComponent(routineId)}/resolve`,
+        routineInput,
+      ).pipe(Effect.flatMap(decodeFor("routines.resolve", decodeRoutineResolutionResult))),
+    runRoutine: (routineId, routineInput) =>
+      postJson(
+        "routines.run",
+        `/v1/routines/${encodeURIComponent(routineId)}/run`,
+        routineInput,
+      ).pipe(Effect.flatMap(decodeFor("routines.run", decodeRoutineRunResult))),
+    getRoutineSchedules: () =>
+      requestJson("schedules.list", "/v1/schedules").pipe(
+        Effect.flatMap(decodeFor("schedules.list", decodeRoutineSchedulesResult)),
+      ),
+    createRoutineSchedule: (scheduleInput) =>
+      postJson("schedules.create", "/v1/schedules", scheduleInput).pipe(
+        Effect.flatMap(decodeFor("schedules.create", decodeRoutineScheduleResult)),
+      ),
+    updateRoutineSchedule: (scheduleId, scheduleInput) =>
+      requestJson("schedules.update", `/v1/schedules/${encodeURIComponent(scheduleId)}`, {
+        method: "PATCH",
+        body: JSON.stringify(scheduleInput),
+      }).pipe(Effect.flatMap(decodeFor("schedules.update", decodeRoutineScheduleResult))),
+    deleteRoutineSchedule: (scheduleId, scheduleInput) =>
+      requestJson("schedules.delete", `/v1/schedules/${encodeURIComponent(scheduleId)}`, {
+        method: "DELETE",
+        body: JSON.stringify(scheduleInput),
+      }).pipe(Effect.flatMap(decodeFor("schedules.delete", decodeRoutineScheduleDeleteResult))),
+    runRoutineSchedule: (scheduleId, scheduleInput) =>
+      postJson(
+        "schedules.run",
+        `/v1/schedules/${encodeURIComponent(scheduleId)}/run`,
+        scheduleInput,
+      ).pipe(Effect.flatMap(decodeFor("schedules.run", decodeRoutineScheduleRunResult))),
     createProject: (projectInput) =>
       postJson("projects.create", "/v1/projects", withoutWriteMetadata(projectInput)).pipe(
         Effect.flatMap(decodeFor("projects.create", decodeProjectDetailResponse)),
@@ -1765,6 +1868,23 @@ export function makeJarvisClient(config: {
         withClient("projects.threads.get", (client) =>
           client.getProjectThread(projectId, threadId),
         ),
+      getRoutines: () => withClient("routines.list", (client) => client.getRoutines()),
+      getRoutine: (routineId, version) =>
+        withClient("routines.get", (client) => client.getRoutine(routineId, version)),
+      resolveRoutine: (routineId, input) =>
+        withClient("routines.resolve", (client) => client.resolveRoutine(routineId, input)),
+      runRoutine: (routineId, input) =>
+        withClient("routines.run", (client) => client.runRoutine(routineId, input)),
+      getRoutineSchedules: () =>
+        withClient("schedules.list", (client) => client.getRoutineSchedules()),
+      createRoutineSchedule: (input) =>
+        withClient("schedules.create", (client) => client.createRoutineSchedule(input)),
+      updateRoutineSchedule: (scheduleId, input) =>
+        withClient("schedules.update", (client) => client.updateRoutineSchedule(scheduleId, input)),
+      deleteRoutineSchedule: (scheduleId, input) =>
+        withClient("schedules.delete", (client) => client.deleteRoutineSchedule(scheduleId, input)),
+      runRoutineSchedule: (scheduleId, input) =>
+        withClient("schedules.run", (client) => client.runRoutineSchedule(scheduleId, input)),
       createProject: (input) =>
         withClient("projects.create", (client) => client.createProject(input)),
       updateProject: (projectId, input) =>
@@ -2024,6 +2144,15 @@ function makeMissingConfigurationClient(message: string): JarvisClient {
     getProjectFiles: () => fail("jarvis.client.configure"),
     getProjectThreads: () => fail("jarvis.client.configure"),
     getProjectThread: () => fail("jarvis.client.configure"),
+    getRoutines: () => fail("jarvis.client.configure"),
+    getRoutine: () => fail("jarvis.client.configure"),
+    resolveRoutine: () => fail("jarvis.client.configure"),
+    runRoutine: () => fail("jarvis.client.configure"),
+    getRoutineSchedules: () => fail("jarvis.client.configure"),
+    createRoutineSchedule: () => fail("jarvis.client.configure"),
+    updateRoutineSchedule: () => fail("jarvis.client.configure"),
+    deleteRoutineSchedule: () => fail("jarvis.client.configure"),
+    runRoutineSchedule: () => fail("jarvis.client.configure"),
     createProject: () => fail("jarvis.client.configure"),
     updateProject: () => fail("jarvis.client.configure"),
     archiveProject: () => fail("jarvis.client.configure"),
@@ -3354,6 +3483,129 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
   const decodeFixtureCatalog = () =>
     decodeFor("fixture.catalog", decodeCatalog)(fixtureCatalogPayload);
 
+  const fixtureRoutine = decodeRoutineResultSync({
+    ok: true,
+    api_version: "v1",
+    schema_version: 1,
+    routine: {
+      routine_id: "pull-request-review",
+      version: 1,
+      name: "Pull request review",
+      summary: "Run a configurable multi-model review against a pull request.",
+      description:
+        "Launch independent reviewers, consolidate their findings, and optionally publish comments.",
+      builtin: true,
+      target_types: ["pull_request"],
+      parameters: [
+        {
+          name: "pull_request",
+          label: "Pull request",
+          description: "The GitHub pull request to review.",
+          type: "pull_request_ref",
+          required: true,
+          default: { source: "target" },
+          options_source: "",
+          allow_multiple: false,
+          sensitive: false,
+          choices: [],
+          min_items: 0,
+          max_items: 0,
+        },
+        {
+          name: "reviewers",
+          label: "Reviewers",
+          description: "The models that independently review the pull request.",
+          type: "model_ref",
+          required: true,
+          default: null,
+          options_source: "runtime.models",
+          allow_multiple: true,
+          sensitive: false,
+          choices: [],
+          min_items: 2,
+          max_items: 2,
+        },
+        {
+          name: "dimensions",
+          label: "Review dimensions",
+          description: "The concerns each reviewer should inspect.",
+          type: "enum",
+          required: true,
+          default: {
+            source: "literal",
+            value: ["correctness", "security", "performance", "tests", "maintainability", "style"],
+          },
+          options_source: "review.dimensions",
+          allow_multiple: true,
+          sensitive: false,
+          choices: ["correctness", "security", "performance", "tests", "maintainability", "style"],
+          min_items: 1,
+          max_items: 6,
+        },
+        {
+          name: "extra_instructions",
+          label: "Extra instructions",
+          description: "Additional context for the review panel.",
+          type: "text",
+          required: false,
+          default: { source: "literal", value: "" },
+          options_source: "",
+          allow_multiple: false,
+          sensitive: false,
+          choices: [],
+          min_items: 0,
+          max_items: 0,
+        },
+        {
+          name: "post_comments",
+          label: "Post comments",
+          description: "Publish consolidated findings back to GitHub.",
+          type: "boolean",
+          required: false,
+          default: { source: "literal", value: true },
+          options_source: "",
+          allow_multiple: false,
+          sensitive: false,
+          choices: [],
+          min_items: 0,
+          max_items: 0,
+        },
+      ],
+      execution: {
+        chat_type: "orchestration",
+        default_engine: "codex",
+        supported_engines: ["codex", "claude"],
+      },
+    },
+  }).routine!;
+  let fixtureRoutineSchedules: JarvisRoutineSchedule[] = [];
+  let fixtureRoutineRunSequence = 0;
+  let fixtureRoutineScheduleSequence = 0;
+  const fixtureRoutineRun = (
+    projectId: JarvisProjectId,
+    trigger: JsonObjectType,
+  ): JarvisRoutineRunResult => {
+    const thread = projectThreads.get(projectId)?.[0] ?? projectThreads.get(cockpitProjectId)?.[0];
+    if (thread === undefined) {
+      return { ok: false, error: { message: "No fixture project thread is available." } };
+    }
+    return {
+      ok: true,
+      api_version: "v1",
+      schema_version: 1,
+      run: {
+        run_id: JarvisRunId.make(`run_fixture_routine_${++fixtureRoutineRunSequence}`),
+        routine_id: fixtureRoutine.routine_id,
+        routine_version: fixtureRoutine.version,
+        status: "started",
+        project_id: thread.project_id,
+        thread_id: thread.thread_id,
+        trigger,
+      },
+      thread,
+    };
+  };
+
   return {
     streamCockpitEvents: () =>
       Stream.fail(
@@ -3502,6 +3754,157 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
         ...thread,
         messages: projectThreadMessages.get(projectThreadKey(candidateProjectId, threadId)) ?? [],
       });
+    },
+    getRoutines: () =>
+      Effect.succeed({
+        ok: true,
+        api_version: "v1",
+        schema_version: 1,
+        routines: [fixtureRoutine],
+      }),
+    getRoutine: (routineId, version) =>
+      Effect.succeed(
+        routineId === fixtureRoutine.routine_id &&
+          (version === undefined || version === fixtureRoutine.version)
+          ? {
+              ok: true as const,
+              api_version: "v1" as const,
+              schema_version: 1,
+              routine: fixtureRoutine,
+            }
+          : { ok: false as const, error: { message: `No fixture routine ${routineId}.` } },
+      ),
+    resolveRoutine: (routineId, input) => {
+      if (routineId !== fixtureRoutine.routine_id) {
+        return Effect.succeed({
+          ok: false as const,
+          error: { message: `No fixture routine ${routineId}.` },
+        });
+      }
+      const values: Record<string, Schema.Json> = {
+        dimensions: ["correctness", "security", "performance", "tests", "maintainability", "style"],
+        extra_instructions: "",
+        post_comments: true,
+        ...(input.target !== undefined ? { pull_request: input.target } : {}),
+        ...input.params,
+      };
+      const missing = [
+        ...(values.pull_request === undefined ? ["pull_request"] : []),
+        ...(values.reviewers === undefined ? ["reviewers"] : []),
+      ];
+      return Effect.succeed({
+        ok: true as const,
+        api_version: "v1" as const,
+        schema_version: 1,
+        routine: fixtureRoutine,
+        resolution: {
+          values,
+          missing,
+          ready: missing.length === 0,
+          rendered_prompt:
+            missing.length === 0 ? "Run the configured pull request review routine." : "",
+        },
+      });
+    },
+    runRoutine: (routineId, input) =>
+      Effect.succeed(
+        routineId === fixtureRoutine.routine_id
+          ? fixtureRoutineRun(input.project_id ?? cockpitProjectId, { type: "manual" })
+          : { ok: false, error: { message: `No fixture routine ${routineId}.` } },
+      ),
+    getRoutineSchedules: () =>
+      Effect.succeed({
+        ok: true,
+        api_version: "v1",
+        schema_version: 1,
+        schedules: fixtureRoutineSchedules,
+      }),
+    createRoutineSchedule: (input) => {
+      const schedule: JarvisRoutineSchedule = {
+        schedule_id: JarvisRoutineScheduleId.make(
+          `sched_fixture_${++fixtureRoutineScheduleSequence}`,
+        ),
+        name: input.name,
+        routine_id: input.routine_id,
+        routine_version: input.routine_version ?? fixtureRoutine.version,
+        project_id: input.project_id,
+        target: input.target ?? {},
+        params: input.params ?? {},
+        engine: input.engine ?? "",
+        model: input.model ?? "",
+        effort: input.effort ?? "",
+        speed: input.speed ?? "",
+        worker_id: input.worker_id ?? "",
+        hour: input.hour,
+        minute: input.minute,
+        weekdays: input.weekdays ?? [0, 1, 2, 3, 4, 5, 6],
+        timezone: input.timezone ?? "Europe/London",
+        enabled: input.enabled ?? true,
+        created_by: "fixture",
+        last_fired_date: "",
+        created_at: now,
+        updated_at: now,
+      };
+      fixtureRoutineSchedules = [...fixtureRoutineSchedules, schedule];
+      return Effect.succeed({
+        ok: true,
+        api_version: "v1",
+        schema_version: 1,
+        schedule,
+      });
+    },
+    updateRoutineSchedule: (scheduleId, input) => {
+      const existing = fixtureRoutineSchedules.find(
+        (schedule) => schedule.schedule_id === scheduleId,
+      );
+      if (existing === undefined) {
+        return Effect.succeed({
+          ok: false as const,
+          error: { message: `No fixture schedule ${scheduleId}.` },
+        });
+      }
+      const { idempotency_key: _idempotencyKey, ...patch } = input;
+      const schedule = { ...existing, ...patch, updated_at: now };
+      fixtureRoutineSchedules = fixtureRoutineSchedules.map((candidate) =>
+        candidate.schedule_id === scheduleId ? schedule : candidate,
+      );
+      return Effect.succeed({
+        ok: true as const,
+        api_version: "v1" as const,
+        schema_version: 1,
+        schedule,
+      });
+    },
+    deleteRoutineSchedule: (scheduleId, _input) => {
+      const deleted = fixtureRoutineSchedules.some(
+        (schedule) => schedule.schedule_id === scheduleId,
+      );
+      fixtureRoutineSchedules = fixtureRoutineSchedules.filter(
+        (schedule) => schedule.schedule_id !== scheduleId,
+      );
+      return Effect.succeed({
+        ok: true,
+        api_version: "v1",
+        schema_version: 1,
+        schedule_id: JarvisRoutineScheduleId.make(scheduleId),
+        deleted,
+      });
+    },
+    runRoutineSchedule: (scheduleId, _input) => {
+      const schedule = fixtureRoutineSchedules.find(
+        (candidate) => candidate.schedule_id === scheduleId,
+      );
+      if (schedule === undefined) {
+        return Effect.succeed({
+          ok: false as const,
+          error: { message: `No fixture schedule ${scheduleId}.` },
+        });
+      }
+      const run = fixtureRoutineRun(schedule.project_id ?? cockpitProjectId, {
+        type: "schedule",
+        schedule_id: schedule.schedule_id,
+      });
+      return Effect.succeed({ ...run, schedule });
     },
     createProject: (input) => {
       const project = fixtureProjectFromCreateInput(input);

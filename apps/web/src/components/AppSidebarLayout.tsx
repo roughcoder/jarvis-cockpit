@@ -11,7 +11,7 @@ import { Sidebar, SidebarProvider, SidebarRail, SidebarTrigger, useSidebar } fro
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 const THREAD_SIDEBAR_WIDTH_STORAGE_KEY = "chat_thread_sidebar_width";
-const THREAD_SIDEBAR_MIN_WIDTH = 13 * 16;
+const THREAD_SIDEBAR_MIN_WIDTH = 17 * 16;
 const THREAD_MAIN_CONTENT_MIN_WIDTH = 40 * 16;
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "90px";
 
@@ -82,7 +82,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       <Sidebar
         side="left"
         collapsible="offcanvas"
-        className="border-r border-border bg-card text-foreground"
+        className="border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
         resizable={{
           minWidth: THREAD_SIDEBAR_MIN_WIDTH,
           shouldAcceptWidth: ({ nextWidth, wrapper }) =>

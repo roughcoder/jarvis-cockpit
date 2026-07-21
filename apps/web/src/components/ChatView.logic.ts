@@ -28,6 +28,12 @@ export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
+export function routineProjectIdForThread(
+  thread: Pick<Thread, "jarvisRegistryProjectId">,
+): string | null {
+  return thread.jarvisRegistryProjectId;
+}
+
 export function buildLocalDraftThread(
   threadId: ThreadId,
   draftThread: DraftThreadState,

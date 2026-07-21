@@ -1,7 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
-
-import { JarvisProjectsPanel } from "../components/settings/JarvisProjects";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/settings/projects")({
-  component: JarvisProjectsPanel,
+  beforeLoad: () => {
+    throw redirect({ to: "/projects/manage", replace: true });
+  },
 });
