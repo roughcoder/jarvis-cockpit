@@ -1021,10 +1021,27 @@ function projectThreadTurnError(frame: JarvisSseFrame): string | null {
     : "Jarvis reported that the project conversation turn failed.";
 }
 
+/** Turn-level terminal event names. Bounded and exact so item-level
+ * completions (e.g. `thread.item.completed`) never end the turn early. */
+const PROJECT_THREAD_TURN_TERMINAL_EVENTS: ReadonlySet<string> = new Set([
+  "thread.turn.done",
+  "thread.turn.completed",
+  "turn.done",
+  "turn.completed",
+  "thread.done",
+  "thread.completed",
+  "response.done",
+  "response.completed",
+]);
+
 function isProjectThreadTurnComplete(frame: JarvisSseFrame): boolean {
   const dataType =
     isRecord(frame.data) && typeof frame.data.type === "string" ? frame.data.type : null;
-  return frame.event === "thread.turn.done" || dataType === "thread.turn.done";
+  return (
+    (typeof frame.event === "string" &&
+      PROJECT_THREAD_TURN_TERMINAL_EVENTS.has(frame.event.toLowerCase())) ||
+    (dataType !== null && PROJECT_THREAD_TURN_TERMINAL_EVENTS.has(dataType.toLowerCase()))
+  );
 }
 
 const JARVIS_PROJECT_TURN_EVENT_LIMIT = 512;

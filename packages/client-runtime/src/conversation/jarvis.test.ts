@@ -464,6 +464,66 @@ describe("Jarvis universal conversation adapter", () => {
     expect(conversation.timeline.map((item) => item.kind)).toEqual(["message", "activity"]);
   });
 
+  it("keeps a reasoning completion terminal when the wire status says done", () => {
+    const conversation = adaptJarvisProjectThread({
+      ...ENRICHED_JARVIS_CONVERSATION_GOLDEN,
+      messages: [
+        {
+          role: "event",
+          peer_id: "jarvis",
+          content: "reasoning.completed",
+          observed_at: "2026-07-22T10:31:15.000Z",
+          event_id: "event-reasoning-done",
+          message_id: "reasoning-done",
+          turn_id: "turn-status-done",
+          type: "reasoning.completed",
+          status: "done",
+          data: { text: "Finished thinking." },
+        },
+      ],
+    });
+
+    expect(conversation.activities).toEqual([
+      expect.objectContaining({
+        kind: "reasoning.completed",
+        status: "completed",
+        completedAt: "2026-07-22T10:31:15.000Z",
+      }),
+    ]);
+  });
+
+  it("preserves whitespace-only reasoning delta tokens between words", () => {
+    const delta = (id: string, observedAt: string, text: string): JarvisConversationMessage => ({
+      role: "event",
+      peer_id: "jarvis",
+      content: "assistant.reasoning.delta",
+      observed_at: observedAt,
+      event: {
+        event_id: id,
+        type: "assistant.reasoning.delta",
+        occurred_at: observedAt,
+        turn_id: "turn-whitespace",
+        message_id: "reasoning-whitespace",
+        data: { text },
+      },
+    });
+    const conversation = adaptJarvisProjectThread({
+      ...ENRICHED_JARVIS_CONVERSATION_GOLDEN,
+      messages: [
+        delta("event-delta-1", "2026-07-22T10:31:14.000Z", "Hello,"),
+        delta("event-delta-2", "2026-07-22T10:31:15.000Z", " "),
+        delta("event-delta-3", "2026-07-22T10:31:16.000Z", "world."),
+      ],
+    });
+
+    expect(conversation.activities).toEqual([
+      expect.objectContaining({
+        kind: "reasoning.running",
+        summary: "Hello, world.",
+      }),
+    ]);
+  });
+
   it("orders interleaved turn items with one transitive total order", () => {
     const conversation = adaptJarvisProjectThread({
       ...ENRICHED_JARVIS_CONVERSATION_GOLDEN,

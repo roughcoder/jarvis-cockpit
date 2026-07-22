@@ -46,6 +46,7 @@ const timelineController: ConversationTimelineController = {
   showScrollToBottom: false,
   expandedImage: null,
   beginAnchoredTurn: () => {},
+  abandonAnchoredTurn: () => {},
   scrollToEnd: () => {},
   onAnchorReady: () => {},
   onAnchorSizeChanged: () => {},

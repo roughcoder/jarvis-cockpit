@@ -1058,6 +1058,73 @@ it.effect("project thread turn streams complete only after an explicit terminal 
   }),
 );
 
+it.effect("project thread turn streams accept alternate turn-level terminal event names", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async () =>
+        new Response(
+          'event: thread.delta\ndata: {"type":"thread.delta","payload":{"delta":"Alternate reply"}}\n\nevent: response.completed\ndata: {"type":"response.completed","payload":{}}\n\n',
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+    });
+
+    const items = yield* Stream.runCollect(
+      client.streamProjectThreadTurn("dogfood", "thread-1", {
+        text: "What changed?",
+        idempotency_key: "turn-alternate-done",
+      }),
+    );
+
+    const collected = [...items];
+    assert.deepStrictEqual(collected.at(-1), {
+      kind: "completed",
+      result: {
+        ok: true,
+        text: "Alternate reply",
+        events: [
+          {
+            event: "thread.delta",
+            data: { type: "thread.delta", payload: { delta: "Alternate reply" } },
+          },
+          {
+            event: "response.completed",
+            data: { type: "response.completed", payload: {} },
+          },
+        ],
+      },
+    });
+  }),
+);
+
+it.effect("project thread turn streams do not end on item-level completion events", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async () =>
+        new Response(
+          'event: thread.item.completed\ndata: {"type":"thread.item.completed","payload":{}}\n\n',
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+    });
+
+    const items = yield* Stream.runCollect(
+      client.streamProjectThreadTurn("dogfood", "thread-1", {
+        text: "What changed?",
+        idempotency_key: "turn-item-completed-eof",
+      }),
+    );
+
+    assert.deepStrictEqual([...items].at(-1), {
+      kind: "failed",
+      error: {
+        message:
+          "Jarvis project turn stream ended before thread.turn.done was received (received 1 event frame; last event: thread.item.completed).",
+      },
+    });
+  }),
+);
+
 it.effect("cockpit client renames project threads with a PATCH request", () =>
   Effect.gen(function* () {
     const requests: Array<{ url: string; method: string; body: unknown }> = [];

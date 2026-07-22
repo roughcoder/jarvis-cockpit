@@ -771,6 +771,8 @@ function activityStatus(
         break;
       case "completed":
       case "succeeded":
+      case "complete":
+      case "done":
         next = "completed";
         break;
       case "failed":
@@ -985,12 +987,19 @@ function eventDetail(message: JarvisConversationMessage): string | null {
     normalizedEventType(message.type)?.endsWith(".delta") === true;
   for (const key of ["text", "delta", "summary", "detail", "content", "output"] as const) {
     const value = message.data?.[key];
-    if (typeof value === "string" && value.trim()) {
-      return preserveIncrementalWhitespace || key === "delta" ? value : value.trim();
+    if (typeof value === "string") {
+      const preserveRaw = preserveIncrementalWhitespace || key === "delta";
+      // Whitespace-only tokens are meaningful for incremental deltas (word
+      // separators, paragraph breaks) — only require non-empty, not non-blank.
+      if (preserveRaw ? value.length > 0 : value.trim().length > 0) {
+        return preserveRaw ? value : value.trim();
+      }
     }
     if (Array.isArray(value)) {
       const text = value.filter((item): item is string => typeof item === "string").join("\n");
-      if (text.trim()) return preserveIncrementalWhitespace ? text : text.trim();
+      if (preserveIncrementalWhitespace ? text.length > 0 : text.trim().length > 0) {
+        return preserveIncrementalWhitespace ? text : text.trim();
+      }
     }
   }
   return clean(message.content);

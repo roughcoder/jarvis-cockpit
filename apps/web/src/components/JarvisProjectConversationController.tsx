@@ -970,10 +970,10 @@ export function JarvisProjectConversationController({
       readonly restoreDraftOnFailure?: boolean;
       readonly reserved?: boolean;
     } = {},
-  ) => {
-    if (routeIdentityRef.current !== routeIdentity) return;
+  ): Promise<boolean> => {
+    if (routeIdentityRef.current !== routeIdentity) return false;
     const text = submission.prompt.trim();
-    if (text.length === 0 || (sendBusy && !options.reserved) || archived) return;
+    if (text.length === 0 || (sendBusy && !options.reserved) || archived) return false;
     const existingTurnId = options.existingTurnId;
     const turnAttachments = submission.attachments;
     const turnWorkspace = submission.workspace;
@@ -1074,6 +1074,7 @@ export function JarvisProjectConversationController({
         ...(turnWorkspace !== null ? { workspace: turnWorkspace } : {}),
       },
     });
+    return true;
   };
 
   useEffect(() => {
@@ -1218,27 +1219,38 @@ export function JarvisProjectConversationController({
     clearComposerContent(composerDraftTarget);
     composerRef.current?.resetCursorState({ cursor: 0, prompt: "" });
 
+    // Removes the optimistic pending turn and its scroll anchor when the send
+    // never reached dispatch, so `sendBusy` cannot wedge on a phantom turn.
+    const discardPendingTurn = () => {
+      setTurns((existing) => existing.filter((turn) => turn.id !== turnId));
+      timelineController.abandonAnchoredTurn(MessageId.make(`overlay:${turnId}:user`));
+      if (routeIdentityRef.current === routeIdentity) {
+        restoreFailedSubmission(pendingSubmission);
+      }
+    };
+
     try {
       const attachments = await prepareProjectTurnAttachments({
         images: sendContext.images,
         persistedImages: sendContext.persistedImages,
       });
       if (attachments === null || routeIdentityRef.current !== routeIdentity) {
-        setTurns((existing) => existing.filter((turn) => turn.id !== turnId));
-        if (routeIdentityRef.current === routeIdentity) {
-          restoreFailedSubmission(pendingSubmission);
-        }
+        discardPendingTurn();
         return;
       }
       const submission = { ...pendingSubmission, attachments };
       setTurns((existing) =>
         existing.map((turn) => (turn.id === turnId ? { ...turn, attachments } : turn)),
       );
-      await sendPrompt(submission, {
+      const dispatched = await sendPrompt(submission, {
         existingTurnId: turnId,
         restoreDraftOnFailure: true,
         reserved: true,
       });
+      if (!dispatched) {
+        // e.g. the conversation was archived while attachments were preparing.
+        discardPendingTurn();
+      }
     } finally {
       releaseProjectConversationSend(sendInFlightRef);
     }
