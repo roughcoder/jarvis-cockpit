@@ -1214,11 +1214,6 @@ export function JarvisProjectConversationController({
         createdAt: new Date().toISOString(),
       },
     ]);
-    promptRef.current = "";
-    composerImagesRef.current = [];
-    clearComposerContent(composerDraftTarget);
-    composerRef.current?.resetCursorState({ cursor: 0, prompt: "" });
-
     // Removes the optimistic pending turn and its scroll anchor when the send
     // never reached dispatch, so `sendBusy` cannot wedge on a phantom turn.
     const discardPendingTurn = () => {
