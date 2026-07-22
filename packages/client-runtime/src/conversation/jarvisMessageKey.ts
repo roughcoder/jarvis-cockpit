@@ -4,9 +4,10 @@ export type JarvisConversationMessage = JarvisProjectThreadMessage;
 
 /** Stable Jarvis replay identity shared by stream projection and conversation adaptation. */
 export function projectThreadMessageKey(message: JarvisConversationMessage): string {
-  const eventId = clean(message.event_id);
+  const nestedEvent = asRecord(message.event);
+  const eventId = clean(message.event_id) ?? readString(nestedEvent, "event_id");
   if (eventId) return `event:${eventId}`;
-  const messageId = clean(message.message_id);
+  const messageId = clean(message.message_id) ?? readString(nestedEvent, "message_id");
   if (messageId) return `message:${messageId}`;
   return `legacy:${JSON.stringify([
     message.role,
@@ -24,8 +25,22 @@ export function projectThreadMessageKey(message: JarvisConversationMessage): str
     message.completed_at ?? null,
     message.call_id ?? null,
     message.correlation_id ?? null,
+    message.turn_id ?? null,
     message.sequence ?? null,
+    message.data ?? null,
+    message.event ?? null,
   ])}`;
+}
+
+function asRecord(value: unknown): Readonly<Record<string, unknown>> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Readonly<Record<string, unknown>>)
+    : null;
+}
+
+function readString(record: Readonly<Record<string, unknown>> | null, key: string): string | null {
+  const value = record?.[key];
+  return typeof value === "string" ? clean(value) : null;
 }
 
 function clean(value: string | null | undefined): string | null {

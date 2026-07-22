@@ -14,6 +14,7 @@ import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { THREAD_DETAIL_RETENTION } from "./retention.ts";
 import {
   applyJarvisProjectThreadStreamItem,
+  applyJarvisProjectThreadTurnStreamItem,
   applyServerConfigProjection,
   createServerEnvironmentAtoms,
   projectServerWelcome,
@@ -66,6 +67,80 @@ describe("server state projection", () => {
     expect(server.interruptJarvisProjectThread.label).toBe(
       "environment-data:server:interrupt-jarvis-project-thread",
     );
+    expect(server.jarvisProjectThreadTurnStream).toBeTypeOf("function");
+  });
+
+  it("accumulates project-turn events before exposing the terminal result", () => {
+    const afterStarted = applyJarvisProjectThreadTurnStreamItem(null, {
+      kind: "event",
+      event: {
+        event: "thread.turn.started",
+        data: { type: "thread.turn.started", payload: { turn_id: "turn-1" } },
+      },
+    });
+    const afterDelta = applyJarvisProjectThreadTurnStreamItem(afterStarted, {
+      kind: "event",
+      event: {
+        event: "thread.delta",
+        data: { type: "thread.delta", payload: { delta: "Hel" } },
+      },
+    });
+    const afterReply = applyJarvisProjectThreadTurnStreamItem(afterDelta, {
+      kind: "event",
+      event: {
+        event: "thread.reply",
+        data: { type: "thread.reply", payload: { reply: "Hello" } },
+      },
+    });
+    expect(afterReply).toMatchObject({
+      phase: "streaming",
+      text: "Hello",
+      events: [
+        { event: "thread.turn.started" },
+        { event: "thread.delta" },
+        { event: "thread.reply" },
+      ],
+    });
+
+    const result = { ok: true, text: "Hello", events: afterReply.events };
+    expect(
+      applyJarvisProjectThreadTurnStreamItem(afterReply, { kind: "completed", result }),
+    ).toEqual({ phase: "completed", text: "Hello", events: result.events, result, error: null });
+  });
+
+  it("preserves partial project-turn progress when a terminal failure arrives", () => {
+    const streaming = applyJarvisProjectThreadTurnStreamItem(null, {
+      kind: "event",
+      event: { event: "tool.call", data: { name: "search" } },
+    });
+    expect(
+      applyJarvisProjectThreadTurnStreamItem(streaming, {
+        kind: "failed",
+        error: { message: "provider stopped" },
+      }),
+    ).toMatchObject({
+      phase: "failed",
+      events: streaming.events,
+      error: "provider stopped",
+    });
+  });
+
+  it("bounds retained project-turn frames while preserving accumulated reply text", () => {
+    let state: ReturnType<typeof applyJarvisProjectThreadTurnStreamItem> | null = null;
+    for (let index = 0; index < 520; index += 1) {
+      state = applyJarvisProjectThreadTurnStreamItem(state, {
+        kind: "event",
+        event: {
+          event: "thread.delta",
+          data: { type: "thread.delta", payload: { delta: "x" }, sequence: index },
+        },
+      });
+    }
+
+    const finalState = state!;
+    expect(finalState.events).toHaveLength(512);
+    expect(finalState.text).toHaveLength(520);
+    expect(finalState.events[0]?.data).toMatchObject({ sequence: 8 });
   });
 
   it("applies every config category to the projected snapshot", () => {

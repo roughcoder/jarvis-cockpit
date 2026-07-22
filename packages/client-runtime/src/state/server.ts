@@ -2,6 +2,9 @@ import {
   type EnvironmentId,
   type JarvisProjectThreadDetail,
   type JarvisProjectThreadStreamItem,
+  type JarvisProjectThreadTurnResult,
+  type JarvisProjectThreadTurnStreamItem,
+  type JsonObject,
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
@@ -15,6 +18,7 @@ import {
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentRpcStreamAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -24,6 +28,89 @@ import { FINITE_QUERY_FAMILY_MAX_ENTRIES, THREAD_DETAIL_RETENTION } from "./rete
 export interface ServerConfigProjection {
   readonly config: ServerConfig;
   readonly latestEvent: ServerConfigStreamEvent;
+}
+
+export interface JarvisProjectThreadTurnStreamState {
+  readonly phase: "streaming" | "completed" | "failed";
+  readonly events: ReadonlyArray<JsonObject>;
+  readonly text: string;
+  readonly result: JarvisProjectThreadTurnResult | null;
+  readonly error: string | null;
+}
+
+const JARVIS_PROJECT_TURN_EVENT_LIMIT = 512;
+
+function projectThreadReplyUpdate(
+  event: JsonObject,
+): { readonly kind: "delta" | "reply"; readonly text: string } | null {
+  if (event.event !== "thread.delta" && event.event !== "thread.reply") return null;
+  const data = event.data;
+  if (typeof data === "string") {
+    return { kind: event.event === "thread.delta" ? "delta" : "reply", text: data };
+  }
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return null;
+  const record = data as Readonly<Record<string, unknown>>;
+  const payload =
+    typeof record.payload === "object" && record.payload !== null && !Array.isArray(record.payload)
+      ? (record.payload as Readonly<Record<string, unknown>>)
+      : record;
+  const candidate =
+    event.event === "thread.delta"
+      ? (payload.delta ?? payload.text ?? payload.content)
+      : (payload.reply ?? payload.text ?? payload.content);
+  return typeof candidate === "string"
+    ? { kind: event.event === "thread.delta" ? "delta" : "reply", text: candidate }
+    : null;
+}
+
+function appendBoundedProjectTurnEvent(
+  events: ReadonlyArray<JsonObject>,
+  event: JsonObject,
+): ReadonlyArray<JsonObject> {
+  if (events.length < JARVIS_PROJECT_TURN_EVENT_LIMIT) return [...events, event];
+  return [...events.slice(-(JARVIS_PROJECT_TURN_EVENT_LIMIT - 1)), event];
+}
+
+export function applyJarvisProjectThreadTurnStreamItem(
+  current: JarvisProjectThreadTurnStreamState | null,
+  item: JarvisProjectThreadTurnStreamItem,
+): JarvisProjectThreadTurnStreamState {
+  const base: JarvisProjectThreadTurnStreamState = current ?? {
+    phase: "streaming",
+    events: [],
+    text: "",
+    result: null,
+    error: null,
+  };
+  switch (item.kind) {
+    case "event": {
+      const reply = projectThreadReplyUpdate(item.event);
+      const text =
+        reply === null
+          ? base.text
+          : reply.kind === "delta"
+            ? base.text + reply.text
+            : reply.text.startsWith(base.text)
+              ? reply.text
+              : base.text + reply.text;
+      return {
+        ...base,
+        phase: "streaming",
+        events: appendBoundedProjectTurnEvent(base.events, item.event),
+        text,
+      };
+    }
+    case "completed":
+      return {
+        phase: "completed",
+        events: item.result.events,
+        text: item.result.text,
+        result: item.result,
+        error: null,
+      };
+    case "failed":
+      return { ...base, phase: "failed", error: item.error.message };
+  }
 }
 
 function retainRecentProjectThreadMessages(
@@ -358,6 +445,21 @@ export function createServerEnvironmentAtoms<R, E>(
             (): JarvisProjectThreadDetail | null => null,
             (current, item) => {
               const next = applyJarvisProjectThreadStreamItem(current, item);
+              return [next, [next]];
+            },
+          ),
+        ),
+    }),
+    jarvisProjectThreadTurnStream: createEnvironmentRpcStreamAtomFamily(runtime, {
+      label: "environment-data:server:jarvis-project-thread-turn-stream",
+      tag: WS_METHODS.serverStreamJarvisProjectThreadTurn,
+      idleTtlMs: 0,
+      transform: (stream) =>
+        stream.pipe(
+          Stream.mapAccum(
+            (): JarvisProjectThreadTurnStreamState | null => null,
+            (current, item) => {
+              const next = applyJarvisProjectThreadTurnStreamItem(current, item);
               return [next, [next]];
             },
           ),

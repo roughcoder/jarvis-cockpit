@@ -3,7 +3,7 @@ import type {
   ConversationActivityStatus,
   ConversationMessageRole,
 } from "@t3tools/client-runtime/conversation";
-import { MessageId } from "@t3tools/contracts";
+import { MessageId, TurnId } from "@t3tools/contracts";
 
 import {
   agentConversationOperationalFlags,
@@ -173,7 +173,7 @@ function appendOverlayMessage(input: {
       id: MessageId.make(id),
       role: input.role,
       text: input.content,
-      turnId: null,
+      turnId: TurnId.make(input.turn.id),
       streaming: input.streaming,
       createdAt: input.turn.createdAt,
       updatedAt: input.turn.createdAt,
@@ -292,6 +292,7 @@ function overlayActivityEntry(
   const entry: AgentConversationOverlayWorkLogEntry = {
     id: `overlay:${turn.id}:activity:${activity.id}`,
     createdAt: turn.createdAt,
+    turnId: TurnId.make(turn.id),
     label: activity.title,
     ...(activity.detail ? { detail: activity.detail } : {}),
     tone,
@@ -308,6 +309,7 @@ function failedTurnEntry(
   const entry: AgentConversationOverlayWorkLogEntry = {
     id: `overlay:${turn.id}:failure`,
     createdAt: turn.createdAt,
+    turnId: TurnId.make(turn.id),
     label: "Turn failed",
     detail: turn.error?.trim() || "The turn could not be completed.",
     tone: "error",

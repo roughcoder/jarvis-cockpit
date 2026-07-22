@@ -32,6 +32,7 @@ import {
   type JarvisProjectThreadDetail,
   type JarvisProjectThreadMessage,
   type JarvisProjectThreadStreamItem,
+  type JarvisProjectThreadTurnStreamItem,
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
@@ -714,6 +715,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.serverGenerateThreadTitle, AuthOrchestrationOperateScope],
   [WS_METHODS.serverUnarchiveJarvisProjectThread, AuthOrchestrationOperateScope],
   [WS_METHODS.serverSendJarvisProjectThreadTurn, AuthOrchestrationOperateScope],
+  [WS_METHODS.serverStreamJarvisProjectThreadTurn, AuthOrchestrationOperateScope],
   [WS_METHODS.serverRespondJarvisProjectThreadApproval, AuthOrchestrationOperateScope],
   [WS_METHODS.serverRespondJarvisProjectThreadInput, AuthOrchestrationOperateScope],
   [WS_METHODS.serverInterruptJarvisProjectThread, AuthOrchestrationOperateScope],
@@ -2910,6 +2912,19 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "server",
             },
+          ),
+        [WS_METHODS.serverStreamJarvisProjectThreadTurn]: ({ projectId, threadId, input }) =>
+          observeRpcStream(
+            WS_METHODS.serverStreamJarvisProjectThreadTurn,
+            jarvisClient.streamProjectThreadTurn(projectId, threadId, input).pipe(
+              Stream.catchCause((cause) =>
+                Stream.succeed<JarvisProjectThreadTurnStreamItem>({
+                  kind: "failed",
+                  error: { message: formatJarvisProjectTurnFailure(Cause.squash(cause)) },
+                }),
+              ),
+            ),
+            { "rpc.aggregate": "server" },
           ),
         [WS_METHODS.serverRespondJarvisProjectThreadApproval]: ({ projectId, threadId, input }) =>
           observeRpcEffect(

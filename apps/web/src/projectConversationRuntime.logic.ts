@@ -13,6 +13,14 @@ export interface ProjectConversationComposerRuntime {
   readonly pendingUserInputs: PendingUserInput[];
 }
 
+export function projectConversationRouteIdentity(input: {
+  readonly environmentId: string;
+  readonly projectId: string;
+  readonly threadId: string;
+}): string {
+  return JSON.stringify([input.environmentId, input.projectId, input.threadId]);
+}
+
 /** Reuse a command identity after an ambiguous transport failure, but not after its payload changes. */
 export function cachedProjectConversationControlKey(
   cache: Map<string, string>,

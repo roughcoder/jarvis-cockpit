@@ -11,6 +11,7 @@ import { projectThreadMessageKey, type JarvisConversationMessage } from "./jarvi
 import type {
   AgentConversation,
   ConversationActivity,
+  ConversationActivityPresentation,
   ConversationActivityStatus,
   ConversationLifecycle,
   ConversationMessage,
@@ -50,8 +51,9 @@ interface ProjectedItem {
 interface ActivityFrame {
   readonly groupKey: string;
   readonly correlationId: string;
+  readonly turnId: string | null;
   readonly replayKey: string;
-  readonly family: "tool" | "watch" | "terminal";
+  readonly family: "tool" | "watch" | "terminal" | "reasoning" | "commentary";
   readonly kind: string;
   readonly status: ConversationActivityStatus;
   readonly title: string;
@@ -61,6 +63,7 @@ interface ActivityFrame {
   readonly observedAt: string;
   readonly completedAt: string | null;
   readonly error: string | null;
+  readonly presentation: ConversationActivityPresentation | null;
   readonly expectedChildren?: number;
   readonly legacyToolPhase?: "call" | "result";
 }
@@ -247,7 +250,14 @@ function projectItems(
   const seen = new Set<string>();
 
   const orderedSource = source
-    .map((message) => ({ message, replayKey: projectThreadMessageKey(message) }))
+    .map((sourceMessage, sourceIndex) => {
+      const message = normalizeJarvisConversationMessage(sourceMessage);
+      return {
+        message,
+        replayKey: projectThreadMessageKey(message),
+        sourceIndex,
+      };
+    })
     .sort(compareOrderedMessages);
   orderedSource.forEach(({ message, replayKey }, sourceIndex) => {
     if (seen.has(replayKey)) return;
@@ -265,6 +275,9 @@ function projectItems(
       );
       return;
     }
+    // Worker protocol frames are represented as activities above. Unknown
+    // event types stay forward-compatible but should not become chat bubbles.
+    if (message.role === "event") return;
     if (isRedundantTechnicalAcknowledgement(message)) return;
     const presentation = projectJarvisMessagePresentation(message);
     items.push({
@@ -276,6 +289,7 @@ function projectItems(
         role: projectRole(message.role),
         content: message.content,
         authorId: clean(message.peer_id),
+        turnId: messageTurnId(message),
         observedAt: message.observed_at,
         ...(presentation ? { presentation } : {}),
       },
@@ -293,10 +307,12 @@ function projectItems(
       summary: frame.summary,
       toolName: frame.toolName,
       correlationId: frame.correlationId,
+      turnId: frame.turnId,
       relatedConversationIds: frame.relatedConversationIds,
       startedAt: frame.observedAt,
       completedAt: frame.completedAt,
       error: frame.error,
+      ...(frame.presentation ? { presentation: frame.presentation } : {}),
     };
     items.push({ observedAt: frame.observedAt, sourceIndex: frame.sourceIndex, activity });
   }
@@ -315,6 +331,7 @@ function projectItems(
         role: "user",
         content: turn.text,
         authorId: null,
+        turnId: turn.queue_id,
         observedAt: turn.queued_at,
       },
     });
@@ -333,6 +350,7 @@ function projectItems(
             : "Waiting for the active turn to finish.",
         toolName: null,
         correlationId: turn.queue_id,
+        turnId: turn.queue_id,
         relatedConversationIds: [],
         startedAt: turn.queued_at,
         completedAt: null,
@@ -341,10 +359,7 @@ function projectItems(
     });
   });
 
-  return items.sort(
-    (left, right) =>
-      left.observedAt.localeCompare(right.observedAt) || left.sourceIndex - right.sourceIndex,
-  );
+  return items.sort(compareProjectedItems);
 }
 
 /** Bounded compatibility presentation for known generated orchestration prompts. */
@@ -362,8 +377,16 @@ export function projectJarvisMessagePresentation(message: JarvisConversationMess
 }
 
 function compareOrderedMessages(
-  left: { readonly message: JarvisConversationMessage; readonly replayKey: string },
-  right: { readonly message: JarvisConversationMessage; readonly replayKey: string },
+  left: {
+    readonly message: JarvisConversationMessage;
+    readonly replayKey: string;
+    readonly sourceIndex: number;
+  },
+  right: {
+    readonly message: JarvisConversationMessage;
+    readonly replayKey: string;
+    readonly sourceIndex: number;
+  },
 ): number {
   const observed = left.message.observed_at.localeCompare(right.message.observed_at);
   if (observed !== 0) return observed;
@@ -371,11 +394,32 @@ function compareOrderedMessages(
   const rightSequence = right.message.sequence;
   if (leftSequence !== undefined && rightSequence !== undefined) {
     if (leftSequence !== rightSequence) return leftSequence - rightSequence;
-    return left.replayKey.localeCompare(right.replayKey);
+    return left.sourceIndex - right.sourceIndex;
   }
   if (leftSequence !== undefined) return -1;
   if (rightSequence !== undefined) return 1;
-  return left.replayKey.localeCompare(right.replayKey);
+  return left.sourceIndex - right.sourceIndex;
+}
+
+function compareProjectedItems(left: ProjectedItem, right: ProjectedItem): number {
+  const leftTurnId = projectedItemTurnId(left);
+  const rightTurnId = projectedItemTurnId(right);
+  if (leftTurnId !== null && leftTurnId === rightTurnId) {
+    const rank = projectedItemTurnRank(left) - projectedItemTurnRank(right);
+    if (rank !== 0) return rank;
+  }
+  return left.observedAt.localeCompare(right.observedAt) || left.sourceIndex - right.sourceIndex;
+}
+
+function projectedItemTurnId(item: ProjectedItem): string | null {
+  return item.message?.turnId ?? item.activity?.turnId ?? null;
+}
+
+function projectedItemTurnRank(item: ProjectedItem): number {
+  if (item.message?.role === "user") return 0;
+  if (item.activity) return 1;
+  if (item.message?.role === "assistant") return 2;
+  return 1;
 }
 
 function projectActivityFrame(
@@ -395,6 +439,7 @@ function projectActivityFrame(
         ? `watch:${clean(message.watch_id)}`
         : `legacy-watch:${replayKey}`,
       correlationId: clean(message.watch_id) ?? `legacy-watch:${replayKey}`,
+      turnId: messageTurnId(message),
       replayKey,
       family: "watch",
       kind: watchKind(status),
@@ -408,21 +453,30 @@ function projectActivityFrame(
         ? (clean(message.completed_at) ?? message.observed_at)
         : null,
       error: clean(message.error),
+      presentation: null,
       expectedChildren: count,
     };
   }
 
-  const legacyTerminal = allowLegacyProse
-    ? /^Child (.+) \(([^)]+)\) reached ([^:]+)(?:: (.*))?\.$/u.exec(message.content)
-    : null;
-  if (message.type === "child_terminal" || (message.role === "system" && legacyTerminal)) {
-    const childId = clean(message.child_chat_id) ?? legacyTerminal?.[2] ?? "unknown-child";
-    const title = clean(message.title) ?? legacyTerminal?.[1] ?? "Child code agent";
-    const status = activityStatus(message.phase ?? legacyTerminal?.[3], message.status, "waiting");
-    const error = clean(message.error) ?? clean(legacyTerminal?.[4]);
+  const terminalEnvelope = /^Child (.+) \(([^)]+)\) reached ([^:]+)(?:: (.*))?\.$/u.exec(
+    message.content,
+  );
+  if (
+    message.type === "child_terminal" ||
+    (allowLegacyProse && message.role === "system" && terminalEnvelope)
+  ) {
+    const childId = clean(message.child_chat_id) ?? terminalEnvelope?.[2] ?? "unknown-child";
+    const title = clean(message.title) ?? terminalEnvelope?.[1] ?? "Child code agent";
+    const status = activityStatus(
+      message.phase ?? terminalEnvelope?.[3],
+      message.status,
+      "waiting",
+    );
+    const error = clean(message.error) ?? clean(terminalEnvelope?.[4]);
     return {
       groupKey: `child:${childId}`,
       correlationId: childId,
+      turnId: messageTurnId(message),
       replayKey,
       family: "terminal",
       kind: childKind(status),
@@ -436,6 +490,7 @@ function projectActivityFrame(
         ? (clean(message.completed_at) ?? message.observed_at)
         : null,
       error,
+      presentation: null,
     };
   }
 
@@ -447,14 +502,16 @@ function projectActivityFrame(
       message.type === "tool.result" ||
       legacyTool?.[1] === "result" ||
       legacyTool?.[2] === "result";
-    const detail = clean(legacyTool?.[3]) ?? clean(message.content) ?? "Tool activity";
-    const toolName = /^([\w.-]+)/u.exec(detail)?.[1] ?? null;
+    const detail =
+      clean(legacyTool?.[3]) ?? eventDetail(message) ?? clean(message.content) ?? "Tool activity";
+    const toolName = eventToolName(message) ?? /^([\w.-]+)/u.exec(detail)?.[1] ?? null;
     const fallbackStatus = isResult ? "completed" : "requested";
     const status = activityStatus(message.phase, message.status, fallbackStatus);
     const correlation = clean(message.call_id) ?? clean(message.correlation_id);
     return {
       groupKey: correlation ? `tool:${correlation}` : `legacy-tool:${toolName ?? detail}`,
       correlationId: correlation ?? `legacy-tool:${toolName ?? detail}`,
+      turnId: messageTurnId(message),
       replayKey,
       family: "tool",
       kind: toolKind(status),
@@ -468,9 +525,53 @@ function projectActivityFrame(
         ? (clean(message.completed_at) ?? message.observed_at)
         : null,
       error: clean(message.error),
+      presentation: toolActivityPresentation(message, toolName),
       ...(correlation
         ? {}
         : { legacyToolPhase: isResult ? ("result" as const) : ("call" as const) }),
+    };
+  }
+
+  if (isReasoningEvent(message.type)) {
+    const completed = message.type === "reasoning.completed";
+    const correlation = clean(message.message_id) ?? clean(message.correlation_id) ?? replayKey;
+    return {
+      groupKey: `reasoning:${messageTurnId(message) ?? "unknown"}:${correlation}`,
+      correlationId: correlation,
+      turnId: messageTurnId(message),
+      replayKey,
+      family: "reasoning",
+      kind: completed ? "reasoning.completed" : "reasoning.running",
+      status: completed ? "completed" : "running",
+      title: "Thinking",
+      summary: eventDetail(message),
+      toolName: null,
+      relatedConversationIds: [],
+      observedAt: message.observed_at,
+      completedAt: completed ? message.observed_at : null,
+      error: null,
+      presentation: null,
+    };
+  }
+
+  if (isCommentaryEvent(message.type)) {
+    const correlation = clean(message.message_id) ?? clean(message.correlation_id) ?? replayKey;
+    return {
+      groupKey: `commentary:${messageTurnId(message) ?? "unknown"}:${correlation}`,
+      correlationId: correlation,
+      turnId: messageTurnId(message),
+      replayKey,
+      family: "commentary",
+      kind: "commentary",
+      status: "completed",
+      title: commentaryTitle(message.type),
+      summary: eventDetail(message),
+      toolName: null,
+      relatedConversationIds: [],
+      observedAt: message.observed_at,
+      completedAt: message.observed_at,
+      error: null,
+      presentation: null,
     };
   }
 
@@ -522,15 +623,22 @@ function mergeActivity(
         ? toolKind(status)
         : current.family === "watch"
           ? watchKind(status)
-          : childKind(status),
+          : current.family === "reasoning" || current.family === "commentary"
+            ? latest.kind
+            : childKind(status),
     status,
     title:
       current.family === "tool"
         ? toolTitle(toolName, status)
         : current.family === "watch"
           ? watchTitle(status, count)
-          : latest.title,
-    summary: latest.summary ?? current.summary,
+          : current.family === "reasoning" || current.family === "commentary"
+            ? latest.title
+            : latest.title,
+    summary:
+      current.family === "reasoning" || current.family === "commentary"
+        ? mergeActivityText(current.summary, next.summary)
+        : (latest.summary ?? current.summary),
     toolName,
     relatedConversationIds,
     observedAt: first.observedAt,
@@ -538,6 +646,7 @@ function mergeActivity(
       ? (next.completedAt ?? current.completedAt ?? latest.observedAt)
       : null,
     error: latest.error ?? current.error,
+    presentation: mergeActivityPresentation(current.presentation, next.presentation),
     expectedChildren: Math.max(current.expectedChildren ?? 0, next.expectedChildren ?? 0),
     sourceIndex: Math.min(current.sourceIndex, sourceIndex),
   };
@@ -594,31 +703,44 @@ function activityStatus(
   fallback: ConversationActivityStatus,
 ): ConversationActivityStatus {
   let sawUnknown = false;
+  let sawKnown = false;
+  let result = fallback;
   for (const value of [status, phase]) {
     if (!value) continue;
+    let next: ConversationActivityStatus | null = null;
     switch (value?.toLowerCase()) {
       case "requested":
-        return "requested";
+        next = "requested";
+        break;
       case "claimed":
       case "running":
       case "working":
-        return "running";
+        next = "running";
+        break;
       case "waiting":
       case "pending":
-        return "waiting";
+        next = "waiting";
+        break;
       case "completed":
       case "succeeded":
-        return "completed";
+        next = "completed";
+        break;
       case "failed":
-        return "failed";
+        next = "failed";
+        break;
       case "cancelled":
       case "canceled":
-        return "cancelled";
+        next = "cancelled";
+        break;
       default:
         sawUnknown = true;
     }
+    if (next !== null) {
+      sawKnown = true;
+      result = preferStatus(result, next);
+    }
   }
-  return sawUnknown && fallback === "completed" ? "waiting" : fallback;
+  return sawUnknown && !sawKnown && fallback === "completed" ? "waiting" : result;
 }
 
 function preferStatus(
@@ -762,6 +884,40 @@ function projectRole(role: string): ConversationMessageRole {
   }
 }
 
+/** Normalize Jarvis' durable nested event-message shape into the compatibility
+ * shape used by the universal conversation projection. Explicit flattened
+ * fields continue to win for older/newer mixed deployments. */
+function normalizeJarvisConversationMessage(
+  message: JarvisConversationMessage,
+): JarvisConversationMessage {
+  const event = asRecord(message.event);
+  if (!event) return message;
+  const eventData = asRecord(event.data);
+  const eventItem = asRecord(eventData?.item);
+  const normalizedData = eventData as JarvisConversationMessage["data"];
+  return {
+    ...message,
+    event_id: message.event_id ?? readRecordString(event, "event_id") ?? undefined,
+    message_id: message.message_id ?? readRecordString(event, "message_id") ?? undefined,
+    call_id:
+      message.call_id ??
+      readRecordString(event, "call_id") ??
+      readRecordString(eventData, "call_id", "id") ??
+      readRecordString(eventItem, "call_id", "id") ??
+      undefined,
+    correlation_id:
+      message.correlation_id ?? readRecordString(event, "correlation_id") ?? undefined,
+    turn_id: message.turn_id ?? readRecordString(event, "turn_id") ?? undefined,
+    sequence:
+      message.sequence ??
+      (typeof event.sequence === "number" && Number.isInteger(event.sequence)
+        ? event.sequence
+        : undefined),
+    type: message.type ?? readRecordString(event, "type") ?? undefined,
+    data: message.data ?? normalizedData,
+  };
+}
+
 function isRedundantTechnicalAcknowledgement(message: JarvisConversationMessage): boolean {
   if (message.type !== undefined && message.type !== "legacy") return false;
   const content = message.content.trim();
@@ -770,6 +926,308 @@ function isRedundantTechnicalAcknowledgement(message: JarvisConversationMessage)
     (message.role !== "user" &&
       content.startsWith("Spawned both required child review sessions and registered the watch."))
   );
+}
+
+function messageTurnId(message: JarvisConversationMessage): string | null {
+  return clean(message.turn_id) ?? readDataString(message, "turn_id");
+}
+
+function eventDetail(message: JarvisConversationMessage): string | null {
+  for (const key of ["text", "delta", "summary", "detail", "content", "output"] as const) {
+    const value = message.data?.[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (Array.isArray(value)) {
+      const text = value
+        .filter((item): item is string => typeof item === "string")
+        .join("\n")
+        .trim();
+      if (text) return text;
+    }
+  }
+  return clean(message.content);
+}
+
+function eventToolName(message: JarvisConversationMessage): string | null {
+  const item = message.data?.item;
+  if (item !== null && typeof item === "object" && !Array.isArray(item)) {
+    const name = (item as Record<string, unknown>).name;
+    if (typeof name === "string") return clean(name);
+  }
+  return readDataString(message, "tool_name") ?? readDataString(message, "name");
+}
+
+function toolActivityPresentation(
+  message: JarvisConversationMessage,
+  fallbackToolName: string | null,
+): ConversationActivityPresentation | null {
+  const data = message.data;
+  const item = asRecord(data?.item);
+  const itemInput = asRecord(item?.input);
+  const itemResult = asRecord(item?.result);
+  const dataInput = asRecord(data?.input);
+  const dataOutput = asRecord(data?.output) ?? asRecord(data?.result);
+  const itemType =
+    readRecordString(data, "item_type", "itemType") ??
+    readRecordString(item, "item_type", "itemType", "type");
+  const toolTitle =
+    readRecordString(data, "title", "tool_title", "toolTitle", "tool_name", "toolName") ??
+    readRecordString(item, "title", "name") ??
+    fallbackToolName;
+  const explicitRawCommand = firstCommandValue(
+    item?.rawCommand,
+    item?.raw_command,
+    itemInput?.rawCommand,
+    itemInput?.raw_command,
+    data?.rawCommand,
+    data?.raw_command,
+  );
+  const commandValue = firstCommandValue(
+    item?.command,
+    itemInput?.command,
+    itemResult?.command,
+    data?.command,
+    dataInput?.command,
+    dataOutput?.command,
+    itemType === "command_execution" ? data?.input : undefined,
+    explicitRawCommand,
+  );
+  const command = normalizeCommandValue(commandValue);
+  const formattedCommand = formatCommandValue(commandValue);
+  const rawCommand =
+    formatCommandValue(explicitRawCommand) ??
+    (formattedCommand && command && formattedCommand !== command ? formattedCommand : null);
+  const changedFiles = extractChangedFiles(data, item, itemType);
+  const toolData = extractToolData(data, item, toolTitle);
+
+  if (
+    !command &&
+    !rawCommand &&
+    changedFiles.length === 0 &&
+    !toolTitle &&
+    toolData === undefined &&
+    !itemType
+  ) {
+    return null;
+  }
+  return {
+    ...(command ? { command } : {}),
+    ...(rawCommand ? { rawCommand } : {}),
+    ...(changedFiles.length > 0 ? { changedFiles } : {}),
+    ...(toolTitle ? { toolTitle } : {}),
+    ...(toolData !== undefined ? { toolData } : {}),
+    ...(itemType ? { itemType } : {}),
+  };
+}
+
+function extractToolData(
+  data: Record<string, unknown> | undefined,
+  item: Record<string, unknown> | null,
+  toolTitle: string | null,
+): unknown {
+  if (item) return item;
+  if (!data) return undefined;
+  const input = data.input ?? data.arguments;
+  const result = data.output ?? data.result ?? data.content;
+  if (input === undefined && result === undefined) return undefined;
+  return {
+    ...(toolTitle ? { name: toolTitle } : {}),
+    ...(input !== undefined ? { input } : {}),
+    ...(result !== undefined ? { result } : {}),
+  };
+}
+
+function mergeActivityPresentation(
+  current: ConversationActivityPresentation | null,
+  next: ConversationActivityPresentation | null,
+): ConversationActivityPresentation | null {
+  if (!current) return next;
+  if (!next) return current;
+  const changedFiles = unique([...(current.changedFiles ?? []), ...(next.changedFiles ?? [])]);
+  const toolData = mergeToolData(current.toolData, next.toolData);
+  return {
+    ...((next.command ?? current.command) ? { command: next.command ?? current.command } : {}),
+    ...((next.rawCommand ?? current.rawCommand)
+      ? { rawCommand: next.rawCommand ?? current.rawCommand }
+      : {}),
+    ...(changedFiles.length > 0 ? { changedFiles } : {}),
+    ...((next.toolTitle ?? current.toolTitle)
+      ? { toolTitle: next.toolTitle ?? current.toolTitle }
+      : {}),
+    ...(toolData !== undefined ? { toolData } : {}),
+    ...((next.itemType ?? current.itemType) ? { itemType: next.itemType ?? current.itemType } : {}),
+  };
+}
+
+function mergeToolData(current: unknown, next: unknown): unknown {
+  if (next === undefined) return current;
+  if (current === undefined) return next;
+  const currentRecord = asRecord(current);
+  const nextRecord = asRecord(next);
+  return currentRecord && nextRecord ? { ...currentRecord, ...nextRecord } : next;
+}
+
+function extractChangedFiles(
+  data: Record<string, unknown> | undefined,
+  item: Record<string, unknown> | null,
+  itemType: string | null,
+): string[] {
+  const changedFiles: string[] = [];
+  const seen = new Set<string>();
+  const roots: unknown[] = [
+    data?.changedFiles,
+    data?.changed_files,
+    item?.changedFiles,
+    item?.changed_files,
+  ];
+  if (itemType === "file_change") {
+    roots.push(item, data);
+  }
+  for (const root of roots) {
+    collectChangedFiles(root, changedFiles, seen, 0);
+  }
+  return changedFiles;
+}
+
+function collectChangedFiles(
+  value: unknown,
+  target: string[],
+  seen: Set<string>,
+  depth: number,
+): void {
+  if (depth > 5 || target.length >= 12) return;
+  if (typeof value === "string") {
+    pushChangedFile(value, target, seen);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectChangedFiles(entry, target, seen, depth + 1);
+      if (target.length >= 12) return;
+    }
+    return;
+  }
+  const record = asRecord(value);
+  if (!record) return;
+  for (const key of [
+    "path",
+    "filePath",
+    "relativePath",
+    "filename",
+    "newPath",
+    "oldPath",
+  ] as const) {
+    pushChangedFile(record[key], target, seen);
+  }
+  for (const key of [
+    "item",
+    "result",
+    "output",
+    "data",
+    "changes",
+    "changedFiles",
+    "changed_files",
+    "files",
+    "edits",
+    "patch",
+    "patches",
+    "operations",
+  ] as const) {
+    if (key in record) collectChangedFiles(record[key], target, seen, depth + 1);
+  }
+}
+
+function pushChangedFile(value: unknown, target: string[], seen: Set<string>): void {
+  if (typeof value !== "string") return;
+  const path = clean(value);
+  if (!path || seen.has(path) || target.length >= 12) return;
+  seen.add(path);
+  target.push(path);
+}
+
+function firstCommandValue(...values: ReadonlyArray<unknown>): unknown {
+  return values.find((value) => formatCommandValue(value) !== null);
+}
+
+function formatCommandValue(value: unknown): string | null {
+  if (typeof value === "string") return clean(value);
+  if (!Array.isArray(value)) return null;
+  const parts = value.flatMap((part) => (typeof part === "string" && clean(part) ? [part] : []));
+  if (parts.length === 0) return null;
+  return parts.map((part) => (/\s|["'`]/u.test(part) ? JSON.stringify(part) : part)).join(" ");
+}
+
+function normalizeCommandValue(value: unknown): string | null {
+  const formatted = formatCommandValue(value);
+  if (!formatted) return null;
+  const match = /^(?:bash|sh|zsh)\s+-(?:l)?c\s+([\s\S]+)$/u.exec(formatted);
+  if (!match?.[1]) return formatted;
+  return trimMatchingOuterQuotes(match[1]);
+}
+
+function trimMatchingOuterQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+function readRecordString(
+  record: Record<string, unknown> | null | undefined,
+  ...keys: ReadonlyArray<string>
+): string | null {
+  for (const key of keys) {
+    const value = record?.[key];
+    if (typeof value === "string" && clean(value)) return clean(value);
+  }
+  return null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function readDataString(message: JarvisConversationMessage, key: string): string | null {
+  const value = message.data?.[key];
+  return typeof value === "string" ? clean(value) : null;
+}
+
+function isReasoningEvent(type: string | null | undefined): boolean {
+  return (
+    type === "reasoning.delta" ||
+    type === "reasoning.completed" ||
+    type === "reasoning" ||
+    type === "thinking" ||
+    type === "analysis"
+  );
+}
+
+function isCommentaryEvent(type: string | null | undefined): boolean {
+  return (
+    type === "assistant.commentary" ||
+    type === "commentary" ||
+    type === "progress" ||
+    type === "update" ||
+    type === "action" ||
+    type === "step"
+  );
+}
+
+function commentaryTitle(type: string | null | undefined): string {
+  return type === "action" || type === "step" ? "Action" : "Progress update";
+}
+
+function mergeActivityText(current: string | null, next: string | null): string | null {
+  if (!current) return next;
+  if (!next || next === current) return current;
+  if (next.startsWith(current)) return next;
+  if (current.endsWith(next)) return current;
+  return `${current}${next}`;
 }
 
 function unique(values: ReadonlyArray<string>): string[] {

@@ -42,6 +42,7 @@ import {
   JarvisProjectThreadsResponse,
   JarvisProjectThreadTurnInput,
   JarvisProjectThreadTurnResult,
+  type JarvisProjectThreadTurnStreamItem,
   type JarvisProjectThreadUserInputInput,
   JarvisProjectUpdateInput,
   type JarvisRoutineResolveInput,
@@ -287,6 +288,11 @@ export interface JarvisClient {
     threadId: string,
     input: JarvisProjectThreadTurnInput,
   ) => Effect.Effect<JarvisProjectThreadTurnResult, JarvisClientError>;
+  readonly streamProjectThreadTurn: (
+    projectId: string,
+    threadId: string,
+    input: JarvisProjectThreadTurnInput,
+  ) => Stream.Stream<JarvisProjectThreadTurnStreamItem, JarvisClientError>;
   readonly respondProjectThreadApproval: (
     projectId: string,
     threadId: string,
@@ -797,21 +803,24 @@ function canUseJarvisOAuthForUrl(
 const JARVIS_SSE_IDLE_TIMEOUT_MS = 45_000;
 const JARVIS_JSON_REQUEST_TIMEOUT_MS = 30_000;
 
-/**
- * Incrementally parses SSE frames. Jarvis sends JSON envelopes, but this is
- * deliberately permissive: an unknown event or invalid payload is still a
- * change signal so consumers can refresh their authoritative snapshot.
- */
-export async function* parseJarvisCockpitSse(
+export interface JarvisSseFrame {
+  readonly event: string;
+  readonly id?: string;
+  readonly data: Schema.Json;
+  readonly malformed: boolean;
+}
+
+/** Incremental, transport-level SSE parser shared by cockpit and turn streams. */
+export async function* parseJarvisSseFrames(
   chunks: AsyncIterable<Uint8Array>,
-): AsyncGenerator<JarvisCockpitEvent> {
+): AsyncGenerator<JarvisSseFrame> {
   const decoder = new TextDecoder();
   let remainder = "";
   let eventType = "message";
   let cursor: string | undefined;
   let data: string[] = [];
 
-  const flush = (): JarvisCockpitEvent | undefined => {
+  const flush = (): JarvisSseFrame | undefined => {
     if (data.length === 0) {
       eventType = "message";
       cursor = undefined;
@@ -819,46 +828,26 @@ export async function* parseJarvisCockpitSse(
     }
     const text = data.join("\n");
     data = [];
-    let decoded: unknown;
+    let decoded: Schema.Json;
+    let malformed = false;
     try {
-      decoded = JSON.parse(text) as unknown;
+      decoded = JSON.parse(text) as Schema.Json;
     } catch {
-      decoded = undefined;
+      decoded = text;
+      malformed = true;
     }
-    const envelope = isRecord(decoded) ? decoded : undefined;
-    const type = typeof envelope?.type === "string" ? envelope.type : eventType;
-    const stringField = (field: string): string | undefined =>
-      typeof envelope?.[field] === "string" ? envelope[field] : undefined;
-    const event: JarvisCockpitEvent = {
-      type,
-      cursor: typeof envelope?.cursor === "string" ? envelope.cursor : cursor,
-      payload: envelope?.payload ?? decoded,
-      authoritative: type === "snapshot" || eventType === "snapshot",
-      malformed: decoded === undefined,
-      ...(stringField("occurred_at") !== undefined
-        ? { occurred_at: stringField("occurred_at") }
-        : {}),
-      ...(stringField("run_id") !== undefined ? { run_id: stringField("run_id") } : {}),
-      ...(stringField("session_ref") !== undefined
-        ? { session_ref: stringField("session_ref") }
-        : {}),
-      ...(stringField("worker_id") !== undefined ? { worker_id: stringField("worker_id") } : {}),
-      ...(stringField("artifact_id") !== undefined
-        ? { artifact_id: stringField("artifact_id") }
-        : {}),
-      ...(stringField("request_id") !== undefined ? { request_id: stringField("request_id") } : {}),
-      ...(stringField("checkpoint_id") !== undefined
-        ? { checkpoint_id: stringField("checkpoint_id") }
-        : {}),
-      ...(stringField("project_id") !== undefined ? { project_id: stringField("project_id") } : {}),
-      ...(stringField("thread_id") !== undefined ? { thread_id: stringField("thread_id") } : {}),
+    const frame: JarvisSseFrame = {
+      event: eventType,
+      ...(cursor === undefined ? {} : { id: cursor }),
+      data: decoded,
+      malformed,
     };
     eventType = "message";
     cursor = undefined;
-    return event;
+    return frame;
   };
 
-  const processLine = (line: string): JarvisCockpitEvent | undefined => {
+  const processLine = (line: string): JarvisSseFrame | undefined => {
     if (line.length === 0) {
       return flush();
     }
@@ -903,6 +892,45 @@ export async function* parseJarvisCockpitSse(
   const event = flush();
   if (event !== undefined) {
     yield event;
+  }
+}
+
+/**
+ * Incrementally parses cockpit SSE frames. Unknown or invalid payloads remain
+ * change signals so consumers can refresh their authoritative snapshot.
+ */
+export async function* parseJarvisCockpitSse(
+  chunks: AsyncIterable<Uint8Array>,
+): AsyncGenerator<JarvisCockpitEvent> {
+  for await (const frame of parseJarvisSseFrames(chunks)) {
+    const envelope = isRecord(frame.data) ? frame.data : undefined;
+    const type = typeof envelope?.type === "string" ? envelope.type : frame.event;
+    const stringField = (field: string): string | undefined =>
+      typeof envelope?.[field] === "string" ? envelope[field] : undefined;
+    yield {
+      type,
+      cursor: typeof envelope?.cursor === "string" ? envelope.cursor : frame.id,
+      payload: frame.malformed ? undefined : (envelope?.payload ?? frame.data),
+      authoritative: type === "snapshot" || frame.event === "snapshot",
+      malformed: frame.malformed,
+      ...(stringField("occurred_at") !== undefined
+        ? { occurred_at: stringField("occurred_at") }
+        : {}),
+      ...(stringField("run_id") !== undefined ? { run_id: stringField("run_id") } : {}),
+      ...(stringField("session_ref") !== undefined
+        ? { session_ref: stringField("session_ref") }
+        : {}),
+      ...(stringField("worker_id") !== undefined ? { worker_id: stringField("worker_id") } : {}),
+      ...(stringField("artifact_id") !== undefined
+        ? { artifact_id: stringField("artifact_id") }
+        : {}),
+      ...(stringField("request_id") !== undefined ? { request_id: stringField("request_id") } : {}),
+      ...(stringField("checkpoint_id") !== undefined
+        ? { checkpoint_id: stringField("checkpoint_id") }
+        : {}),
+      ...(stringField("project_id") !== undefined ? { project_id: stringField("project_id") } : {}),
+      ...(stringField("thread_id") !== undefined ? { thread_id: stringField("thread_id") } : {}),
+    };
   }
 }
 
@@ -968,6 +996,96 @@ function streamJarvisCockpitSse(
             message: "Jarvis SSE connection failed while reading an event frame.",
             cause,
           }),
+  );
+}
+
+function projectThreadTurnEvent(frame: JarvisSseFrame): JsonObjectType {
+  return {
+    event: frame.event,
+    data: frame.data,
+    ...(frame.id === undefined ? {} : { id: frame.id }),
+  };
+}
+
+function projectThreadTurnError(frame: JarvisSseFrame): string | null {
+  const dataType =
+    isRecord(frame.data) && typeof frame.data.type === "string" ? frame.data.type : null;
+  if (frame.event !== "thread.turn.error" && dataType !== "thread.turn.error") {
+    return null;
+  }
+  const payload =
+    isRecord(frame.data) && isRecord(frame.data.payload) ? frame.data.payload : frame.data;
+  const error = isRecord(payload) && isRecord(payload.error) ? payload.error : null;
+  return error && typeof error.message === "string" && error.message.trim().length > 0
+    ? error.message.trim()
+    : "Jarvis reported that the project conversation turn failed.";
+}
+
+const JARVIS_PROJECT_TURN_EVENT_LIMIT = 512;
+
+function projectThreadTurnPayload(frame: JarvisSseFrame): Schema.Json {
+  return isRecord(frame.data) && isRecord(frame.data.payload) ? frame.data.payload : frame.data;
+}
+
+function projectThreadTurnText(frame: JarvisSseFrame, kind: "delta" | "reply"): string | null {
+  const payload = projectThreadTurnPayload(frame);
+  if (typeof payload === "string") return payload;
+  if (!isRecord(payload)) return null;
+  const candidate =
+    kind === "delta"
+      ? (payload.delta ?? payload.text ?? payload.content)
+      : (payload.reply ?? payload.text ?? payload.content);
+  return typeof candidate === "string" ? candidate : null;
+}
+
+async function* parseJarvisProjectThreadTurnSse(
+  response: Response,
+): AsyncGenerator<JarvisProjectThreadTurnStreamItem> {
+  const events: JsonObjectType[] = [];
+  const deltaParts: string[] = [];
+  const replyParts: string[] = [];
+  for await (const frame of parseJarvisSseFrames(
+    responseBodyChunks(response, "projects.threads.turn.stream"),
+  )) {
+    const event = projectThreadTurnEvent(frame);
+    if (events.length >= JARVIS_PROJECT_TURN_EVENT_LIMIT) events.shift();
+    events.push(event);
+    yield { kind: "event", event };
+
+    const failure = projectThreadTurnError(frame);
+    if (failure !== null) {
+      yield { kind: "failed", error: { message: failure } };
+      return;
+    }
+    if (frame.event === "thread.delta") {
+      const delta = projectThreadTurnText(frame, "delta");
+      if (delta !== null) deltaParts.push(delta);
+    } else if (frame.event === "thread.reply") {
+      const reply = projectThreadTurnText(frame, "reply");
+      if (reply !== null) replyParts.push(reply);
+    }
+  }
+  yield {
+    kind: "completed",
+    result: {
+      ok: true,
+      text: replyParts.length > 0 ? replyParts.join("") : deltaParts.join(""),
+      events,
+    },
+  };
+}
+
+function streamJarvisProjectThreadTurnSse(
+  response: Response,
+): Stream.Stream<JarvisProjectThreadTurnStreamItem, JarvisClientError> {
+  return Stream.fromAsyncIterable(parseJarvisProjectThreadTurnSse(response), (cause) =>
+    cause instanceof JarvisClientError
+      ? cause
+      : new JarvisClientError({
+          operation: "projects.threads.turn.stream",
+          message: "Jarvis project turn stream failed while reading an event frame.",
+          cause,
+        }),
   );
 }
 
@@ -1240,8 +1358,90 @@ export function makeJarvisCockpitClient(input: {
       ),
     );
 
+  const streamProjectThreadTurn = (
+    projectId: string,
+    threadId: string,
+    turnInput: JarvisProjectThreadTurnInput,
+  ): Stream.Stream<JarvisProjectThreadTurnStreamItem, JarvisClientError> =>
+    Stream.unwrap(
+      resolveRequestAuth(input, "projects.threads.turn.stream").pipe(
+        Effect.flatMap((auth) =>
+          Effect.tryPromise({
+            try: async () => {
+              const requestUrl = new URL(
+                `/v1/projects/${encodeURIComponent(projectId)}/threads/${encodeURIComponent(threadId)}/turns`,
+                input.baseUrl,
+              );
+              const send = (token: string | undefined) =>
+                fetchImpl(requestUrl, {
+                  method: "POST",
+                  body: JSON.stringify(withSurfaceMetadata(turnInput)),
+                  headers: {
+                    accept: "text/event-stream, application/json",
+                    "content-type": "application/json",
+                    ...(token ? { authorization: `Bearer ${token}` } : {}),
+                  },
+                });
+              const first = await send(auth.token);
+              const response =
+                !first.ok && isAuthRejectedStatus(first.status) && auth.recoveryToken !== undefined
+                  ? await send(auth.recoveryToken)
+                  : first;
+              if (!response.ok) {
+                const responseBody = truncateResponseBody(await response.text());
+                throw new JarvisClientError({
+                  operation: "projects.threads.turn.stream",
+                  status: response.status,
+                  responseBody,
+                  message: summarizeHttpError(
+                    "projects.threads.turn.stream",
+                    response.status,
+                    responseBody,
+                  ),
+                });
+              }
+              return response;
+            },
+            catch: (cause) =>
+              cause instanceof JarvisClientError
+                ? cause
+                : new JarvisClientError({
+                    operation: "projects.threads.turn.stream",
+                    message: "Jarvis project turn stream failed before a response was opened.",
+                    cause,
+                  }),
+          }),
+        ),
+        Effect.map((response) => {
+          const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+          if (!contentType.includes("application/json")) {
+            return streamJarvisProjectThreadTurnSse(response);
+          }
+          return Stream.fromEffect(
+            Effect.tryPromise({
+              try: () => response.text(),
+              catch: (cause) =>
+                new JarvisClientError({
+                  operation: "projects.threads.turn.stream",
+                  message: "Jarvis project turn response could not be read.",
+                  cause,
+                }),
+            }).pipe(
+              Effect.flatMap((text) =>
+                parseProjectThreadTurnResponse("projects.threads.turn.stream", text),
+              ),
+              Effect.map(
+                (result): JarvisProjectThreadTurnStreamItem => ({ kind: "completed", result }),
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+
   return {
     streamCockpitEvents,
+    streamProjectThreadTurn,
     getCatalog: () =>
       requestJson("cockpit.catalog", "/v1/cockpit/catalog").pipe(
         Effect.flatMap(decodeFor("cockpit.catalog", decodeCatalog)),
@@ -1842,9 +2042,45 @@ export function makeJarvisClient(config: {
           ),
         ),
       );
+    const withProjectThreadTurnStream = (
+      projectId: string,
+      threadId: string,
+      input: JarvisProjectThreadTurnInput,
+    ) =>
+      Stream.unwrap(
+        getSettings.pipe(
+          Effect.mapError(
+            (cause) =>
+              new JarvisClientError({
+                operation: "projects.threads.turn.stream",
+                message: "Failed to load Jarvis brain settings.",
+                cause,
+              }),
+          ),
+          Effect.flatMap((settings) =>
+            Effect.try({
+              try: () =>
+                makeJarvisClientFromConnection({
+                  config,
+                  settings,
+                  ...(config.oauthAccessToken !== undefined
+                    ? { oauthAccessToken: config.oauthAccessToken }
+                    : {}),
+                }).streamProjectThreadTurn(projectId, threadId, input),
+              catch: (cause) =>
+                new JarvisClientError({
+                  operation: "projects.threads.turn.stream",
+                  message: "Jarvis brain URL is not valid.",
+                  cause,
+                }),
+            }),
+          ),
+        ),
+      );
 
     return {
       streamCockpitEvents: withClientStream,
+      streamProjectThreadTurn: withProjectThreadTurnStream,
       getCatalog: () => withClient("cockpit.catalog", (client) => client.getCatalog()),
       getCapabilities: () => withClient("capabilities.get", (client) => client.getCapabilities()),
       getMcpStatus: () => withClient("mcp.status", (client) => client.getMcpStatus()),
@@ -2168,6 +2404,8 @@ function makeMissingConfigurationClient(message: string): JarvisClient {
     renameProjectThread: () => fail("jarvis.client.configure"),
     unarchiveProjectThread: () => fail("jarvis.client.configure"),
     sendProjectThreadTurn: () => fail("jarvis.client.configure"),
+    streamProjectThreadTurn: () =>
+      Stream.fail(new JarvisClientError({ operation: "jarvis.client.configure", message })),
     respondProjectThreadApproval: () => fail("jarvis.client.configure"),
     respondProjectThreadInput: () => fail("jarvis.client.configure"),
     interruptProjectThread: () => fail("jarvis.client.configure"),
@@ -3606,7 +3844,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
     };
   };
 
-  return {
+  const client: JarvisClient = {
     streamCockpitEvents: () =>
       Stream.fail(
         new JarvisClientError({
@@ -4309,6 +4547,19 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
         ],
       });
     },
+    streamProjectThreadTurn: (candidateProjectId, threadId, input) =>
+      Stream.fromEffect(client.sendProjectThreadTurn(candidateProjectId, threadId, input)).pipe(
+        Stream.flatMap((result) =>
+          Stream.concat(
+            Stream.fromIterable(
+              result.events.map(
+                (event): JarvisProjectThreadTurnStreamItem => ({ kind: "event", event }),
+              ),
+            ),
+            Stream.succeed<JarvisProjectThreadTurnStreamItem>({ kind: "completed", result }),
+          ),
+        ),
+      ),
     respondProjectThreadApproval: (candidateProjectId, threadId, input) =>
       Effect.succeed(
         fixtureProjectThreadControlResponse(candidateProjectId, threadId, {
@@ -4702,6 +4953,7 @@ export function makeJarvisFixtureClient(options?: JarvisFixtureClientOptions): J
         ],
       }),
   };
+  return client;
 }
 
 let sharedJarvisFixtureClients: Map<string, JarvisClient> | undefined;

@@ -186,6 +186,8 @@ const COMPOSER_FLOATING_LAYER_SELECTOR = [
 ].join(",");
 const EMPTY_MEMORY_MENTION_FILES: ReadonlyArray<JarvisProjectFile> = [];
 const WORKSPACE_PATH_ITEMS_WITH_MEMORY_LIMIT = 5;
+const NOOP_COMPOSER_ACTION = () => {};
+const NO_MODEL_DISABLED_REASON = () => null;
 
 function detectComposerTriggerForCapabilities(
   text: string,
@@ -565,8 +567,8 @@ export interface ChatComposerProps {
   planSidebarOpen: boolean;
 
   // Mode
-  runtimeMode: RuntimeMode;
-  interactionMode: ProviderInteractionMode;
+  runtimeMode?: RuntimeMode;
+  interactionMode?: ProviderInteractionMode;
 
   // Provider / model
   lockedProvider: ProviderDriverKind | null;
@@ -605,7 +607,7 @@ export interface ChatComposerProps {
   // Callbacks
   onSend: (e?: { preventDefault: () => void }) => void;
   onInterrupt: () => void;
-  onImplementPlanInNewThread: () => void;
+  onImplementPlanInNewThread?: () => void;
   onRespondToApproval: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -621,12 +623,12 @@ export interface ChatComposerProps {
     cursorAdjacentToMention: boolean,
   ) => void;
 
-  onProviderModelSelect: (instanceId: ProviderInstanceId, model: string) => void;
-  getModelDisabledReason: (instanceId: ProviderInstanceId, model: string) => string | null;
-  toggleInteractionMode: () => void;
-  handleRuntimeModeChange: (mode: RuntimeMode) => void;
-  handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
-  togglePlanSidebar: () => void;
+  onProviderModelSelect?: (instanceId: ProviderInstanceId, model: string) => void;
+  getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
+  toggleInteractionMode?: () => void;
+  handleRuntimeModeChange?: (mode: RuntimeMode) => void;
+  handleInteractionModeChange?: (mode: ProviderInteractionMode) => void;
+  togglePlanSidebar?: () => void;
 
   focusComposer: () => void;
   scheduleComposerFocus: () => void;
@@ -674,8 +676,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     sidebarProposedPlan,
     planSidebarLabel,
     planSidebarOpen,
-    runtimeMode,
-    interactionMode,
+    runtimeMode = "approval-required",
+    interactionMode = "default",
     lockedProvider,
     providerStatuses,
     activeProjectDefaultModelSelection,
@@ -698,18 +700,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerElementContextsRef,
     onSend,
     onInterrupt,
-    onImplementPlanInNewThread,
+    onImplementPlanInNewThread = NOOP_COMPOSER_ACTION,
     onRespondToApproval,
     onSelectActivePendingUserInputOption,
     onAdvanceActivePendingUserInput,
     onPreviousActivePendingUserInputQuestion,
     onChangeActivePendingUserInputCustomAnswer,
-    onProviderModelSelect,
-    getModelDisabledReason,
-    toggleInteractionMode,
-    handleRuntimeModeChange,
-    handleInteractionModeChange,
-    togglePlanSidebar,
+    onProviderModelSelect = NOOP_COMPOSER_ACTION,
+    getModelDisabledReason = NO_MODEL_DISABLED_REASON,
+    toggleInteractionMode = NOOP_COMPOSER_ACTION,
+    handleRuntimeModeChange = NOOP_COMPOSER_ACTION,
+    handleInteractionModeChange = NOOP_COMPOSER_ACTION,
+    togglePlanSidebar = NOOP_COMPOSER_ACTION,
     focusComposer,
     scheduleComposerFocus,
     setThreadError,
@@ -1371,13 +1373,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (composerTrigger.kind === "slash-command") {
       if (!capabilities.slashCommands) return [];
       const builtInSlashCommandItems = [
-        {
-          id: "slash:model",
-          type: "slash-command" as const,
-          command: "model" as const,
-          label: "/model",
-          description: "Switch response model for this thread",
-        },
+        ...(capabilities.picker === "provider-model"
+          ? [
+              {
+                id: "slash:model",
+                type: "slash-command" as const,
+                command: "model" as const,
+                label: "/model",
+                description: "Switch response model for this thread",
+              },
+            ]
+          : []),
         ...(capabilities.interactionControl
           ? [
               {
@@ -1433,6 +1439,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return [];
   }, [
     capabilities.mentions,
+    capabilities.picker,
     capabilities.interactionControl,
     capabilities.slashCommands,
     composerTrigger,

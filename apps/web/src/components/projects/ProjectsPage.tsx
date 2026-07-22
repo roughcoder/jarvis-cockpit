@@ -1,8 +1,9 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import {
   ArrowRightIcon,
   FolderGit2Icon,
   GitBranchIcon,
+  PlusIcon,
   RefreshCwIcon,
   ServerIcon,
   Settings2Icon,
@@ -13,7 +14,11 @@ import { useMemo } from "react";
 import { isElectron } from "../../env";
 import { isJarvisCockpitEnvironment } from "../../jarvisCockpit";
 import { cn } from "../../lib/utils";
-import { type EnvironmentPresentation, useEnvironments } from "../../state/environments";
+import {
+  type EnvironmentPresentation,
+  useEnvironments,
+  usePrimaryEnvironment,
+} from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../../workspaceTitlebar";
@@ -27,9 +32,13 @@ import {
   projectsForIndex,
   projectStatusLabel,
 } from "./ProjectsPage.logic";
+import { CreateProjectDialog } from "./CreateProjectDialog";
 
 export function ProjectsPage() {
   const { environments } = useEnvironments();
+  const primaryEnvironment = usePrimaryEnvironment();
+  const navigate = useNavigate();
+  const projectSearch = useSearch({ from: "/projects" });
   const projectEnvironments = useMemo(
     () =>
       environments
@@ -37,6 +46,31 @@ export function ProjectsPage() {
         .toSorted((left, right) => left.label.localeCompare(right.label)),
     [environments],
   );
+  const defaultCreateEnvironmentId =
+    projectEnvironments.find(
+      (environment) => environment.environmentId === projectSearch.environmentId,
+    )?.environmentId ??
+    projectEnvironments.find(
+      (environment) => environment.environmentId === primaryEnvironment?.environmentId,
+    )?.environmentId ??
+    projectEnvironments[0]?.environmentId;
+
+  const setCreateProjectOpen = (open: boolean, environmentId?: string) => {
+    void navigate({
+      to: "/projects",
+      replace: !open,
+      search: (current) => {
+        const next = { ...current };
+        delete next.create;
+        delete next.environmentId;
+        if (open) {
+          next.create = true;
+          if (environmentId) next.environmentId = environmentId;
+        }
+        return next;
+      },
+    });
+  };
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
@@ -59,26 +93,52 @@ export function ProjectsPage() {
                   conversations.
                 </p>
               </div>
-              <Button size="sm" variant="outline" render={<Link to="/projects/manage" />}>
-                <Settings2Icon className="size-3.5" />
-                Manage projects
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  disabled={projectEnvironments.length === 0}
+                  onClick={() => setCreateProjectOpen(true)}
+                >
+                  <PlusIcon className="size-3.5" />
+                  Create project
+                </Button>
+                <Button size="sm" variant="outline" render={<Link to="/projects/manage" />}>
+                  <Settings2Icon className="size-3.5" />
+                  Manage projects
+                </Button>
+              </div>
             </header>
 
             <div className="mt-8 space-y-10">
               {projectEnvironments.length === 0 ? <NoEnvironmentState /> : null}
               {projectEnvironments.map((environment) => (
-                <EnvironmentProjects key={environment.environmentId} environment={environment} />
+                <EnvironmentProjects
+                  key={environment.environmentId}
+                  environment={environment}
+                  onCreateProject={() => setCreateProjectOpen(true, environment.environmentId)}
+                />
               ))}
             </div>
           </div>
         </main>
       </div>
+      <CreateProjectDialog
+        open={projectSearch.create === true}
+        environments={projectEnvironments}
+        defaultEnvironmentId={defaultCreateEnvironmentId}
+        onOpenChange={(open) => setCreateProjectOpen(open)}
+      />
     </SidebarInset>
   );
 }
 
-function EnvironmentProjects({ environment }: { readonly environment: EnvironmentPresentation }) {
+function EnvironmentProjects({
+  environment,
+  onCreateProject,
+}: {
+  readonly environment: EnvironmentPresentation;
+  readonly onCreateProject: () => void;
+}) {
   const environmentId = environment.environmentId;
   const projectsQuery = useEnvironmentQuery(
     serverEnvironment.jarvisProjects({
@@ -130,7 +190,9 @@ function EnvironmentProjects({ environment }: { readonly environment: Environmen
           </Alert>
         ) : null}
 
-        {projectsQuery.data?.ok && projects.length === 0 ? <NoProjectsState /> : null}
+        {projectsQuery.data?.ok && projects.length === 0 ? (
+          <NoProjectsState onCreateProject={onCreateProject} />
+        ) : null}
 
         {projectsQuery.data?.ok && projects.length > 0 ? (
           <div className="overflow-hidden rounded-xl border border-border/70 bg-card/35 shadow-xs/5">
@@ -228,14 +290,18 @@ function NoEnvironmentState() {
   );
 }
 
-function NoProjectsState() {
+function NoProjectsState({ onCreateProject }: { readonly onCreateProject: () => void }) {
   return (
     <Empty className="min-h-72 rounded-xl border border-dashed border-border bg-muted/15">
       <EmptyHeader>
         <EmptyTitle>No active projects</EmptyTitle>
         <EmptyDescription>
-          Active Jarvis projects will appear here when they are added to the project registry.
+          Create a project and attach the repositories Jarvis should use for its work.
         </EmptyDescription>
+        <Button size="sm" className="mt-2" onClick={onCreateProject}>
+          <PlusIcon className="size-4" />
+          Create project
+        </Button>
       </EmptyHeader>
     </Empty>
   );

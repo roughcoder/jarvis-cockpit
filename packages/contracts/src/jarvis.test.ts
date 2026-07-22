@@ -634,6 +634,65 @@ it.effect("decodes project conversation detail with archived state and history",
   }),
 );
 
+it.effect("preserves durable nested project conversation event messages", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectThreadDetail({
+      api_version: "v1",
+      schema_version: 1,
+      project_id: "jarvis",
+      thread: {
+        thread_id: "thread_events",
+        project_id: "jarvis",
+        session_id: "project:jarvis:orchestrator:thread_events",
+        title: "Tool history",
+        created_at: generatedAt,
+        updated_at: generatedAt,
+        messages: [
+          {
+            role: "event",
+            peer_id: "jarvis",
+            content: "tool.call add_finding",
+            observed_at: generatedAt,
+            event: {
+              event_id: "event_tool_1",
+              sequence: 1,
+              type: "tool.call",
+              occurred_at: generatedAt,
+              turn_id: "turn_1",
+              message_id: "call_1",
+              data: {
+                item: {
+                  id: "call_1",
+                  type: "tool_use",
+                  name: "add_finding",
+                  input: { project: "Jarvis" },
+                },
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    assert.deepStrictEqual(parsed.thread.messages[0]?.event, {
+      event_id: "event_tool_1",
+      sequence: 1,
+      type: "tool.call",
+      occurred_at: generatedAt,
+      turn_id: "turn_1",
+      message_id: "call_1",
+      data: {
+        item: {
+          id: "call_1",
+          type: "tool_use",
+          name: "add_finding",
+          input: { project: "Jarvis" },
+        },
+      },
+    });
+  }),
+);
+
 it.effect("decodes additive project conversation execution state", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeProjectThreadDetail({

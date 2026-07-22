@@ -3,7 +3,7 @@ import type {
   ConversationActivity,
   ConversationOperationalState,
 } from "@t3tools/client-runtime/conversation";
-import { MessageId } from "@t3tools/contracts";
+import { isToolLifecycleItemType, MessageId, TurnId } from "@t3tools/contracts";
 
 import type { TimelineEntry, WorkLogEntry } from "./session-logic";
 
@@ -32,7 +32,7 @@ export function agentConversationTimelineEntries(conversation: AgentConversation
             id: messageId,
             role: message.role,
             text: message.presentation?.summary ?? message.content,
-            turnId: null,
+            turnId: message.turnId ? TurnId.make(message.turnId) : null,
             streaming: false,
             createdAt: message.observedAt,
             updatedAt: message.observedAt,
@@ -88,22 +88,56 @@ function infoMessageEntry(
 }
 
 function activityEntry(activity: ConversationActivity): TimelineEntry {
+  const presentation = activity.presentation;
   const tone: WorkLogEntry["tone"] =
     activity.status === "failed"
       ? "error"
-      : activity.toolName !== null || activity.kind.startsWith("tool.")
-        ? "tool"
-        : "info";
-  const detail = activity.error ?? activity.summary;
+      : activity.kind.startsWith("reasoning.")
+        ? "thinking"
+        : activity.toolName !== null || activity.kind.startsWith("tool.")
+          ? "tool"
+          : "info";
+  const detail =
+    activity.error ??
+    activity.summary ??
+    (activity.kind.startsWith("children.") && activity.relatedConversationIds.length > 0
+      ? activity.relatedConversationIds
+          .map((_, index) => `Child conversation ${index + 1}`)
+          .join("\n")
+      : null);
   const entry: WorkLogEntry = {
     id: `activity:${activity.id}`,
     createdAt: activity.startedAt,
+    turnId: activity.turnId ? TurnId.make(activity.turnId) : null,
     label: activity.title,
     ...(detail ? { detail } : {}),
+    ...(presentation?.command ? { command: presentation.command } : {}),
+    ...(presentation?.rawCommand ? { rawCommand: presentation.rawCommand } : {}),
+    ...(presentation?.changedFiles && presentation.changedFiles.length > 0
+      ? { changedFiles: presentation.changedFiles }
+      : {}),
     tone,
-    ...(tone === "tool" ? { toolTitle: activity.toolName ?? activity.title } : {}),
+    ...(presentation?.toolTitle
+      ? { toolTitle: presentation.toolTitle }
+      : tone === "tool"
+        ? { toolTitle: activity.toolName ?? activity.title }
+        : {}),
+    ...(presentation?.toolData !== undefined ? { toolData: presentation.toolData } : {}),
+    ...(presentation?.itemType && isToolLifecycleItemType(presentation.itemType)
+      ? { itemType: presentation.itemType }
+      : {}),
     toolLifecycleStatus: activityLifecycleStatus(activity.status),
     semanticActivityStatus: activity.status,
+    ...(activity.relatedConversationIds.length > 0
+      ? {
+          conversationTargets: activity.relatedConversationIds.map((id, index) => ({
+            id,
+            label: `Child conversation ${index + 1}`,
+            availability: "pending" as const,
+            unavailableReason: null,
+          })),
+        }
+      : {}),
   };
   return { id: entry.id, kind: "work", createdAt: activity.startedAt, entry };
 }

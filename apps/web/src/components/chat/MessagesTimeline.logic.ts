@@ -10,7 +10,7 @@ import {
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@t3tools/contracts";
 
-export const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
+export const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 export const TIMELINE_MINIMAP_ITEM_SPACING = 8;
 export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
 export const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100vh - 18rem)";
@@ -371,6 +371,7 @@ export function deriveMessagesTimelineRows(input: {
   expandedTurnIds?: ReadonlySet<TurnId>;
   expandedWorkGroupIds?: ReadonlySet<string>;
   isWorking: boolean;
+  activeTurnInProgress?: boolean;
   activeTurnStartedAt: string | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
@@ -442,7 +443,11 @@ export function deriveMessagesTimelineRows(input: {
           workLogEntryIsSemanticActivity(entry) || !workEntryIndicatesToolNeutralStatus(entry),
       );
       if (visibleGroupedEntries.length > 0) {
-        if (visibleGroupedEntries.length <= MAX_VISIBLE_WORK_LOG_ENTRIES) {
+        const visibleLimit =
+          input.isWorking || input.activeTurnInProgress
+            ? Number.POSITIVE_INFINITY
+            : MAX_VISIBLE_WORK_LOG_ENTRIES;
+        if (visibleGroupedEntries.length <= visibleLimit) {
           nextRows.push({
             kind: "work",
             id: timelineEntry.id,
@@ -452,8 +457,8 @@ export function deriveMessagesTimelineRows(input: {
         } else {
           const groupId = `work-group:${timelineEntry.id}`;
           const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
-          const hiddenEntries = visibleGroupedEntries.slice(0, -MAX_VISIBLE_WORK_LOG_ENTRIES);
-          const visibleEntries = visibleGroupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES);
+          const hiddenEntries = visibleGroupedEntries.slice(0, -visibleLimit);
+          const visibleEntries = visibleGroupedEntries.slice(-visibleLimit);
           const renderedEntries = expanded ? [...hiddenEntries, ...visibleEntries] : visibleEntries;
 
           for (const workEntry of renderedEntries) {
@@ -590,7 +595,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     case "message": {
       const bm = b as typeof a;
       return (
-        a.message === bm.message &&
+        messageValueEquals(a.message, bm.message) &&
         a.durationStart === bm.durationStart &&
         a.showAssistantMeta === bm.showAssistantMeta &&
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
@@ -600,4 +605,19 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       );
     }
   }
+}
+
+function messageValueEquals(left: ChatMessage, right: ChatMessage): boolean {
+  return (
+    left.id === right.id &&
+    left.role === right.role &&
+    left.text === right.text &&
+    left.turnId === right.turnId &&
+    left.createdAt === right.createdAt &&
+    left.updatedAt === right.updatedAt &&
+    left.streaming === right.streaming &&
+    left.attachments === right.attachments &&
+    left.disclosure?.label === right.disclosure?.label &&
+    left.disclosure?.text === right.disclosure?.text
+  );
 }

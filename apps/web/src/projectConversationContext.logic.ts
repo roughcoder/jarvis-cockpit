@@ -41,19 +41,46 @@ function orchestrationContribution(
 ): ConversationContextContribution[] {
   const activities = conversation?.activities ?? [];
   const watch = activities.toReversed().find((activity) => activity.kind.startsWith("children."));
-  const relatedIds = new Set(watch?.relatedConversationIds ?? []);
-  const children = activities.filter(
+  const relatedIds = watch?.relatedConversationIds ?? [];
+  const relatedIdSet = new Set(relatedIds);
+  const terminalChildren = activities.filter(
     (activity) =>
       activity.kind.startsWith("child.") &&
-      (relatedIds.size === 0 ||
-        activity.relatedConversationIds.some((conversationId) => relatedIds.has(conversationId))),
+      (relatedIdSet.size === 0 ||
+        activity.relatedConversationIds.some((conversationId) => relatedIdSet.has(conversationId))),
   );
-  if (!watch && children.length === 0) return [];
+  if (!watch && terminalChildren.length === 0) return [];
+  const terminalByRelatedId = new Map(
+    terminalChildren.flatMap((child) =>
+      child.relatedConversationIds.map((conversationId) => [conversationId, child] as const),
+    ),
+  );
+  const expectedCount = Math.max(relatedIds.length, watchExpectedChildCount(watch));
+  const children =
+    expectedCount > 0
+      ? Array.from({ length: expectedCount }, (_, index) => {
+          const relatedId = relatedIds[index];
+          const terminal = relatedId ? terminalByRelatedId.get(relatedId) : undefined;
+          return {
+            id: terminal?.id ?? `pending-child:${index}`,
+            label: terminal?.title ?? `Child conversation ${index + 1}`,
+            detail: terminal?.summary ?? null,
+            status:
+              terminal?.status ??
+              (watch?.status === "completed" ? ("completed" as const) : ("waiting" as const)),
+          };
+        })
+      : terminalChildren.map((child) => ({
+          id: child.id,
+          label: child.title,
+          detail: child.summary,
+          status: child.status,
+        }));
   const completed = children.filter((child) => child.status === "completed").length;
   const failed = children.filter(
     (child) => child.status === "failed" || child.status === "cancelled",
   ).length;
-  const status = watch?.status ?? aggregateActivityStatus(children);
+  const status = watch?.status ?? aggregateActivityStatus(terminalChildren);
   const summary =
     status === "completed"
       ? "Complete"
@@ -70,14 +97,20 @@ function orchestrationContribution(
       summary,
       progress: { completed, total: children.length, failed },
       items: children.map((child, index) => ({
-        id: `orchestration-child:${index}`,
-        label: child.title,
-        ...(child.summary ? { detail: child.summary } : {}),
+        id: `orchestration-child:${index}:${child.id}`,
+        label: child.label,
+        ...(child.detail ? { detail: child.detail } : {}),
         status: contextItemStatus(child.status),
       })),
       emptyMessage: "No child conversations.",
     },
   ];
+}
+
+function watchExpectedChildCount(activity: ConversationActivity | undefined): number {
+  if (!activity) return 0;
+  const match = /(?:Waiting for|Joined|waiting for) (\d+) child conversation/u.exec(activity.title);
+  return match ? Number.parseInt(match[1] ?? "0", 10) : 0;
 }
 
 function projectContribution(

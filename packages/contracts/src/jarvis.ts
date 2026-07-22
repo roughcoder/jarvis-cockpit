@@ -975,6 +975,7 @@ export const JarvisProjectThreadMessage = Schema.Struct({
   message_id: OptionalPossiblyEmptyId(TrimmedNonEmptyString),
   call_id: OptionalPossiblyEmptyId(TrimmedNonEmptyString),
   correlation_id: OptionalPossiblyEmptyId(TrimmedNonEmptyString),
+  turn_id: OptionalPossiblyEmptyId(TrimmedNonEmptyString),
   sequence: Schema.optional(NonNegativeInt),
   // Tolerant string (not a strict Literal) so an unknown role (e.g. a future "system"/"tool"
   // message) cannot fail the whole thread-detail decode and drop all history; the UI maps
@@ -992,6 +993,11 @@ export const JarvisProjectThreadMessage = Schema.Struct({
   status: OptionalPossiblyEmptyPublicString,
   error: OptionalPossiblyEmptyPublicString,
   completed_at: OptionalPossiblyEmptyPublicString,
+  data: Schema.optional(JsonObject),
+  // Jarvis persists project-thread tool/action messages with their canonical
+  // session event nested under `event`. Keep accepting the earlier flattened
+  // fields above while clients migrate to this durable wire shape.
+  event: Schema.optional(JsonObject),
 });
 export type JarvisProjectThreadMessage = typeof JarvisProjectThreadMessage.Type;
 
@@ -1105,6 +1111,24 @@ export const JarvisProjectThreadTurnResult = Schema.Struct({
   events: Schema.Array(JsonObject).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type JarvisProjectThreadTurnResult = typeof JarvisProjectThreadTurnResult.Type;
+
+/** Incremental transport for a project-thread turn. Event frames preserve the
+ * upstream SSE envelope; exactly one terminal item closes a successful RPC stream. */
+export const JarvisProjectThreadTurnStreamItem = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("event"),
+    event: JsonObject,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("completed"),
+    result: JarvisProjectThreadTurnResult,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("failed"),
+    error: Schema.Struct({ message: Schema.String }),
+  }),
+]);
+export type JarvisProjectThreadTurnStreamItem = typeof JarvisProjectThreadTurnStreamItem.Type;
 
 export const JarvisProjectThreadApprovalInput = Schema.Struct({
   request_id: JarvisRequestId,

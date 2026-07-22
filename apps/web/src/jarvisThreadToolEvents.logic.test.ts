@@ -117,4 +117,50 @@ describe("jarvis thread tool events", () => {
     expect(items[1]?.kind === "tool" ? items[1].toolCall.status : null).toBe("completed");
     expect(items[2]).toEqual({ kind: "reply", id: "reply:1", text: "after." });
   });
+
+  it("keeps progressive thinking and action events visible", () => {
+    const items = mergeJarvisThreadToolEventsWithReply({
+      text: "Done.",
+      events: [
+        {
+          event: "thread.turn.started",
+          data: { type: "thread.turn.started", payload: {} },
+        },
+        {
+          event: "assistant.reasoning.delta",
+          data: {
+            type: "assistant.reasoning.delta",
+            message_id: "reasoning-1",
+            payload: { delta: "Inspecting " },
+          },
+        },
+        {
+          event: "assistant.reasoning.delta",
+          data: {
+            type: "assistant.reasoning.delta",
+            message_id: "reasoning-1",
+            payload: { delta: "the code." },
+          },
+        },
+        {
+          event: "thread.action",
+          data: { type: "thread.action", payload: { action: "Run targeted tests" } },
+        },
+        { event: "thread.reply", data: "Done." },
+      ],
+    });
+
+    expect(items).toMatchObject([
+      { kind: "activity", activity: { title: "Started working", status: "running" } },
+      {
+        kind: "activity",
+        activity: { title: "Thinking", detail: "Inspecting the code.", status: "running" },
+      },
+      {
+        kind: "activity",
+        activity: { title: "Action", detail: "Run targeted tests", status: "running" },
+      },
+      { kind: "reply", text: "Done." },
+    ]);
+  });
 });

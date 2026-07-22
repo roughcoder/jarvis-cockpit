@@ -93,7 +93,11 @@ import {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal.ts";
-import { JarvisProjectThreadStreamItem, JarvisSyncMode } from "./jarvis.ts";
+import {
+  JarvisProjectThreadStreamItem,
+  JarvisProjectThreadTurnStreamItem,
+  JarvisSyncMode,
+} from "./jarvis.ts";
 import {
   DiscoveredLocalServerList,
   PreviewCloseInput,
@@ -323,6 +327,7 @@ export const WS_METHODS = {
   serverGenerateThreadTitle: "server.generateThreadTitle",
   serverUnarchiveJarvisProjectThread: "server.unarchiveJarvisProjectThread",
   serverSendJarvisProjectThreadTurn: "server.sendJarvisProjectThreadTurn",
+  serverStreamJarvisProjectThreadTurn: "server.streamJarvisProjectThreadTurn",
   serverRespondJarvisProjectThreadApproval: "server.respondJarvisProjectThreadApproval",
   serverRespondJarvisProjectThreadInput: "server.respondJarvisProjectThreadInput",
   serverInterruptJarvisProjectThread: "server.interruptJarvisProjectThread",
@@ -876,6 +881,20 @@ export const WsServerSendJarvisProjectThreadTurnRpc = Rpc.make(
   },
 );
 
+export const WsServerStreamJarvisProjectThreadTurnRpc = Rpc.make(
+  WS_METHODS.serverStreamJarvisProjectThreadTurn,
+  {
+    payload: Schema.Struct({
+      projectId: Schema.String,
+      threadId: Schema.String,
+      input: JarvisProjectThreadTurnInput,
+    }),
+    success: JarvisProjectThreadTurnStreamItem,
+    error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+    stream: true,
+  },
+);
+
 export const WsServerRespondJarvisProjectThreadApprovalRpc = Rpc.make(
   WS_METHODS.serverRespondJarvisProjectThreadApproval,
   {
@@ -1368,6 +1387,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGenerateThreadTitleRpc,
   WsServerUnarchiveJarvisProjectThreadRpc,
   WsServerSendJarvisProjectThreadTurnRpc,
+  WsServerStreamJarvisProjectThreadTurnRpc,
   WsServerRespondJarvisProjectThreadApprovalRpc,
   WsServerRespondJarvisProjectThreadInputRpc,
   WsServerInterruptJarvisProjectThreadRpc,

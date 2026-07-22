@@ -1,13 +1,20 @@
-import { ApprovalRequestId, JarvisRequestId, ProjectId } from "@t3tools/contracts";
+/** Jarvis runtime controller for the shared provider-neutral conversation screen. */
+import {
+  ApprovalRequestId,
+  JarvisRequestId,
+  MessageId,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 import type {
   EnvironmentId,
   JarvisApprovalDecision,
+  JarvisProjectThreadTurnInput,
   JarvisProjectThread,
   JarvisTurnAttachment,
   JarvisTurnWorkspaceInput,
   ProviderApprovalDecision,
   ServerProvider,
-  ThreadId,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -20,6 +27,7 @@ import {
 } from "@t3tools/client-runtime/conversation";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
@@ -74,9 +82,11 @@ import {
   isProjectConversationArchived,
   isProjectConversationDetailRouteGap,
   sortProjectConversations,
+  buildProjectConversationRouteParams,
   visibleProjectFiles,
   type ProjectConversationLocalTurnView,
 } from "../jarvisProjectConversations.logic";
+import { buildThreadRouteParams } from "../threadRoutes";
 import {
   LEGACY_PROJECT_CONVERSATION_CONTEXT_PANEL_COLLAPSED_KEY,
   projectConversationContextContributions,
@@ -122,11 +132,21 @@ import { Spinner } from "./ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { toastManager } from "./ui/toast";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
-import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { mergeJarvisThreadToolEventsWithReply } from "../jarvisThreadToolEvents.logic";
+import {
+  mergeAgentConversationTimelineOverlay,
+  type AgentConversationTimelineOverlayResult,
+} from "../agentConversationTimelineOverlay.logic";
 import { projectConversationTimelineOverlayTurns } from "../projectConversationTimelineOverlay.logic";
 import { ChatHeaderTitle } from "./chat/ChatHeaderTitle";
 import { AgentConversationTimeline } from "./chat/AgentConversationTimeline";
+import { ConversationComposer } from "./chat/ConversationComposer";
+import { ConversationScreen } from "./chat/ConversationScreen";
+import {
+  resolveProjectConversationNavigationTarget,
+  type ProjectConversationNavigationTarget,
+} from "./projectConversationTree.logic";
+import { useConversationTimelineController } from "./chat/useConversationTimelineController";
 import { cloneComposerImageForRetry } from "./ChatView.logic";
 import { ConversationContextPanel } from "./ConversationContextPanel";
 import { RightPanelTabs } from "./RightPanelTabs";
@@ -135,6 +155,7 @@ import { buildConversationRoutineContext, RoutineLauncherControl } from "./routi
 import {
   cachedProjectConversationControlKey,
   projectConversationComposerRuntime,
+  projectConversationRouteIdentity,
 } from "../projectConversationRuntime.logic";
 import {
   buildPendingUserInputAnswers,
@@ -144,7 +165,7 @@ import {
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
 
-interface AgentConversationChatViewProps {
+interface JarvisProjectConversationControllerProps {
   readonly environmentId: EnvironmentId;
   readonly projectId: string;
   readonly threadId: ThreadId;
@@ -162,6 +183,15 @@ interface ProjectConversationSubmissionSnapshot {
   readonly speed: string | null;
 }
 
+interface ActiveProjectConversationTurn {
+  readonly routeIdentity: string;
+  readonly turnId: string;
+  readonly submission: ProjectConversationSubmissionSnapshot;
+  readonly input: JarvisProjectThreadTurnInput;
+  readonly restoreDraftOnFailure: boolean;
+  readonly clearWorkspaceOnSuccess: boolean;
+}
+
 const PROJECT_CONVERSATION_FILE_DATA_URL_READ_MESSAGES = {
   nonStringResult: "File reader returned a non-string data URL.",
   readFailure: "File read failed.",
@@ -170,6 +200,10 @@ const PROJECT_CONVERSATION_FILE_DATA_URL_READ_MESSAGES = {
 const EMPTY_RIGHT_PANEL_PENDING_IDS = new Set<string>();
 const EMPTY_RIGHT_PANEL_PREVIEW_SESSIONS = {};
 const EMPTY_RIGHT_PANEL_TERMINAL_LABELS = new Map<string, string>();
+const EMPTY_AGENT_CONVERSATION_TIMELINE: AgentConversationTimelineOverlayResult = {
+  timelineEntries: [],
+  isWorking: false,
+};
 
 const PROJECT_APPROVAL_DECISIONS: Record<ProviderApprovalDecision, JarvisApprovalDecision> = {
   accept: "approved",
@@ -204,11 +238,12 @@ function projectConversationWorkspaceCwd(
   return null;
 }
 
-export function AgentConversationChatView({
+export function JarvisProjectConversationController({
   environmentId,
   projectId,
   threadId,
-}: AgentConversationChatViewProps) {
+}: JarvisProjectConversationControllerProps) {
+  const navigate = useNavigate();
   const projectsQuery = useEnvironmentQuery(
     serverEnvironment.jarvisProjects({
       environmentId,
@@ -245,9 +280,6 @@ export function AgentConversationChatView({
       },
     }),
   );
-  const sendTurn = useAtomCommand(serverEnvironment.sendJarvisProjectThreadTurn, {
-    reportFailure: false,
-  });
   const respondToApproval = useAtomCommand(serverEnvironment.respondJarvisProjectThreadApproval, {
     reportFailure: false,
   });
@@ -317,6 +349,13 @@ export function AgentConversationChatView({
     [environmentId, threadId],
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
+  const routeIdentity = projectConversationRouteIdentity({
+    environmentId,
+    projectId,
+    threadId: String(threadId),
+  });
+  const routeIdentityRef = useRef(routeIdentity);
+  routeIdentityRef.current = routeIdentity;
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, routeThreadRef),
   );
@@ -337,6 +376,21 @@ export function AgentConversationChatView({
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const [turns, setTurns] = useState<LocalTurn[]>([]);
+  const [activeProjectTurn, setActiveProjectTurn] = useState<ActiveProjectConversationTurn | null>(
+    null,
+  );
+  const projectTurnStream = useEnvironmentQuery(
+    activeProjectTurn === null || activeProjectTurn.routeIdentity !== routeIdentity
+      ? null
+      : serverEnvironment.jarvisProjectThreadTurnStream({
+          environmentId,
+          input: {
+            projectId,
+            threadId: String(threadId),
+            input: activeProjectTurn.input,
+          },
+        }),
+  );
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
     ApprovalRequestId[]
@@ -405,6 +459,94 @@ export function AgentConversationChatView({
   const timelineOverlayTurns = useMemo(
     () => projectConversationTimelineOverlayTurns(turns),
     [turns],
+  );
+  const conversationTimeline = useMemo(
+    () =>
+      agentConversation === null
+        ? null
+        : mergeAgentConversationTimelineOverlay(agentConversation, timelineOverlayTurns),
+    [agentConversation, timelineOverlayTurns],
+  );
+  const conversationTargetById = useMemo(() => {
+    const targets = new Map<string, ProjectConversationNavigationTarget>();
+    const targetIds = new Set(
+      agentConversation?.activities.flatMap((activity) => activity.relatedConversationIds) ?? [],
+    );
+    const workerSessions = jarvisSnapshotQuery.data?.snapshot?.sessions ?? [];
+    for (const targetId of targetIds) {
+      targets.set(
+        targetId,
+        resolveProjectConversationNavigationTarget({
+          targetId,
+          projectThreads: conversations,
+          workerSessions,
+        }),
+      );
+    }
+    return targets;
+  }, [agentConversation?.activities, conversations, jarvisSnapshotQuery.data?.snapshot?.sessions]);
+  const resolvedConversationTimeline = useMemo(() => {
+    const base = conversationTimeline ?? EMPTY_AGENT_CONVERSATION_TIMELINE;
+    return {
+      ...base,
+      timelineEntries: base.timelineEntries.map((entry) => {
+        if (entry.kind !== "work" || !entry.entry.conversationTargets) return entry;
+        return {
+          ...entry,
+          entry: {
+            ...entry.entry,
+            conversationTargets: entry.entry.conversationTargets.map((target) => {
+              const resolved = conversationTargetById.get(target.id);
+              return resolved?.availability === "resolvable"
+                ? { ...target, availability: "resolvable" as const, unavailableReason: null }
+                : {
+                    ...target,
+                    availability: "unavailable" as const,
+                    unavailableReason:
+                      resolved?.reason ??
+                      "This child has not published a navigable conversation yet.",
+                  };
+            }),
+          },
+        };
+      }),
+    };
+  }, [conversationTargetById, conversationTimeline]);
+  const timelineController = useConversationTimelineController({
+    conversationKey: routeThreadKey,
+    timelineEntries: resolvedConversationTimeline.timelineEntries,
+  });
+  const openConversationTarget = useCallback(
+    (targetId: string) => {
+      const target = conversationTargetById.get(targetId);
+      if (!target || target.availability === "unavailable") {
+        toastManager.add({
+          type: "warning",
+          title: "Child conversation unavailable",
+          description:
+            target?.reason ?? "This child has not published a navigable conversation yet.",
+        });
+        return;
+      }
+      if (target.kind === "project-thread") {
+        void navigate({
+          to: "/jarvis-project/$environmentId/$projectId/$threadId",
+          params: buildProjectConversationRouteParams({
+            environmentId,
+            projectId,
+            threadId: target.threadId,
+          }),
+        });
+        return;
+      }
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(
+          scopeThreadRef(environmentId, ThreadId.make(target.threadId)),
+        ),
+      });
+    },
+    [conversationTargetById, environmentId, navigate, projectId],
   );
   const titleContextMessages = useMemo(
     () => [
@@ -503,13 +645,14 @@ export function AgentConversationChatView({
     setRenamingConversation(false);
     setRenameDraft("");
     setTurns([]);
+    setActiveProjectTurn(null);
     setRespondingRequestIds([]);
     setRespondingUserInputRequestIds([]);
     setPendingUserInputAnswersByRequestId({});
     setPendingUserInputQuestionIndexByRequestId({});
     controlIdempotencyKeysRef.current.clear();
     turnCounter.current = 0;
-  }, [threadId]);
+  }, [environmentId, projectId, threadId]);
 
   useEffect(() => {
     if (initializedRightPanelThreadKeyRef.current === routeThreadKey) return;
@@ -818,6 +961,7 @@ export function AgentConversationChatView({
     submission: ProjectConversationSubmissionSnapshot,
     options: { readonly existingTurnId?: string } = {},
   ) => {
+    if (routeIdentityRef.current !== routeIdentity) return;
     const text = submission.prompt.trim();
     if (text.length === 0 || sendBusy || archived) return;
     const existingTurnId = options.existingTurnId;
@@ -873,6 +1017,7 @@ export function AgentConversationChatView({
       });
 
     const turnId = existingTurnId ?? `project-turn-${Date.now()}-${turnCounter.current++}`;
+    timelineController.beginAnchoredTurn(MessageId.make(`overlay:${turnId}:user`));
     if (existingTurnId) {
       markTurn(turnId, { status: "pending", response: "", toolItems: [], error: null });
     } else {
@@ -902,67 +1047,102 @@ export function AgentConversationChatView({
       composerRef.current?.resetCursorState({ cursor: 0, prompt: "" });
     }
 
-    const result = await sendTurn({
-      environmentId,
+    setActiveProjectTurn({
+      routeIdentity,
+      turnId,
+      submission,
+      restoreDraftOnFailure: !existingTurnId || clearMatchingRetryDraft,
+      clearWorkspaceOnSuccess: turnWorkspace !== null && workspaceMatchesSubmission,
       input: {
-        projectId,
-        threadId: String(threadId),
-        input: {
-          text,
-          idempotency_key: `project-thread-turn-${turnId}`,
-          ...(turnModel !== null ? { model: turnModel } : {}),
-          ...(turnEffort !== null ? { effort: turnEffort } : {}),
-          ...(turnSpeed !== null ? { speed: turnSpeed } : {}),
-          ...(turnAttachments.length > 0 ? { attachments: turnAttachments } : {}),
-          ...(turnWorkspace !== null ? { workspace: turnWorkspace } : {}),
-        },
+        text,
+        idempotency_key: `project-thread-turn-${turnId}`,
+        ...(turnModel !== null ? { model: turnModel } : {}),
+        ...(turnEffort !== null ? { effort: turnEffort } : {}),
+        ...(turnSpeed !== null ? { speed: turnSpeed } : {}),
+        ...(turnAttachments.length > 0 ? { attachments: [...turnAttachments] } : {}),
+        ...(turnWorkspace !== null ? { workspace: turnWorkspace } : {}),
       },
     });
-    if (result._tag === "Failure") {
-      const interrupted = isAtomCommandInterrupted(result);
-      const message = interrupted
-        ? "Project conversation send interrupted."
-        : formatProjectConversationSendFailure(squashAtomCommandFailure(result));
-      markTurn(turnId, { status: "failed", error: message });
-      if (!existingTurnId || clearMatchingRetryDraft) restoreFailedSubmission(submission);
-      if (!interrupted) {
-        toastManager.add({
-          type: "error",
-          title: "Could not send project turn",
-          description: message,
-        });
-      }
-      return;
-    }
-    if (!result.value.ok || !result.value.result) {
+  };
+
+  useEffect(() => {
+    if (activeProjectTurn === null || activeProjectTurn.routeIdentity !== routeIdentity) return;
+    const stream = projectTurnStream.data;
+    const streamError = projectTurnStream.error;
+    if (streamError !== null || stream?.phase === "failed") {
       const message = formatProjectConversationSendFailure(
-        result.value.error?.message ?? "Jarvis did not return a project conversation turn result.",
+        streamError ?? stream?.error ?? "Jarvis did not complete the project conversation turn.",
       );
-      markTurn(turnId, { status: "failed", error: message });
-      if (!existingTurnId || clearMatchingRetryDraft) restoreFailedSubmission(submission);
+      markTurn(activeProjectTurn.turnId, { status: "failed", error: message });
+      if (activeProjectTurn.restoreDraftOnFailure) {
+        restoreFailedSubmission(activeProjectTurn.submission);
+      }
       toastManager.add({
         type: "error",
         title: "Could not send project turn",
         description: message,
       });
+      setActiveProjectTurn(null);
       return;
     }
+    if (stream === null) return;
 
-    const toolItems = mergeJarvisThreadToolEventsWithReply(result.value.result);
+    const streamedResult = {
+      ok: stream.result?.ok ?? true,
+      text: stream.text,
+      events: stream.events,
+    };
+    const toolItems = mergeJarvisThreadToolEventsWithReply(streamedResult);
     const mergedReply = toolItems
       .filter((item) => item.kind === "reply")
       .map((item) => item.text)
       .join("")
       .trim();
-    const reply = mergedReply || extractProjectConversationReply(result.value.result);
-    markTurn(turnId, { status: "completed", response: reply, toolItems, error: null });
+    const durableReply = extractProjectConversationReply(streamedResult);
+    const reply =
+      stream.phase === "completed" ? durableReply || mergedReply : mergedReply || durableReply;
+
+    if (stream.phase === "streaming") {
+      markTurn(activeProjectTurn.turnId, {
+        status: "streaming",
+        response: reply,
+        toolItems,
+        error: null,
+      });
+      return;
+    }
+
+    if (!streamedResult.ok) {
+      const message = formatProjectConversationSendFailure(
+        "Jarvis did not complete the project conversation turn.",
+      );
+      markTurn(activeProjectTurn.turnId, { status: "failed", error: message });
+      if (activeProjectTurn.restoreDraftOnFailure) {
+        restoreFailedSubmission(activeProjectTurn.submission);
+      }
+      toastManager.add({
+        type: "error",
+        title: "Could not send project turn",
+        description: message,
+      });
+      setActiveProjectTurn(null);
+      return;
+    }
+
+    markTurn(activeProjectTurn.turnId, {
+      status: "completed",
+      response: reply,
+      toolItems,
+      error: null,
+    });
     // Clear only the workspace snapshot that actually succeeded. A replacement
     // staged while this request was in flight remains available for the next turn.
-    if (turnWorkspace !== null && workspaceMatchesSubmission) {
+    if (activeProjectTurn.clearWorkspaceOnSuccess) {
       clearWorkspaceRepoStaging();
     }
     refreshConversationData();
-  };
+    setActiveProjectTurn(null);
+  }, [activeProjectTurn, projectTurnStream.data, projectTurnStream.error, routeIdentity]);
 
   const handleComposerSend = async (event?: { preventDefault: () => void }) => {
     event?.preventDefault();
@@ -995,7 +1175,7 @@ export function AgentConversationChatView({
       images: sendContext.images,
       persistedImages: sendContext.persistedImages,
     });
-    if (attachments === null) {
+    if (attachments === null || routeIdentityRef.current !== routeIdentity) {
       return;
     }
     await sendPrompt({
@@ -1327,8 +1507,8 @@ export function AgentConversationChatView({
     (threadsQuery.isPending && !threadsQuery.data);
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background text-foreground">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
+    <ConversationScreen
+      header={
         <header
           className={cn(
             "border-b border-border px-3 transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none sm:px-5",
@@ -1512,195 +1692,192 @@ export function AgentConversationChatView({
             </div>
           </div>
         </header>
-
-        {detailFallback ? (
-          <div className="mx-auto w-full max-w-5xl px-3 pt-3 sm:px-5">
-            <Alert variant="info">
-              <MessageSquareIcon />
-              <AlertTitle>History unavailable</AlertTitle>
-              <AlertDescription>{detailFallback}</AlertDescription>
-            </Alert>
-          </div>
-        ) : null}
-
-        {archiveSummary ? (
-          <div className="mx-auto w-full max-w-5xl px-3 pt-3 sm:px-5">
-            <Alert variant="info">
-              <ArchiveIcon />
-              <AlertTitle>Archived conversation</AlertTitle>
-              <AlertDescription>{archiveSummary}</AlertDescription>
-            </Alert>
-          </div>
-        ) : null}
-
-        {projectQueryFailed || threadsQueryFailed ? (
-          <div className="mx-auto w-full max-w-5xl px-3 pt-3 sm:px-5">
-            <Alert variant="error">
-              <TriangleAlertIcon />
-              <AlertTitle>Project conversation unavailable</AlertTitle>
-              <AlertDescription>
-                {projectsQuery.data?.ok === false
-                  ? projectsQuery.data.error?.message
-                  : threadsQuery.data?.ok === false
-                    ? threadsQuery.data.error?.message
-                    : projectsQuery.error || threadsQuery.error || "Jarvis did not return data."}
-              </AlertDescription>
-            </Alert>
-          </div>
-        ) : null}
-
-        <div className="flex min-h-0 flex-1 overflow-hidden">
-          <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            <div
-              className={cn(
-                "min-h-0 flex-1",
-                agentConversation
-                  ? "flex flex-col overflow-hidden"
-                  : "overflow-y-auto px-3 py-4 sm:px-5",
-              )}
-            >
-              {agentConversation ? (
-                <div className="min-h-0 flex-1">
-                  <AgentConversationTimeline
-                    conversation={agentConversation}
-                    environmentId={environmentId}
-                    routeThreadKey={`${environmentId}:${String(threadId)}`}
-                    resolvedTheme={resolvedTheme}
-                    timestampFormat={settings.timestampFormat}
-                    overlayTurns={timelineOverlayTurns}
-                    onRecoveryAction={retryTurn}
-                    recoveryActionsDisabled={sendBusy}
-                  />
-                </div>
-              ) : (
-                <div className="mx-auto flex w-full max-w-3xl flex-col pb-4">
-                  {loadingProject ? (
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Spinner className="size-4" />
-                      Loading project conversation
-                    </div>
-                  ) : null}
-                  {!loadingProject && conversation === null ? (
-                    <Empty className="min-h-80">
-                      <EmptyHeader>
-                        <EmptyTitle>Conversation not found</EmptyTitle>
-                        <EmptyDescription>
-                          Jarvis did not return this project conversation for {projectName}.
-                        </EmptyDescription>
-                      </EmptyHeader>
-                    </Empty>
-                  ) : null}
-                </div>
-              )}
+      }
+      banners={
+        <>
+          {detailFallback ? (
+            <div className="mx-auto w-full max-w-5xl px-3 pt-3 sm:px-5">
+              <Alert variant="info">
+                <MessageSquareIcon />
+                <AlertTitle>History unavailable</AlertTitle>
+                <AlertDescription>{detailFallback}</AlertDescription>
+              </Alert>
             </div>
-            <div className="border-t border-border/40 bg-background pt-2">
-              <div className="mx-auto w-full max-w-3xl px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:px-5">
-                <div>
-                  <ChatComposer
-                    capabilities={composerCapabilities}
-                    composerRef={composerRef}
-                    composerDraftTarget={composerDraftTarget}
-                    environmentId={environmentId}
-                    routeKind="agent"
-                    routeThreadRef={routeThreadRef}
-                    draftId={null}
-                    activeThreadId={conversation === null ? null : threadId}
-                    activeThreadEnvironmentId={environmentId}
-                    activeThread={undefined}
-                    isServerThread={true}
-                    isLocalDraftThread={false}
-                    isJarvisCockpitEnvironment={true}
-                    showJarvisResumeSendHint={false}
-                    phase={composerRuntime.phase}
-                    allowSendWhileRunning={composerRuntime.canQueue}
-                    isConnecting={false}
-                    isSendBusy={sendBusy}
-                    isPreparingWorktree={false}
-                    composerDisabledReason={composerDisabledReason}
-                    environmentUnavailable={null}
-                    activePendingApproval={activePendingApproval}
-                    pendingApprovals={composerRuntime.pendingApprovals}
-                    pendingUserInputs={composerRuntime.pendingUserInputs}
-                    activePendingProgress={activePendingProgress}
-                    activePendingResolvedAnswers={activePendingResolvedAnswers}
-                    activePendingIsResponding={activePendingIsResponding}
-                    activePendingDraftAnswers={activePendingDraftAnswers}
-                    activePendingQuestionIndex={activePendingQuestionIndex}
-                    respondingRequestIds={respondingRequestIds}
-                    showPlanFollowUpPrompt={false}
-                    activeProposedPlan={null}
-                    activePlan={null}
-                    sidebarProposedPlan={null}
-                    planSidebarLabel="Plan"
-                    planSidebarOpen={false}
-                    runtimeMode="full-access"
-                    interactionMode="default"
-                    lockedProvider={null}
-                    providerStatuses={providerStatuses as ServerProvider[]}
-                    activeProjectDefaultModelSelection={null}
-                    activeThreadModelSelection={null}
-                    activeThreadActivities={undefined}
-                    resolvedTheme={resolvedTheme}
-                    settings={settings}
-                    keybindings={keybindings}
-                    brainWorkspace={{
-                      project,
-                      workspace: conversationWorkspace,
-                      staging: workspaceStaging,
-                      disabled: conversation === null || archived || sendBusy,
-                      onStagingChange: setWorkspaceStaging,
-                    }}
-                    terminalOpen={false}
-                    gitCwd={conversationWorkspaceCwd}
-                    memoryMentionFiles={files}
-                    memoryMentionFilesQuery={
-                      filesQuery.data?.ok === true ? (filesQuery.data.query ?? null) : null
-                    }
-                    memoryMentionFilesPending={filesQuery.isPending}
-                    onMemoryMentionQueryChange={setMemoryMentionQuery}
-                    promptRef={promptRef}
-                    composerImagesRef={composerImagesRef}
-                    composerTerminalContextsRef={composerTerminalContextsRef}
-                    composerElementContextsRef={composerElementContextsRef}
-                    onSend={(event) => void handleComposerSend(event)}
-                    onInterrupt={() => void onInterrupt()}
-                    onImplementPlanInNewThread={() => {}}
-                    onRespondToApproval={onRespondToApproval}
-                    onSelectActivePendingUserInputOption={onSelectActivePendingUserInputOption}
-                    onAdvanceActivePendingUserInput={onAdvanceActivePendingUserInput}
-                    onPreviousActivePendingUserInputQuestion={
-                      onPreviousActivePendingUserInputQuestion
-                    }
-                    onChangeActivePendingUserInputCustomAnswer={
-                      onChangeActivePendingUserInputCustomAnswer
-                    }
-                    onProviderModelSelect={() => {}}
-                    getModelDisabledReason={() => null}
-                    toggleInteractionMode={() => {}}
-                    handleRuntimeModeChange={() => {}}
-                    handleInteractionModeChange={() => {}}
-                    togglePlanSidebar={() => {}}
-                    focusComposer={() => composerRef.current?.focusAtEnd()}
-                    scheduleComposerFocus={() =>
-                      window.requestAnimationFrame(() => composerRef.current?.focusAtEnd())
-                    }
-                    setThreadError={(_threadId, error) => {
-                      if (error) {
-                        showAttachmentError(error);
-                      }
-                    }}
-                    onExpandImage={(_preview: ExpandedImagePreview) => {}}
-                  />
-                </div>
-              </div>
+          ) : null}
+
+          {archiveSummary ? (
+            <div className="mx-auto w-full max-w-5xl px-3 pt-3 sm:px-5">
+              <Alert variant="info">
+                <ArchiveIcon />
+                <AlertTitle>Archived conversation</AlertTitle>
+                <AlertDescription>{archiveSummary}</AlertDescription>
+              </Alert>
             </div>
-          </main>
+          ) : null}
+
+          {projectQueryFailed || threadsQueryFailed ? (
+            <div className="mx-auto w-full max-w-5xl px-3 pt-3 sm:px-5">
+              <Alert variant="error">
+                <TriangleAlertIcon />
+                <AlertTitle>Project conversation unavailable</AlertTitle>
+                <AlertDescription>
+                  {projectsQuery.data?.ok === false
+                    ? projectsQuery.data.error?.message
+                    : threadsQuery.data?.ok === false
+                      ? threadsQuery.data.error?.message
+                      : projectsQuery.error || threadsQuery.error || "Jarvis did not return data."}
+                </AlertDescription>
+              </Alert>
+            </div>
+          ) : null}
+        </>
+      }
+      timeline={
+        <div
+          className={cn(
+            "min-h-0 flex-1",
+            agentConversation
+              ? "flex flex-col overflow-hidden"
+              : "overflow-y-auto px-3 py-4 sm:px-5",
+          )}
+        >
+          {agentConversation ? (
+            <div className="min-h-0 flex-1">
+              <AgentConversationTimeline
+                conversation={agentConversation}
+                timeline={resolvedConversationTimeline}
+                controller={timelineController}
+                environmentId={environmentId}
+                routeThreadKey={`${environmentId}:${String(threadId)}`}
+                resolvedTheme={resolvedTheme}
+                timestampFormat={settings.timestampFormat}
+                onRecoveryAction={retryTurn}
+                onOpenConversationTarget={openConversationTarget}
+                recoveryActionsDisabled={sendBusy}
+              />
+            </div>
+          ) : (
+            <div className="mx-auto flex w-full max-w-3xl flex-col pb-4">
+              {loadingProject ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Spinner className="size-4" />
+                  Loading project conversation
+                </div>
+              ) : null}
+              {!loadingProject && conversation === null ? (
+                <Empty className="min-h-80">
+                  <EmptyHeader>
+                    <EmptyTitle>Conversation not found</EmptyTitle>
+                    <EmptyDescription>
+                      Jarvis did not return this project conversation for {projectName}.
+                    </EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
+              ) : null}
+            </div>
+          )}
         </div>
-        {shouldUseRightPanelSheet && rightPanelState.isOpen ? (
+      }
+      composer={
+        <ConversationComposer
+          controller={timelineController}
+          lowerChromeClassName="pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:pb-[calc(env(safe-area-inset-bottom)+1rem)]"
+        >
+          <ChatComposer
+            capabilities={composerCapabilities}
+            composerRef={composerRef}
+            composerDraftTarget={composerDraftTarget}
+            environmentId={environmentId}
+            routeKind="agent"
+            routeThreadRef={routeThreadRef}
+            draftId={null}
+            activeThreadId={conversation === null ? null : threadId}
+            activeThreadEnvironmentId={environmentId}
+            activeThread={undefined}
+            isServerThread={true}
+            isLocalDraftThread={false}
+            isJarvisCockpitEnvironment={true}
+            showJarvisResumeSendHint={false}
+            phase={composerRuntime.phase}
+            allowSendWhileRunning={composerRuntime.canQueue}
+            isConnecting={false}
+            isSendBusy={sendBusy}
+            isPreparingWorktree={false}
+            composerDisabledReason={composerDisabledReason}
+            environmentUnavailable={null}
+            activePendingApproval={activePendingApproval}
+            pendingApprovals={composerRuntime.pendingApprovals}
+            pendingUserInputs={composerRuntime.pendingUserInputs}
+            activePendingProgress={activePendingProgress}
+            activePendingResolvedAnswers={activePendingResolvedAnswers}
+            activePendingIsResponding={activePendingIsResponding}
+            activePendingDraftAnswers={activePendingDraftAnswers}
+            activePendingQuestionIndex={activePendingQuestionIndex}
+            respondingRequestIds={respondingRequestIds}
+            showPlanFollowUpPrompt={false}
+            activeProposedPlan={null}
+            activePlan={null}
+            sidebarProposedPlan={null}
+            planSidebarLabel="Plan"
+            planSidebarOpen={false}
+            lockedProvider={null}
+            providerStatuses={providerStatuses as ServerProvider[]}
+            activeProjectDefaultModelSelection={null}
+            activeThreadModelSelection={null}
+            activeThreadActivities={undefined}
+            resolvedTheme={resolvedTheme}
+            settings={settings}
+            keybindings={keybindings}
+            brainWorkspace={{
+              project,
+              workspace: conversationWorkspace,
+              staging: workspaceStaging,
+              disabled: conversation === null || archived || sendBusy,
+              onStagingChange: setWorkspaceStaging,
+            }}
+            terminalOpen={false}
+            gitCwd={conversationWorkspaceCwd}
+            memoryMentionFiles={files}
+            memoryMentionFilesQuery={
+              filesQuery.data?.ok === true ? (filesQuery.data.query ?? null) : null
+            }
+            memoryMentionFilesPending={filesQuery.isPending}
+            onMemoryMentionQueryChange={setMemoryMentionQuery}
+            promptRef={promptRef}
+            composerImagesRef={composerImagesRef}
+            composerTerminalContextsRef={composerTerminalContextsRef}
+            composerElementContextsRef={composerElementContextsRef}
+            onSend={(event) => void handleComposerSend(event)}
+            onInterrupt={() => void onInterrupt()}
+            onRespondToApproval={onRespondToApproval}
+            onSelectActivePendingUserInputOption={onSelectActivePendingUserInputOption}
+            onAdvanceActivePendingUserInput={onAdvanceActivePendingUserInput}
+            onPreviousActivePendingUserInputQuestion={onPreviousActivePendingUserInputQuestion}
+            onChangeActivePendingUserInputCustomAnswer={onChangeActivePendingUserInputCustomAnswer}
+            focusComposer={() => composerRef.current?.focusAtEnd()}
+            scheduleComposerFocus={() =>
+              window.requestAnimationFrame(() => composerRef.current?.focusAtEnd())
+            }
+            setThreadError={(_threadId, error) => {
+              if (error) {
+                showAttachmentError(error);
+              }
+            }}
+            onExpandImage={timelineController.onExpandImage}
+          />
+        </ConversationComposer>
+      }
+      inlinePanel={
+        !shouldUseRightPanelSheet && rightPanelState.isOpen ? contextRightPanel("inline") : null
+      }
+      sheetPanel={
+        shouldUseRightPanelSheet && rightPanelState.isOpen ? (
           <RightPanelSheet open onClose={() => useRightPanelStore.getState().close(routeThreadRef)}>
             {contextRightPanel("sheet")}
           </RightPanelSheet>
-        ) : null}
+        ) : null
+      }
+      overlays={
         <AlertDialog
           open={pendingArchiveConfirmation}
           onOpenChange={(open) => {
@@ -1725,9 +1902,8 @@ export function AgentConversationChatView({
             </AlertDialogFooter>
           </AlertDialogPopup>
         </AlertDialog>
-      </div>
-      {!shouldUseRightPanelSheet && rightPanelState.isOpen ? contextRightPanel("inline") : null}
-    </div>
+      }
+    />
   );
 }
 

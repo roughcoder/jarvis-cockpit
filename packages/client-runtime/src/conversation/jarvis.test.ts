@@ -243,7 +243,7 @@ describe("Jarvis universal conversation adapter", () => {
     expect(new Set(first.timeline.map((item) => item.id)).size).toBe(first.timeline.length);
   });
 
-  it("orders same-timestamp durable messages by sequence then stable replay identity", () => {
+  it("orders same-timestamp durable messages by sequence then authoritative source order", () => {
     const observedAt = "2026-07-12T12:00:00.000Z";
     const sameTimestamp: ReadonlyArray<JarvisConversationMessage> = [
       {
@@ -299,14 +299,14 @@ describe("Jarvis universal conversation adapter", () => {
       "sequence one",
       "sequence two",
       "sequence three",
-      "unsequenced a",
       "unsequenced z",
+      "unsequenced a",
     ]);
     expect(shuffled.timeline).toEqual(forward.timeline);
     expect(shuffled.messages).toEqual(forward.messages);
   });
 
-  it("uses replay identity when same-timestamp durable messages share a sequence", () => {
+  it("preserves source order when same-timestamp durable messages share a sequence", () => {
     const messages: ReadonlyArray<JarvisConversationMessage> = [
       {
         event_id: "event-zulu",
@@ -332,8 +332,131 @@ describe("Jarvis universal conversation adapter", () => {
       messages: messages.toReversed(),
     });
 
-    expect(forward).toEqual(reversed);
-    expect(forward.messages.map((message) => message.content)).toEqual(["Alpha", "Zulu"]);
+    expect(forward.messages.map((message) => message.content)).toEqual(["Zulu", "Alpha"]);
+    expect(reversed.messages.map((message) => message.content)).toEqual(["Alpha", "Zulu"]);
+  });
+
+  it("keeps an unsequenced same-timestamp user prompt before its assistant reply", () => {
+    const observedAt = "2026-07-22T10:31:13.000Z";
+    const conversation = adaptJarvisProjectThread({
+      ...ENRICHED_JARVIS_CONVERSATION_GOLDEN,
+      messages: [
+        {
+          role: "user",
+          content: "who won the world cup?",
+          observed_at: observedAt,
+        },
+        {
+          role: "assistant",
+          content: "Argentina won in 2022.",
+          observed_at: observedAt,
+        },
+      ],
+    });
+
+    expect(conversation.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+  });
+
+  it("projects code-agent reasoning and tools between the prompt and reply for a turn", () => {
+    const conversation = adaptJarvisProjectThread({
+      ...ENRICHED_JARVIS_CONVERSATION_GOLDEN,
+      messages: [
+        {
+          role: "event",
+          content: "reasoning.completed",
+          observed_at: "2026-07-22T10:31:14.000Z",
+          event_id: "event-reasoning",
+          message_id: "reasoning-1",
+          turn_id: "turn-1",
+          type: "reasoning.completed",
+          data: { text: "Checked the latest result." },
+        },
+        {
+          role: "user",
+          content: "who won?",
+          observed_at: "2026-07-22T10:31:15.000Z",
+          turn_id: "turn-1",
+        },
+        {
+          role: "event",
+          content: "tool.call web_search",
+          observed_at: "2026-07-22T10:31:14.500Z",
+          event_id: "event-tool",
+          message_id: "call-1",
+          call_id: "call-1",
+          turn_id: "turn-1",
+          type: "tool.call",
+          data: { item: { id: "call-1", name: "web_search", input: { query: "world cup" } } },
+        },
+        {
+          role: "assistant",
+          content: "Argentina won in 2022.",
+          observed_at: "2026-07-22T10:31:15.000Z",
+          turn_id: "turn-1",
+        },
+      ],
+    });
+
+    expect(conversation.timeline.map((item) => item.kind)).toEqual([
+      "message",
+      "activity",
+      "activity",
+      "message",
+    ]);
+    expect(conversation.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(conversation.activities.map((activity) => activity.kind)).toEqual([
+      "reasoning.completed",
+      "tool.requested",
+    ]);
+    expect(conversation.activities.every((activity) => activity.turnId === "turn-1")).toBe(true);
+  });
+
+  it("projects the durable nested Jarvis event-message shape", () => {
+    const conversation = adaptJarvisProjectThread({
+      ...ENRICHED_JARVIS_CONVERSATION_GOLDEN,
+      messages: [
+        {
+          role: "event",
+          peer_id: "jarvis",
+          content: "tool.call add_finding",
+          observed_at: "2026-07-22T10:31:14.000Z",
+          event: {
+            event_id: "event-tool-nested",
+            sequence: 1,
+            type: "tool.call",
+            occurred_at: "2026-07-22T10:31:14.000Z",
+            turn_id: "turn-nested",
+            message_id: "call-nested",
+            data: {
+              item: {
+                id: "call-nested",
+                type: "tool_use",
+                name: "add_finding",
+                input: { project: "Jarvis" },
+              },
+            },
+          },
+        },
+      ],
+    });
+
+    expect(conversation.messages).toEqual([]);
+    expect(conversation.activities).toHaveLength(1);
+    expect(conversation.activities[0]).toMatchObject({
+      kind: "tool.requested",
+      correlationId: "call-nested",
+      turnId: "turn-nested",
+      toolName: "add_finding",
+      presentation: {
+        toolTitle: "add_finding",
+        toolData: {
+          id: "call-nested",
+          type: "tool_use",
+          name: "add_finding",
+          input: { project: "Jarvis" },
+        },
+      },
+    });
   });
 
   it("coalesces tool result-before-call by durable call identity", () => {
@@ -354,6 +477,121 @@ describe("Jarvis universal conversation adapter", () => {
         completedAt: "2026-07-12T10:00:02.000Z",
       },
     ]);
+  });
+
+  it("preserves structured command, file-change, and future tool presentation data", () => {
+    const conversation = adaptJarvisProjectThread({
+      ...ENRICHED_JARVIS_CONVERSATION_GOLDEN,
+      messages: [
+        {
+          event_id: "event-command-call",
+          role: "event",
+          content: "tool.call",
+          observed_at: "2026-07-12T12:00:00.000Z",
+          type: "tool.call",
+          call_id: "command-1",
+          data: {
+            item_type: "command_execution",
+            title: "Terminal",
+            item: {
+              name: "exec_command",
+              input: { command: "bash -lc 'pnpm exec vp test'" },
+            },
+          },
+        },
+        {
+          event_id: "event-command-result",
+          role: "event",
+          content: "tool.result",
+          observed_at: "2026-07-12T12:00:01.000Z",
+          type: "tool.result",
+          call_id: "command-1",
+          status: "completed",
+          data: {
+            item_type: "command_execution",
+            title: "Terminal",
+            item: {
+              name: "exec_command",
+              result: { output: "61 tests passed" },
+            },
+          },
+        },
+        {
+          event_id: "event-file-change",
+          role: "event",
+          content: "tool.result",
+          observed_at: "2026-07-12T12:00:02.000Z",
+          type: "tool.result",
+          call_id: "file-change-1",
+          status: "completed",
+          data: {
+            item_type: "file_change",
+            title: "Updated files",
+            item: {
+              name: "apply_patch",
+              result: {
+                changes: [
+                  { path: "src/first.ts" },
+                  { oldPath: "src/old.ts", newPath: "src/new.ts" },
+                  { path: "src/first.ts" },
+                ],
+              },
+            },
+          },
+        },
+        {
+          event_id: "event-future-tool",
+          role: "event",
+          content: "tool.call",
+          observed_at: "2026-07-12T12:00:03.000Z",
+          type: "tool.call",
+          call_id: "future-tool-1",
+          data: {
+            item_type: "future_tool_type",
+            title: "Future tool",
+            item: { name: "future_tool", input: { value: 42 } },
+          },
+        },
+      ],
+    });
+
+    expect(conversation.activities).toHaveLength(3);
+    expect(conversation.activities[0]).toMatchObject({
+      kind: "tool.completed",
+      correlationId: "command-1",
+      presentation: {
+        command: "pnpm exec vp test",
+        rawCommand: "bash -lc 'pnpm exec vp test'",
+        toolTitle: "Terminal",
+        itemType: "command_execution",
+        toolData: {
+          name: "exec_command",
+          input: { command: "bash -lc 'pnpm exec vp test'" },
+          result: { output: "61 tests passed" },
+        },
+      },
+    });
+    expect(conversation.activities[1]).toMatchObject({
+      kind: "tool.completed",
+      correlationId: "file-change-1",
+      presentation: {
+        changedFiles: ["src/first.ts", "src/new.ts", "src/old.ts"],
+        toolTitle: "Updated files",
+        itemType: "file_change",
+        toolData: {
+          name: "apply_patch",
+        },
+      },
+    });
+    expect(conversation.activities[2]).toMatchObject({
+      kind: "tool.requested",
+      correlationId: "future-tool-1",
+      presentation: {
+        toolTitle: "Future tool",
+        itemType: "future_tool_type",
+        toolData: { name: "future_tool", input: { value: 42 } },
+      },
+    });
   });
 
   it("keeps repeated identical legacy tool invocations as distinct paired occurrences", () => {
@@ -570,6 +808,33 @@ describe("Jarvis universal conversation adapter", () => {
       { kind: "child.cancelled", status: "cancelled" },
       { kind: "child.waiting", status: "waiting", completedAt: null },
       { kind: "tool.requested", status: "waiting", completedAt: null },
+    ]);
+  });
+
+  it("recovers structured child titles and lets a completed phase override stale waiting status", () => {
+    const conversation = adaptJarvisProjectThread({
+      ...ENRICHED_JARVIS_CONVERSATION_GOLDEN,
+      messages: [
+        {
+          role: "system",
+          content:
+            "Child Trace cockpit UI (run-1) reached completed: All worker sessions completed.",
+          observed_at: "2026-07-12T12:00:00.000Z",
+          type: "child_terminal",
+          child_chat_id: JarvisProjectThreadId.make("run-1"),
+          phase: "completed",
+          status: "waiting",
+        },
+      ],
+    });
+
+    expect(conversation.activities).toMatchObject([
+      {
+        kind: "child.completed",
+        status: "completed",
+        title: "Trace cockpit UI completed",
+        summary: "All worker sessions completed",
+      },
     ]);
   });
 

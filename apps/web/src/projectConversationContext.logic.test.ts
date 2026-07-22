@@ -176,6 +176,34 @@ describe("project conversation context contributions", () => {
       "No project files recorded.",
     );
   });
+
+  it("shows child placeholders as soon as a watch announces them", () => {
+    const waitingConversation: AgentConversation = {
+      ...conversation,
+      activities: [
+        {
+          ...conversation.activities[0]!,
+          kind: "children.waiting",
+          status: "waiting",
+          title: "Waiting for 2 child conversations",
+          relatedConversationIds: ["private-child-a", "private-child-b"],
+          completedAt: null,
+        },
+      ],
+    };
+
+    const orchestration = projectConversationContextContributions({
+      conversation: waitingConversation,
+      memoryLoading: false,
+    }).find((section) => section.kind === "orchestration");
+
+    expect(orchestration?.progress).toEqual({ completed: 0, total: 2, failed: 0 });
+    expect(orchestration?.items).toMatchObject([
+      { label: "Child conversation 1", status: "waiting" },
+      { label: "Child conversation 2", status: "waiting" },
+    ]);
+    expect(JSON.stringify(orchestration)).not.toContain("private-child");
+  });
 });
 
 describe("project conversation context panel preference migration", () => {

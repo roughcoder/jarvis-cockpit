@@ -10,6 +10,7 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import { EnvironmentNotRegisteredError, EnvironmentRegistry } from "../connection/registry.ts";
 import {
+  type EnvironmentRpcUnavailableError,
   type EnvironmentRpcInput,
   type EnvironmentRpcStreamFailure,
   type EnvironmentRpcStreamValue,
@@ -616,6 +617,49 @@ export function createEnvironmentRpcSubscriptionAtomFamily<
       const stream = subscribe(options.tag, input);
       return options.transform === undefined
         ? (stream as Stream.Stream<B, EnvironmentRpcStreamFailure<TTag>, EnvironmentSupervisor | R>)
+        : options.transform(stream);
+    },
+  });
+}
+
+/** One-shot streaming RPC exposed as an atom family. Unlike a durable
+ * subscription this does not re-run a mutating stream when the environment
+ * session reconnects. */
+export function createEnvironmentRpcStreamAtomFamily<
+  R,
+  ER,
+  TTag extends EnvironmentStreamCommandRpcTag,
+  B = EnvironmentRpcStreamValue<TTag>,
+>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, ER>,
+  options: {
+    readonly label: string;
+    readonly tag: TTag;
+    readonly idleTtlMs?: number;
+    readonly transform?: (
+      stream: Stream.Stream<
+        EnvironmentRpcStreamValue<TTag>,
+        EnvironmentRpcStreamFailure<TTag> | EnvironmentRpcUnavailableError,
+        EnvironmentSupervisor | R
+      >,
+    ) => Stream.Stream<
+      B,
+      EnvironmentRpcStreamFailure<TTag> | EnvironmentRpcUnavailableError,
+      EnvironmentSupervisor | R
+    >;
+  },
+) {
+  return createEnvironmentSubscriptionAtomFamily(runtime, {
+    label: options.label,
+    ...(options.idleTtlMs === undefined ? {} : { idleTtlMs: options.idleTtlMs }),
+    subscribe: (input: EnvironmentRpcInput<TTag>) => {
+      const stream = runStream(options.tag, input);
+      return options.transform === undefined
+        ? (stream as Stream.Stream<
+            B,
+            EnvironmentRpcStreamFailure<TTag> | EnvironmentRpcUnavailableError,
+            EnvironmentSupervisor | R
+          >)
         : options.transform(stream);
     },
   });

@@ -982,44 +982,18 @@ describe("deriveMessagesTimelineRows", () => {
   });
 
   it("models work log overflow expansion as inserted list rows", () => {
-    const timelineEntries = [
-      {
-        id: "work-entry-1",
-        kind: "work" as const,
-        createdAt: "2026-01-01T00:00:01Z",
-        entry: {
-          id: "work-1",
-          createdAt: "2026-01-01T00:00:01Z",
-          label: "read",
-          detail: "Reading package.json",
-          tone: "tool" as const,
-        },
+    const timelineEntries = Array.from({ length: 8 }, (_, index) => ({
+      id: `work-entry-${index + 1}`,
+      kind: "work" as const,
+      createdAt: `2026-01-01T00:00:0${index + 1}Z`,
+      entry: {
+        id: `work-${index + 1}`,
+        createdAt: `2026-01-01T00:00:0${index + 1}Z`,
+        label: `step ${index + 1}`,
+        detail: `Work step ${index + 1}`,
+        tone: "tool" as const,
       },
-      {
-        id: "work-entry-2",
-        kind: "work" as const,
-        createdAt: "2026-01-01T00:00:02Z",
-        entry: {
-          id: "work-2",
-          createdAt: "2026-01-01T00:00:02Z",
-          label: "edit",
-          detail: "Editing MessagesTimeline.tsx",
-          tone: "tool" as const,
-        },
-      },
-      {
-        id: "work-entry-3",
-        kind: "work" as const,
-        createdAt: "2026-01-01T00:00:03Z",
-        entry: {
-          id: "work-3",
-          createdAt: "2026-01-01T00:00:03Z",
-          label: "test",
-          detail: "Running tests",
-          tone: "tool" as const,
-        },
-      },
-    ];
+    }));
 
     const baseInput = {
       timelineEntries,
@@ -1034,7 +1008,15 @@ describe("deriveMessagesTimelineRows", () => {
       expandedWorkGroupIds: new Set(["work-group:work-entry-1"]),
     });
 
-    expect(collapsedRows.map((row) => row.id)).toEqual(["work-3", "work-toggle:work-entry-1"]);
+    expect(collapsedRows.map((row) => row.id)).toEqual([
+      "work-3",
+      "work-4",
+      "work-5",
+      "work-6",
+      "work-7",
+      "work-8",
+      "work-toggle:work-entry-1",
+    ]);
     expect(collapsedRows.find((row) => row.kind === "work-toggle")).toMatchObject({
       groupId: "work-group:work-entry-1",
       hiddenCount: 2,
@@ -1045,11 +1027,22 @@ describe("deriveMessagesTimelineRows", () => {
       "work-1",
       "work-2",
       "work-3",
+      "work-4",
+      "work-5",
+      "work-6",
+      "work-7",
+      "work-8",
       "work-toggle:work-entry-1",
     ]);
     expect(expandedRows.find((row) => row.kind === "work-toggle")).toMatchObject({
       expanded: true,
     });
+
+    expect(
+      deriveMessagesTimelineRows({ ...baseInput, activeTurnInProgress: true }).flatMap((row) =>
+        row.kind === "work" ? row.groupedEntries.map((entry) => entry.id) : [],
+      ),
+    ).toEqual(timelineEntries.map((entry) => entry.entry.id));
   });
 });
 
@@ -1123,6 +1116,41 @@ describe("computeStableMessagesTimelineRows", () => {
 
     expect(repeated).toBe(initial);
     expect(repeated.result).toBe(initial.result);
+  });
+
+  it("reuses message rows when adapters recreate an equivalent message object", () => {
+    const message = {
+      id: "user-1" as never,
+      role: "user" as const,
+      text: "Same value",
+      turnId: null,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      streaming: false,
+    };
+    const derive = (nextMessage: typeof message) =>
+      deriveMessagesTimelineRows({
+        timelineEntries: [
+          {
+            id: "entry-user-1",
+            kind: "message",
+            createdAt: nextMessage.createdAt,
+            message: nextMessage,
+          },
+        ],
+        isWorking: false,
+        activeTurnStartedAt: null,
+        turnDiffSummaryByAssistantMessageId: new Map(),
+        revertTurnCountByUserMessageId: new Map(),
+      });
+    const initial = computeStableMessagesTimelineRows(derive(message), {
+      byId: new Map(),
+      result: [],
+    });
+    const repeated = computeStableMessagesTimelineRows(derive({ ...message }), initial);
+
+    expect(repeated).toBe(initial);
+    expect(repeated.result[0]).toBe(initial.result[0]);
   });
 
   it("reuses work rows when equivalent timeline derivations create new grouped arrays", () => {
@@ -1228,5 +1256,73 @@ describe("computeStableMessagesTimelineRows", () => {
 
     expect(reordered).not.toBe(initial);
     expect(reordered.result).toEqual([initial.result[1], initial.result[0]]);
+  });
+
+  it("appends incremental rows in order while retaining unchanged row identities", () => {
+    const timelineEntries = [
+      {
+        id: "user-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:00Z",
+        message: {
+          id: "user-1" as never,
+          role: "user" as const,
+          text: "Inspect this",
+          turnId: null,
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+          streaming: false,
+        },
+      },
+      {
+        id: "assistant-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:01Z",
+        message: {
+          id: "assistant-1" as never,
+          role: "assistant" as const,
+          text: "I am checking.",
+          turnId: null,
+          createdAt: "2026-01-01T00:00:01Z",
+          updatedAt: "2026-01-01T00:00:01Z",
+          streaming: false,
+        },
+      },
+    ];
+    const derive = (
+      entries:
+        | typeof timelineEntries
+        | ReadonlyArray<(typeof timelineEntries)[number] | ReturnType<typeof semanticWorkEntry>>,
+    ) =>
+      deriveMessagesTimelineRows({
+        timelineEntries: entries,
+        activeTurnInProgress: true,
+        isWorking: false,
+        activeTurnStartedAt: null,
+        turnDiffSummaryByAssistantMessageId: new Map(),
+        revertTurnCountByUserMessageId: new Map(),
+      });
+    const initial = computeStableMessagesTimelineRows(derive(timelineEntries), {
+      byId: new Map(),
+      result: [],
+    });
+    const appendedRows = derive([
+      ...timelineEntries.map((entry) => ({
+        ...entry,
+        message: { ...entry.message },
+      })),
+      semanticWorkEntry("waiting-entry", "running"),
+    ]);
+    const appended = computeStableMessagesTimelineRows(appendedRows, initial);
+
+    expect(appended).not.toBe(initial);
+    expect(appended.result.map((row) => row.id)).toEqual([
+      "user-entry",
+      "assistant-entry",
+      "waiting-entry",
+    ]);
+    expect(appended.result[0]).toBe(initial.result[0]);
+    expect(appended.result[1]).toBe(initial.result[1]);
+    expect(appended.result[2]).toBe(appendedRows[2]);
   });
 });
