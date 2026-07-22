@@ -5,9 +5,20 @@ import {
   cachedProjectConversationControlKey,
   projectConversationComposerRuntime,
   projectConversationRouteIdentity,
+  releaseProjectConversationSend,
+  tryClaimProjectConversationSend,
 } from "./projectConversationRuntime.logic";
 
 describe("projectConversationComposerRuntime", () => {
+  it("locks duplicate submissions until asynchronous preparation releases the gate", () => {
+    const gate = { current: false };
+
+    expect(tryClaimProjectConversationSend(gate)).toBe(true);
+    expect(tryClaimProjectConversationSend(gate)).toBe(false);
+    releaseProjectConversationSend(gate);
+    expect(tryClaimProjectConversationSend(gate)).toBe(true);
+  });
+
   it("scopes local turn state to the complete project conversation route", () => {
     const route = projectConversationRouteIdentity({
       environmentId: "environment-1",

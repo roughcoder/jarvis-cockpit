@@ -110,6 +110,7 @@ function controller(
     showScrollToBottom: false,
     expandedImage: null,
     beginAnchoredTurn: () => {},
+    abandonAnchoredTurn: () => {},
     scrollToEnd: () => {},
     onAnchorReady: () => {},
     onAnchorSizeChanged: () => {},

@@ -13,6 +13,20 @@ export interface ProjectConversationComposerRuntime {
   readonly pendingUserInputs: PendingUserInput[];
 }
 
+export interface ProjectConversationSendGate {
+  current: boolean;
+}
+
+export function tryClaimProjectConversationSend(gate: ProjectConversationSendGate): boolean {
+  if (gate.current) return false;
+  gate.current = true;
+  return true;
+}
+
+export function releaseProjectConversationSend(gate: ProjectConversationSendGate): void {
+  gate.current = false;
+}
+
 export function projectConversationRouteIdentity(input: {
   readonly environmentId: string;
   readonly projectId: string;

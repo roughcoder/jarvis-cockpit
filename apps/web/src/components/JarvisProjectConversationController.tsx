@@ -156,6 +156,8 @@ import {
   cachedProjectConversationControlKey,
   projectConversationComposerRuntime,
   projectConversationRouteIdentity,
+  releaseProjectConversationSend,
+  tryClaimProjectConversationSend,
 } from "../projectConversationRuntime.logic";
 import {
   buildPendingUserInputAnswers,
@@ -371,6 +373,7 @@ export function JarvisProjectConversationController({
   const composerElementContextsRef = useRef<ElementContextDraft[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
   const controlIdempotencyKeysRef = useRef(new Map<string, string>());
+  const sendInFlightRef = useRef(false);
   const composerRef = useComposerHandleContext() ?? localComposerRef;
   const clearComposerContent = useComposerDraftStore((store) => store.clearComposerContent);
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
@@ -379,18 +382,21 @@ export function JarvisProjectConversationController({
   const [activeProjectTurn, setActiveProjectTurn] = useState<ActiveProjectConversationTurn | null>(
     null,
   );
-  const projectTurnStream = useEnvironmentQuery(
-    activeProjectTurn === null || activeProjectTurn.routeIdentity !== routeIdentity
-      ? null
-      : serverEnvironment.jarvisProjectThreadTurnStream({
-          environmentId,
-          input: {
-            projectId,
-            threadId: String(threadId),
-            input: activeProjectTurn.input,
-          },
-        }),
+  const projectTurnStreamAtom = useMemo(
+    () =>
+      activeProjectTurn === null || activeProjectTurn.routeIdentity !== routeIdentity
+        ? null
+        : serverEnvironment.jarvisProjectThreadTurnStream({
+            environmentId,
+            input: {
+              projectId,
+              threadId: String(threadId),
+              input: activeProjectTurn.input,
+            },
+          }),
+    [activeProjectTurn, environmentId, projectId, routeIdentity, threadId],
   );
+  const projectTurnStream = useEnvironmentQuery(projectTurnStreamAtom);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
     ApprovalRequestId[]
@@ -959,11 +965,15 @@ export function JarvisProjectConversationController({
 
   const sendPrompt = async (
     submission: ProjectConversationSubmissionSnapshot,
-    options: { readonly existingTurnId?: string } = {},
-  ) => {
-    if (routeIdentityRef.current !== routeIdentity) return;
+    options: {
+      readonly existingTurnId?: string;
+      readonly restoreDraftOnFailure?: boolean;
+      readonly reserved?: boolean;
+    } = {},
+  ): Promise<boolean> => {
+    if (routeIdentityRef.current !== routeIdentity) return false;
     const text = submission.prompt.trim();
-    if (text.length === 0 || sendBusy || archived) return;
+    if (text.length === 0 || (sendBusy && !options.reserved) || archived) return false;
     const existingTurnId = options.existingTurnId;
     const turnAttachments = submission.attachments;
     const turnWorkspace = submission.workspace;
@@ -1051,7 +1061,8 @@ export function JarvisProjectConversationController({
       routeIdentity,
       turnId,
       submission,
-      restoreDraftOnFailure: !existingTurnId || clearMatchingRetryDraft,
+      restoreDraftOnFailure:
+        options.restoreDraftOnFailure ?? (!existingTurnId || clearMatchingRetryDraft),
       clearWorkspaceOnSuccess: turnWorkspace !== null && workspaceMatchesSubmission,
       input: {
         text,
@@ -1063,6 +1074,7 @@ export function JarvisProjectConversationController({
         ...(turnWorkspace !== null ? { workspace: turnWorkspace } : {}),
       },
     });
+    return true;
   };
 
   useEffect(() => {
@@ -1149,6 +1161,8 @@ export function JarvisProjectConversationController({
     if (sendBusy || archived || conversation === null) return;
     const sendContext = composerRef.current?.getSendContext();
     if (!sendContext) return;
+    const prompt = sendContext.prompt.trim();
+    if (prompt.length === 0 || !tryClaimProjectConversationSend(sendInFlightRef)) return;
     const workspace = buildTurnWorkspaceInput(workspaceStaging, conversationWorkspaceEngine);
     const model =
       buildTurnModelInput(
@@ -1171,22 +1185,70 @@ export function JarvisProjectConversationController({
         conversation.speed,
         workspaceEngineOptions,
       ) ?? null;
-    const attachments = await prepareProjectTurnAttachments({
-      images: sendContext.images,
-      persistedImages: sendContext.persistedImages,
-    });
-    if (attachments === null || routeIdentityRef.current !== routeIdentity) {
-      return;
-    }
-    await sendPrompt({
-      prompt: sendContext.prompt,
-      attachments,
+    const turnId = `project-turn-${Date.now()}-${turnCounter.current++}`;
+    const pendingSubmission: ProjectConversationSubmissionSnapshot = {
+      prompt,
+      attachments: [],
       composerImages: [...sendContext.images],
       workspace: workspace ?? null,
       model,
       effort,
       speed,
-    });
+    };
+    timelineController.beginAnchoredTurn(MessageId.make(`overlay:${turnId}:user`));
+    setTurns((existing) => [
+      ...existing,
+      {
+        id: turnId,
+        prompt,
+        response: "",
+        toolItems: [],
+        workspaceInput: pendingSubmission.workspace,
+        modelInput: model,
+        effortInput: effort,
+        speedInput: speed,
+        attachments: [],
+        composerImages: pendingSubmission.composerImages,
+        status: "pending",
+        error: null,
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+    // Removes the optimistic pending turn and its scroll anchor when the send
+    // never reached dispatch, so `sendBusy` cannot wedge on a phantom turn.
+    const discardPendingTurn = () => {
+      setTurns((existing) => existing.filter((turn) => turn.id !== turnId));
+      timelineController.abandonAnchoredTurn(MessageId.make(`overlay:${turnId}:user`));
+      if (routeIdentityRef.current === routeIdentity) {
+        restoreFailedSubmission(pendingSubmission);
+      }
+    };
+
+    try {
+      const attachments = await prepareProjectTurnAttachments({
+        images: sendContext.images,
+        persistedImages: sendContext.persistedImages,
+      });
+      if (attachments === null || routeIdentityRef.current !== routeIdentity) {
+        discardPendingTurn();
+        return;
+      }
+      const submission = { ...pendingSubmission, attachments };
+      setTurns((existing) =>
+        existing.map((turn) => (turn.id === turnId ? { ...turn, attachments } : turn)),
+      );
+      const dispatched = await sendPrompt(submission, {
+        existingTurnId: turnId,
+        restoreDraftOnFailure: true,
+        reserved: true,
+      });
+      if (!dispatched) {
+        // e.g. the conversation was archived while attachments were preparing.
+        discardPendingTurn();
+      }
+    } finally {
+      releaseProjectConversationSend(sendInFlightRef);
+    }
   };
 
   const retryTurn = (localTurnId: string) => {

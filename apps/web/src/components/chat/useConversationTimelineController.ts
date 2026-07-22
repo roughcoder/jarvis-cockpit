@@ -35,6 +35,7 @@ export interface ConversationTimelineController {
   readonly showScrollToBottom: boolean;
   readonly expandedImage: ExpandedImagePreview | null;
   readonly beginAnchoredTurn: (messageId: MessageId) => void;
+  readonly abandonAnchoredTurn: (messageId: MessageId) => void;
   readonly scrollToEnd: (animated?: boolean) => void;
   readonly onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
   readonly onAnchorSizeChanged: (messageId: MessageId, size: number) => void;
@@ -218,6 +219,30 @@ export function useConversationTimelineController({
       setAnchor({ conversationKey, messageId });
     },
     [clearAnchorPositioning, conversationKey],
+  );
+
+  /** Discards an anchored turn whose optimistic timeline entry was removed
+   * before rendering (e.g. attachment preparation failed). Restores
+   * following-end scrolling so the anchor never dangles on a missing row. */
+  const abandonAnchoredTurn = useCallback(
+    (messageId: MessageId) => {
+      if (anchor.conversationKey !== conversationKey || anchor.messageId !== messageId) return;
+      clearAnchorPositioning();
+      if (anchorScrollRestoreFrameRef.current !== null) {
+        cancelAnimationFrame(anchorScrollRestoreFrameRef.current);
+        anchorScrollRestoreFrameRef.current = null;
+      }
+      isAtEndRef.current = true;
+      timelineScrollModeRef.current = "following-end";
+      liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+      pendingTimelineAnchorRef.current = null;
+      positionedTimelineAnchorRef.current = null;
+      settledTimelineAnchorRef.current = null;
+      activeTimelineAnchorIndexRef.current = null;
+      pendingAnchorScrollRestoreRef.current = null;
+      setAnchor({ conversationKey, messageId: null });
+    },
+    [anchor, clearAnchorPositioning, conversationKey],
   );
 
   useEffect(() => {
@@ -460,6 +485,7 @@ export function useConversationTimelineController({
     showScrollToBottom,
     expandedImage,
     beginAnchoredTurn,
+    abandonAnchoredTurn,
     scrollToEnd,
     onAnchorReady,
     onAnchorSizeChanged,

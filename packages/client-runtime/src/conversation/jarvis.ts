@@ -359,7 +359,7 @@ function projectItems(
     });
   });
 
-  return items.sort(compareProjectedItems);
+  return sortProjectedItems(items);
 }
 
 /** Bounded compatibility presentation for known generated orchestration prompts. */
@@ -401,14 +401,56 @@ function compareOrderedMessages(
   return left.sourceIndex - right.sourceIndex;
 }
 
-function compareProjectedItems(left: ProjectedItem, right: ProjectedItem): number {
-  const leftTurnId = projectedItemTurnId(left);
-  const rightTurnId = projectedItemTurnId(right);
-  if (leftTurnId !== null && leftTurnId === rightTurnId) {
+interface ProjectedTurnOrder {
+  readonly observedAt: string;
+  readonly sourceIndex: number;
+  readonly anchoredByUser: boolean;
+}
+
+function sortProjectedItems(items: ProjectedItem[]): ProjectedItem[] {
+  const turnOrder = new Map<string, ProjectedTurnOrder>();
+  for (const item of items) {
+    const turnId = projectedItemTurnId(item);
+    if (turnId === null) continue;
+    const anchoredByUser = item.message?.role === "user";
+    const current = turnOrder.get(turnId);
+    if (
+      current === undefined ||
+      (anchoredByUser && !current.anchoredByUser) ||
+      (anchoredByUser === current.anchoredByUser &&
+        (item.observedAt.localeCompare(current.observedAt) < 0 ||
+          (item.observedAt === current.observedAt && item.sourceIndex < current.sourceIndex)))
+    ) {
+      turnOrder.set(turnId, {
+        observedAt: item.observedAt,
+        sourceIndex: item.sourceIndex,
+        anchoredByUser,
+      });
+    }
+  }
+
+  return items.sort((left, right) => {
+    const leftTurnId = projectedItemTurnId(left);
+    const rightTurnId = projectedItemTurnId(right);
+    const leftGroup = leftTurnId === null ? null : turnOrder.get(leftTurnId);
+    const rightGroup = rightTurnId === null ? null : turnOrder.get(rightTurnId);
+    const groupObserved = (leftGroup?.observedAt ?? left.observedAt).localeCompare(
+      rightGroup?.observedAt ?? right.observedAt,
+    );
+    if (groupObserved !== 0) return groupObserved;
+    const groupSource =
+      (leftGroup?.sourceIndex ?? left.sourceIndex) - (rightGroup?.sourceIndex ?? right.sourceIndex);
+    if (groupSource !== 0) return groupSource;
+    if (leftTurnId !== rightTurnId) {
+      const groupIdentity = (leftTurnId ?? projectedItemId(left)).localeCompare(
+        rightTurnId ?? projectedItemId(right),
+      );
+      if (groupIdentity !== 0) return groupIdentity;
+    }
     const rank = projectedItemTurnRank(left) - projectedItemTurnRank(right);
     if (rank !== 0) return rank;
-  }
-  return left.observedAt.localeCompare(right.observedAt) || left.sourceIndex - right.sourceIndex;
+    return left.observedAt.localeCompare(right.observedAt) || left.sourceIndex - right.sourceIndex;
+  });
 }
 
 function projectedItemTurnId(item: ProjectedItem): string | null {
@@ -420,6 +462,10 @@ function projectedItemTurnRank(item: ProjectedItem): number {
   if (item.activity) return 1;
   if (item.message?.role === "assistant") return 2;
   return 1;
+}
+
+function projectedItemId(item: ProjectedItem): string {
+  return item.message?.id ?? item.activity?.id ?? String(item.sourceIndex);
 }
 
 function projectActivityFrame(
@@ -533,7 +579,9 @@ function projectActivityFrame(
   }
 
   if (isReasoningEvent(message.type)) {
-    const completed = message.type === "reasoning.completed";
+    const fallbackStatus = isReasoningCompletionEvent(message.type) ? "completed" : "running";
+    const status = activityStatus(message.phase, message.status, fallbackStatus);
+    const completed = terminalStatus(status);
     const correlation = clean(message.message_id) ?? clean(message.correlation_id) ?? replayKey;
     return {
       groupKey: `reasoning:${messageTurnId(message) ?? "unknown"}:${correlation}`,
@@ -542,7 +590,7 @@ function projectActivityFrame(
       replayKey,
       family: "reasoning",
       kind: completed ? "reasoning.completed" : "reasoning.running",
-      status: completed ? "completed" : "running",
+      status,
       title: "Thinking",
       summary: eventDetail(message),
       toolName: null,
@@ -723,6 +771,8 @@ function activityStatus(
         break;
       case "completed":
       case "succeeded":
+      case "complete":
+      case "done":
         next = "completed";
         break;
       case "failed":
@@ -933,15 +983,23 @@ function messageTurnId(message: JarvisConversationMessage): string | null {
 }
 
 function eventDetail(message: JarvisConversationMessage): string | null {
+  const preserveIncrementalWhitespace =
+    normalizedEventType(message.type)?.endsWith(".delta") === true;
   for (const key of ["text", "delta", "summary", "detail", "content", "output"] as const) {
     const value = message.data?.[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "string") {
+      const preserveRaw = preserveIncrementalWhitespace || key === "delta";
+      // Whitespace-only tokens are meaningful for incremental deltas (word
+      // separators, paragraph breaks) — only require non-empty, not non-blank.
+      if (preserveRaw ? value.length > 0 : value.trim().length > 0) {
+        return preserveRaw ? value : value.trim();
+      }
+    }
     if (Array.isArray(value)) {
-      const text = value
-        .filter((item): item is string => typeof item === "string")
-        .join("\n")
-        .trim();
-      if (text) return text;
+      const text = value.filter((item): item is string => typeof item === "string").join("\n");
+      if (preserveIncrementalWhitespace ? text.length > 0 : text.trim().length > 0) {
+        return preserveIncrementalWhitespace ? text : text.trim();
+      }
     }
   }
   return clean(message.content);
@@ -1197,14 +1255,26 @@ function readDataString(message: JarvisConversationMessage, key: string): string
   return typeof value === "string" ? clean(value) : null;
 }
 
+function normalizedEventType(type: string | null | undefined): string | null {
+  return clean(type)?.toLowerCase() ?? null;
+}
+
 function isReasoningEvent(type: string | null | undefined): boolean {
+  const normalized = normalizedEventType(type);
   return (
-    type === "reasoning.delta" ||
-    type === "reasoning.completed" ||
-    type === "reasoning" ||
-    type === "thinking" ||
-    type === "analysis"
+    normalized === "reasoning.delta" ||
+    normalized === "reasoning.completed" ||
+    normalized === "reasoning" ||
+    normalized === "assistant.reasoning" ||
+    normalized?.startsWith("assistant.reasoning.") === true ||
+    normalized === "thinking" ||
+    normalized === "analysis"
   );
+}
+
+function isReasoningCompletionEvent(type: string | null | undefined): boolean {
+  const normalized = normalizedEventType(type);
+  return normalized?.endsWith(".completed") === true || normalized?.endsWith(".done") === true;
 }
 
 function isCommentaryEvent(type: string | null | undefined): boolean {

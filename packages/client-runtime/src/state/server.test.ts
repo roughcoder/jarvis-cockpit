@@ -1,4 +1,5 @@
 import {
+  EnvironmentId,
   JarvisProjectId,
   JarvisProjectThreadId,
   type JarvisProjectThreadDetail,
@@ -17,6 +18,7 @@ import {
   applyJarvisProjectThreadTurnStreamItem,
   applyServerConfigProjection,
   createServerEnvironmentAtoms,
+  jarvisProjectThreadTurnStreamIdentity,
   projectServerWelcome,
 } from "./server.ts";
 
@@ -49,6 +51,19 @@ const THREAD: JarvisProjectThreadDetail = {
 };
 
 describe("server state projection", () => {
+  it("keeps large project-turn payloads out of stream atom identity", () => {
+    const identity = jarvisProjectThreadTurnStreamIdentity({
+      environmentId: EnvironmentId.make("environment-1"),
+      projectId: "project-1",
+      threadId: "thread-1",
+      idempotencyKey: "turn-key-1",
+    });
+
+    expect(identity).toBe("environment-1:project-1:thread-1:turn-key-1");
+    expect(identity).not.toContain("private prompt");
+    expect(identity).not.toContain("private-image-payload");
+  });
+
   it("exposes environment-scoped project conversation control commands", () => {
     const runtime = Atom.runtime(Layer.empty) as unknown as Atom.AtomRuntime<
       EnvironmentRegistry,

@@ -1021,6 +1021,29 @@ function projectThreadTurnError(frame: JarvisSseFrame): string | null {
     : "Jarvis reported that the project conversation turn failed.";
 }
 
+/** Turn-level terminal event names. Bounded and exact so item-level
+ * completions (e.g. `thread.item.completed`) never end the turn early. */
+const PROJECT_THREAD_TURN_TERMINAL_EVENTS: ReadonlySet<string> = new Set([
+  "thread.turn.done",
+  "thread.turn.completed",
+  "turn.done",
+  "turn.completed",
+  "thread.done",
+  "thread.completed",
+  "response.done",
+  "response.completed",
+]);
+
+function isProjectThreadTurnComplete(frame: JarvisSseFrame): boolean {
+  const dataType =
+    isRecord(frame.data) && typeof frame.data.type === "string" ? frame.data.type : null;
+  return (
+    (typeof frame.event === "string" &&
+      PROJECT_THREAD_TURN_TERMINAL_EVENTS.has(frame.event.toLowerCase())) ||
+    (dataType !== null && PROJECT_THREAD_TURN_TERMINAL_EVENTS.has(dataType.toLowerCase()))
+  );
+}
+
 const JARVIS_PROJECT_TURN_EVENT_LIMIT = 512;
 
 function projectThreadTurnPayload(frame: JarvisSseFrame): Schema.Json {
@@ -1064,13 +1087,33 @@ async function* parseJarvisProjectThreadTurnSse(
       const reply = projectThreadTurnText(frame, "reply");
       if (reply !== null) replyParts.push(reply);
     }
+    if (isProjectThreadTurnComplete(frame)) {
+      yield {
+        kind: "completed",
+        result: {
+          ok: true,
+          text: replyParts.length > 0 ? replyParts.join("") : deltaParts.join(""),
+          events,
+        },
+      };
+      return;
+    }
   }
+  const lastEvent = events.at(-1);
+  const lastEventType =
+    lastEvent && isRecord(lastEvent.data) && typeof lastEvent.data.type === "string"
+      ? lastEvent.data.type
+      : lastEvent && typeof lastEvent.event === "string"
+        ? lastEvent.event
+        : null;
+  const evidence =
+    events.length === 0
+      ? "received no event frames"
+      : `received ${events.length} event frame${events.length === 1 ? "" : "s"}${lastEventType === null ? "" : `; last event: ${lastEventType}`}`;
   yield {
-    kind: "completed",
-    result: {
-      ok: true,
-      text: replyParts.length > 0 ? replyParts.join("") : deltaParts.join(""),
-      events,
+    kind: "failed",
+    error: {
+      message: `Jarvis project turn stream ended before thread.turn.done was received (${evidence}).`,
     },
   };
 }
