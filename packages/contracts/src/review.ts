@@ -50,3 +50,6 @@ export const PrReviewDimensionId = Schema.Literals([
   "style",
 ]);
 export type PrReviewDimensionId = typeof PrReviewDimensionId.Type;
+
+export const PrReviewAccessMode = Schema.Literals(["read_only", "interactive", "full_trust"]);
+export type PrReviewAccessMode = typeof PrReviewAccessMode.Type;

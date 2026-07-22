@@ -1,4 +1,4 @@
-import type { JarvisWorkerProfile, ServerProvider } from "@t3tools/contracts";
+import type { JarvisWorkerProfile, PrReviewAccessMode, ServerProvider } from "@t3tools/contracts";
 
 import {
   workerCanStartRepo,
@@ -13,6 +13,32 @@ import {
 export { deriveOrchestratorOptions, resolveOrchestratorKey } from "../orchestratorModelOptions";
 
 export type ReviewerOption = CodeAgentModelOption;
+
+export const PR_REVIEW_ACCESS_OPTIONS: ReadonlyArray<{
+  readonly id: PrReviewAccessMode;
+  readonly label: string;
+  readonly description: string;
+}> = [
+  {
+    id: "read_only",
+    label: "Read only",
+    description: "Allow inspection and bounded read commands only.",
+  },
+  {
+    id: "interactive",
+    label: "Interactive",
+    description: "Ask in Cockpit before commands or file changes.",
+  },
+  {
+    id: "full_trust",
+    label: "Full trust",
+    description: "Allow commands and file changes without prompts.",
+  },
+];
+
+export function isPrReviewAccessMode(value: string): value is PrReviewAccessMode {
+  return PR_REVIEW_ACCESS_OPTIONS.some((option) => option.id === value);
+}
 
 const DEFAULT_REVIEWER_MODELS = [
   { engine: "claude", model: "claude-opus-4-7" },

@@ -23,6 +23,7 @@ describe("buildPrReviewOrchestratorPrompt", () => {
         },
       ],
       workerId: "review-worker",
+      accessMode: "full_trust",
       post: true,
     });
     expect(prompt).toContain("pull request #42 in acme/widgets");
@@ -34,6 +35,7 @@ describe("buildPrReviewOrchestratorPrompt", () => {
     expect(prompt).toContain('provider_instance_id="codex"');
     expect(prompt).toContain('model="gpt-5.5"');
     expect(prompt).toContain('worker_id="review-worker"');
+    expect(prompt.match(/`access_mode="full_trust"`/g)).toHaveLength(2);
     expect(prompt.match(/`allow_nested_agents=false`/g)).toHaveLength(2);
     expect(prompt).toContain("CHILD_TASK (pass this exact complete text to each spawn)");
     const childTask = prompt.match(/<child-task>\n([\s\S]*?)\n<\/child-task>/)?.[1];
@@ -59,9 +61,7 @@ describe("buildPrReviewOrchestratorPrompt", () => {
       "Run exactly `gh pr view 42 --repo acme/widgets --json headRefOid` directly",
     );
     expect(prompt).toContain("run exactly `gh pr diff 42 --repo acme/widgets` directly");
-    expect(prompt).toContain(
-      "do not use redirection, pipes, temporary files, or any filesystem writes",
-    );
+    expect(prompt).not.toContain("The child worker is read-only");
     expect(prompt).toContain("not the checkout's current branch");
     expect(prompt).toContain("1-based line number in the file at the PR head");
     expect(prompt).toContain("not the ordinal line number of `gh pr diff` output");
@@ -159,6 +159,27 @@ describe("buildPrReviewOrchestratorPrompt", () => {
     expect(prompt).toContain("Correctness:");
     expect(prompt).toContain("malformed unless it contains exactly two reviewers");
   });
+
+  it.each(["read_only", "interactive", "full_trust"] as const)(
+    "passes the %s access mode to both child reviewers",
+    (accessMode) => {
+      const prompt = buildPrReviewOrchestratorPrompt({
+        repo: "acme/widgets",
+        prNumber: 7,
+        dimensions: ["correctness"],
+        reviewers: [
+          { providerInstanceId: "claude", engine: "claude", model: "opus", label: "Claude" },
+          { providerInstanceId: "codex", engine: "codex", model: "gpt", label: "Codex" },
+        ],
+        accessMode,
+        post: false,
+      });
+
+      expect(
+        prompt.match(new RegExp(`access_mode=${JSON.stringify(accessMode)}`, "g")),
+      ).toHaveLength(2);
+    },
+  );
 
   it("instructs not to post when post is false and appends extra instructions", () => {
     const prompt = buildPrReviewOrchestratorPrompt({

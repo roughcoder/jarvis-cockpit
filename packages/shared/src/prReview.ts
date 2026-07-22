@@ -1,4 +1,4 @@
-import type { PrReviewDimensionId } from "@t3tools/contracts";
+import type { PrReviewAccessMode, PrReviewDimensionId } from "@t3tools/contracts";
 
 /**
  * Formulaic PR review prompt shared between the cockpit UI (prompt preview) and
@@ -72,6 +72,8 @@ export interface BuildPrReviewOrchestratorPromptInput {
   readonly post: boolean;
   /** Common fleet worker chosen by the cockpit when one can run both reviewers. */
   readonly workerId?: string;
+  /** Tool access granted to both child reviewers. */
+  readonly accessMode?: PrReviewAccessMode;
 }
 
 export interface PrReviewerSelection {
@@ -110,12 +112,13 @@ export function buildPrReviewOrchestratorPrompt(
       reviewer.engine.trim().length > 0 &&
       reviewer.model.trim().length > 0,
   );
+  const accessMode = input.accessMode ?? "full_trust";
 
   const reviewDimensions = selected.map((dimension) => `- ${dimension.promptFragment}`).join("\n");
   const childTask = [
-    `Review PR #${input.prNumber} in ${input.repo} independently and read-only.`,
+    `Review PR #${input.prNumber} in ${input.repo} independently without modifying the repository or external systems.`,
     `Do not call Agent, Task, SendMessage, or Monitor, and do not launch any subagent or background task. Perform the review synchronously in this top-level session and do not end the turn until the complete final report is returned.`,
-    `Run exactly \`gh pr view ${input.prNumber} --repo ${input.repo} --json headRefOid\` directly, record its full non-empty \`headRefOid\`, then run exactly \`gh pr diff ${input.prNumber} --repo ${input.repo}\` directly. The child worker is read-only: do not rewrite either command, and do not use redirection, pipes, temporary files, or any filesystem writes. Review only that fetched diff, not the checkout's current branch. You may inspect surrounding code at that PR head; every finding must be introduced or exposed by the diff.`,
+    `Run exactly \`gh pr view ${input.prNumber} --repo ${input.repo} --json headRefOid\` directly, record its full non-empty \`headRefOid\`, then run exactly \`gh pr diff ${input.prNumber} --repo ${input.repo}\` directly. Review only that fetched diff, not the checkout's current branch. You may inspect surrounding code at that PR head; every finding must be introduced or exposed by the diff.`,
     `Restrict findings to:\n${reviewDimensions}`,
     SEVERITY_RUBRIC,
     `For every finding, \`line\` means the 1-based line number in the file at the PR head: for RIGHT-side comments, track the new-file counter from the nearest \`@@ ... +start,count @@\` hunk header; for LEFT-side comments, track the old-file counter. It is not the ordinal line number of \`gh pr diff\` output, a patch position, or an editor/display offset. Before reporting a finding, verify its path, side, and line against the fetched diff hunk and, for RIGHT-side findings, against the file at \`headRefOid\`. If you cannot verify an inline anchor, label the finding unanchored and omit its line instead of guessing.`,
@@ -132,7 +135,7 @@ export function buildPrReviewOrchestratorPrompt(
           reviewer.providerInstanceId,
         )}\`, \`engine=${JSON.stringify(reviewer.engine)}\`, \`model=${JSON.stringify(
           reviewer.model,
-        )}\`, \`repo=${JSON.stringify(input.repo)}\`${workerRoute}, \`allow_nested_agents=false\`, and set \`task\` to the exact CHILD_TASK below. Do not summarize or rewrite it. Give the child the title ${JSON.stringify(
+        )}\`, \`repo=${JSON.stringify(input.repo)}\`${workerRoute}, \`access_mode=${JSON.stringify(accessMode)}\`, \`allow_nested_agents=false\`, and set \`task\` to the exact CHILD_TASK below. Do not summarize or rewrite it. Give the child the title ${JSON.stringify(
           `${reviewer.label} Review for PR #${input.prNumber}`,
         )}.`,
     )

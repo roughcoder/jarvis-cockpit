@@ -2,6 +2,7 @@ import {
   JarvisProjectId,
   JarvisRoutineId,
   type EnvironmentId,
+  type PrReviewAccessMode,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -17,6 +18,8 @@ import {
   resolveOrchestratorKey,
   selectCommonReviewWorker,
   selectReviewOrchestratorWorker,
+  isPrReviewAccessMode,
+  PR_REVIEW_ACCESS_OPTIONS,
 } from "./PrReviewDialog.logic";
 import { useEnvironmentSettings } from "../hooks/useSettings";
 import {
@@ -91,6 +94,7 @@ export function PrReviewDialog({
   );
   const [extraInstructions, setExtraInstructions] = useState("");
   const [post, setPost] = useState(true);
+  const [accessMode, setAccessMode] = useState<PrReviewAccessMode>("full_trust");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const attemptId = useId();
@@ -154,11 +158,12 @@ export function PrReviewDialog({
         prNumber,
         dimensions: dimensions.map((dimension) => dimension.id),
         reviewers,
+        accessMode,
         ...(workerId ? { workerId } : {}),
         ...(extraInstructions.trim() ? { extraInstructions } : {}),
         post,
       }),
-    [repo, prNumber, dimensions, reviewers, workerId, extraInstructions, post],
+    [repo, prNumber, dimensions, reviewers, workerId, accessMode, extraInstructions, post],
   );
 
   const toggle = (
@@ -221,6 +226,7 @@ export function PrReviewDialog({
                 model: reviewer.model,
               })),
               dimensions: dimensions.map((dimension) => dimension.id),
+              access_mode: accessMode,
               extra_instructions: extraInstructions.trim(),
               post_comments: post,
             },
@@ -352,6 +358,36 @@ export function PrReviewDialog({
                 the parent orchestrator.
               </p>
             ) : null}
+          </section>
+
+          <section className="space-y-2">
+            <h3 className="text-xs font-semibold uppercase text-muted-foreground">Access</h3>
+            <Select
+              value={accessMode}
+              onValueChange={(value) => {
+                if (value && isPrReviewAccessMode(value)) setAccessMode(value);
+              }}
+            >
+              <SelectTrigger className="w-full" aria-label="Child reviewer access">
+                <SelectValue>
+                  {PR_REVIEW_ACCESS_OPTIONS.find((option) => option.id === accessMode)?.label}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="start" alignItemWithTrigger={false}>
+                {PR_REVIEW_ACCESS_OPTIONS.map((option) => (
+                  <SelectItem key={option.id} value={option.id}>
+                    <span className="flex flex-col py-1">
+                      <span className="font-medium text-foreground">{option.label}</span>
+                      <span className="text-xs text-muted-foreground">{option.description}</span>
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Applies to both child reviewers. Their review task still forbids edits, pushes,
+              merges, releases, and publishing.
+            </p>
           </section>
 
           <section className="space-y-2">
