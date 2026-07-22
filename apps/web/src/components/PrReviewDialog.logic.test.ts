@@ -14,7 +14,21 @@ import {
   resolveOrchestratorKey,
   selectCommonReviewWorker,
   selectReviewOrchestratorWorker,
+  isPrReviewAccessMode,
+  PR_REVIEW_ACCESS_OPTIONS,
 } from "./PrReviewDialog.logic";
+
+describe("PR review access modes", () => {
+  it("offers the three runtime policies and rejects unknown wire values", () => {
+    expect(PR_REVIEW_ACCESS_OPTIONS.map((option) => option.id)).toEqual([
+      "read_only",
+      "interactive",
+      "full_trust",
+    ]);
+    expect(isPrReviewAccessMode("full_trust")).toBe(true);
+    expect(isPrReviewAccessMode("full-access")).toBe(false);
+  });
+});
 
 function provider(input: {
   readonly instanceId: string;
