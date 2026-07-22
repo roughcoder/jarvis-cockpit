@@ -30,6 +30,7 @@ export interface ConversationMessage {
   readonly role: ConversationMessageRole;
   readonly content: string;
   readonly authorId: string | null;
+  readonly turnId?: string | null;
   readonly observedAt: string;
   readonly presentation?: ConversationMessagePresentation;
 }
@@ -42,6 +43,17 @@ export type ConversationActivityStatus =
   | "failed"
   | "cancelled";
 
+/** Optional structured data that lets shared presentation retain provider tool fidelity. */
+export interface ConversationActivityPresentation {
+  readonly command?: string;
+  readonly rawCommand?: string;
+  readonly changedFiles?: ReadonlyArray<string>;
+  readonly toolTitle?: string;
+  readonly toolData?: unknown;
+  /** Kept open-ended so future provider item types do not invalidate conversation history. */
+  readonly itemType?: string;
+}
+
 export interface ConversationActivity {
   readonly id: string;
   readonly conversationId: string;
@@ -51,10 +63,12 @@ export interface ConversationActivity {
   readonly summary: string | null;
   readonly toolName: string | null;
   readonly correlationId: string;
+  readonly turnId?: string | null;
   readonly relatedConversationIds: ReadonlyArray<string>;
   readonly startedAt: string;
   readonly completedAt: string | null;
   readonly error: string | null;
+  readonly presentation?: ConversationActivityPresentation;
 }
 
 export type ConversationTimelineItem =

@@ -8,6 +8,7 @@ import {
   projectConversationPinKeyPrefix,
   projectConversationTreeItems,
   projectConversationTreeDescendants,
+  resolveProjectConversationNavigationTarget,
   pinnedProjectConversationTreeRoots,
   workerSessionThreadId,
 } from "./projectConversationTree.logic";
@@ -124,7 +125,7 @@ describe("projectConversationTreeItems", () => {
     });
   });
 
-  it("excludes other-project, archived, and already represented sessions", () => {
+  it("excludes other-project, archived, unrouteable, and already represented sessions", () => {
     const thread = projectThread();
     const items = projectConversationTreeItems({
       projectId: "cockpit",
@@ -132,6 +133,7 @@ describe("projectConversationTreeItems", () => {
       workerSessions: [
         workerSession({ project_id: "runtime" }),
         workerSession({ archived_at: "2026-07-11T11:00:00.000Z" }),
+        workerSession({ session_ref: "sessref_unlinked", session_id: "unlinked", run_id: null }),
         workerSession({ session_id: thread.session_id }),
       ],
       includeArchived: false,
@@ -165,6 +167,45 @@ describe("projectConversationTreeItems", () => {
     expect(tree).toHaveLength(2);
     expect(tree[1]?.conversation.kind).toBe("worker-session");
     expect(tree[1]?.children).toHaveLength(0);
+  });
+});
+
+describe("resolveProjectConversationNavigationTarget", () => {
+  it("resolves durable child conversations and projected worker sessions", () => {
+    const thread = projectThread();
+    const session = workerSession();
+
+    expect(
+      resolveProjectConversationNavigationTarget({
+        targetId: thread.thread_id,
+        projectThreads: [thread],
+        workerSessions: [session],
+      }),
+    ).toEqual({ availability: "resolvable", kind: "project-thread", threadId: "review-42" });
+    expect(
+      resolveProjectConversationNavigationTarget({
+        targetId: session.session_id,
+        projectThreads: [thread],
+        workerSessions: [session],
+      }),
+    ).toEqual({
+      availability: "resolvable",
+      kind: "worker-session",
+      threadId: workerSessionThreadId(session.session_ref),
+    });
+  });
+
+  it("marks opaque child ids explicitly unavailable instead of creating a blank route", () => {
+    expect(
+      resolveProjectConversationNavigationTarget({
+        targetId: "private-child",
+        projectThreads: [],
+        workerSessions: [],
+      }),
+    ).toEqual({
+      availability: "unavailable",
+      reason: "This child has not published a navigable conversation yet.",
+    });
   });
 });
 

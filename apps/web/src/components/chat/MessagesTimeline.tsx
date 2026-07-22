@@ -136,6 +136,7 @@ interface TimelineRowSharedState {
   onToggleTurnFold: (turnId: TurnId) => void;
   onToggleWorkGroup: (groupId: string, anchorElement?: HTMLElement) => void;
   onRecoveryAction: (actionId: string) => void;
+  onOpenConversationTarget: (targetId: string) => void;
   recoveryActionsDisabled: boolean;
 }
 
@@ -183,6 +184,7 @@ interface MessagesTimelineProps {
   onIsAtEndChange: (isAtEnd: boolean) => void;
   onManualNavigation: () => void;
   onRecoveryAction?: (actionId: string) => void;
+  onOpenConversationTarget?: (targetId: string) => void;
   recoveryActionsDisabled?: boolean;
 }
 
@@ -218,6 +220,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onIsAtEndChange,
   onManualNavigation,
   onRecoveryAction = NOOP_RECOVERY_ACTION,
+  onOpenConversationTarget = NOOP_RECOVERY_ACTION,
   recoveryActionsDisabled = false,
 }: MessagesTimelineProps) {
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
@@ -307,6 +310,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         expandedTurnIds,
         expandedWorkGroupIds,
         isWorking,
+        activeTurnInProgress,
         activeTurnStartedAt,
         turnDiffSummaryByAssistantMessageId,
         revertTurnCountByUserMessageId,
@@ -318,6 +322,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       expandedTurnIds,
       expandedWorkGroupIds,
       isWorking,
+      activeTurnInProgress,
       activeTurnStartedAt,
       turnDiffSummaryByAssistantMessageId,
       revertTurnCountByUserMessageId,
@@ -429,6 +434,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleTurnFold,
       onToggleWorkGroup,
       onRecoveryAction,
+      onOpenConversationTarget,
       recoveryActionsDisabled,
     }),
     [
@@ -445,6 +451,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleTurnFold,
       onToggleWorkGroup,
       onRecoveryAction,
+      onOpenConversationTarget,
       recoveryActionsDisabled,
     ],
   );
@@ -1952,6 +1959,31 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           <RotateCcwIcon className="size-3.5" />
           {workEntry.recoveryAction.label}
         </Button>
+      ) : null}
+      {workEntry.conversationTargets && workEntry.conversationTargets.length > 0 ? (
+        <div className="ms-6 mt-1 flex flex-wrap gap-1.5">
+          {workEntry.conversationTargets.map((target) =>
+            target.availability === "resolvable" ? (
+              <Button
+                key={target.id}
+                type="button"
+                size="xs"
+                variant="outline"
+                onClick={() => timeline.onOpenConversationTarget(target.id)}
+              >
+                {target.label}
+              </Button>
+            ) : (
+              <span
+                key={target.id}
+                className="rounded-md border border-border/60 px-2 py-1 text-[11px] text-muted-foreground"
+                title={target.unavailableReason ?? "Child conversation is not available yet."}
+              >
+                {target.label} unavailable
+              </span>
+            ),
+          )}
+        </div>
       ) : null}
     </div>
   );

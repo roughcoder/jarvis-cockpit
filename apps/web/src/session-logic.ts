@@ -68,6 +68,13 @@ export interface WorkLogEntry {
     readonly id: string;
     readonly label: string;
   };
+  /** Child/related conversations disclosed without leaking opaque ids into visible copy. */
+  conversationTargets?: ReadonlyArray<{
+    readonly id: string;
+    readonly label: string;
+    readonly availability: "resolvable" | "pending" | "unavailable";
+    readonly unavailableReason: string | null;
+  }>;
 }
 
 export function workLogEntryIsSemanticActivity(entry: WorkLogEntry): boolean {

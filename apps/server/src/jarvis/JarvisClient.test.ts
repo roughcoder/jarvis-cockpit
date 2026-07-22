@@ -5,9 +5,12 @@ import {
   JarvisProjectId,
   JarvisRequestId,
   JarvisRoutineId,
+  type JarvisProjectThreadTurnStreamItem,
   JarvisWorkerId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import {
@@ -1445,6 +1448,103 @@ it.effect("cockpit client incrementally reads authenticated SSE frames", () =>
         authorization: "Bearer worker-token",
       },
     ]);
+  }),
+);
+
+it.effect("project thread turns emit SSE frames before the response body closes", () =>
+  Effect.gen(function* () {
+    let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        bodyController = controller;
+      },
+    });
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async () => new Response(body, { headers: { "content-type": "text/event-stream" } }),
+    });
+    const received = yield* Queue.unbounded<JarvisProjectThreadTurnStreamItem>();
+    const fiber = yield* client
+      .streamProjectThreadTurn("dogfood", "thread-1", {
+        text: "What changed?",
+        idempotency_key: "turn-stream-1",
+      })
+      .pipe(
+        Stream.runForEach((item) => Queue.offer(received, item)),
+        Effect.forkChild,
+      );
+
+    bodyController!.enqueue(
+      new TextEncoder().encode(
+        'id: turn-1\nevent: tool.call\ndata: {"cursor":"turn-1","type":"tool.call","payload":{"message_id":"tool-1","data":{"item":{"id":"tool-1","name":"search"}}}}\n\n',
+      ),
+    );
+    assert.deepStrictEqual(yield* Queue.take(received), {
+      kind: "event",
+      event: {
+        event: "tool.call",
+        data: {
+          cursor: "turn-1",
+          type: "tool.call",
+          payload: { message_id: "tool-1", data: { item: { id: "tool-1", name: "search" } } },
+        },
+        id: "turn-1",
+      },
+    });
+
+    bodyController!.enqueue(
+      new TextEncoder().encode(
+        'id: turn-1\nevent: thread.delta\ndata: {"cursor":"turn-1","type":"thread.delta","payload":{"delta":"Project "}}\n\nid: turn-1\nevent: thread.delta\ndata: {"cursor":"turn-1","type":"thread.delta","payload":{"delta":"reply"}}\n\nid: turn-1\nevent: thread.reply\ndata: {"cursor":"turn-1","type":"thread.reply","payload":{"reply":"Project reply"}}\n\nid: turn-1\nevent: thread.turn.done\ndata: {"cursor":"turn-1","type":"thread.turn.done","payload":{"reply":"Project reply"}}\n\n',
+      ),
+    );
+    bodyController!.close();
+    assert.deepStrictEqual(yield* Queue.take(received), {
+      kind: "event",
+      event: {
+        event: "thread.delta",
+        data: { cursor: "turn-1", type: "thread.delta", payload: { delta: "Project " } },
+        id: "turn-1",
+      },
+    });
+    assert.deepStrictEqual(yield* Queue.take(received), {
+      kind: "event",
+      event: {
+        event: "thread.delta",
+        data: { cursor: "turn-1", type: "thread.delta", payload: { delta: "reply" } },
+        id: "turn-1",
+      },
+    });
+    assert.deepStrictEqual(yield* Queue.take(received), {
+      kind: "event",
+      event: {
+        event: "thread.reply",
+        data: {
+          cursor: "turn-1",
+          type: "thread.reply",
+          payload: { reply: "Project reply" },
+        },
+        id: "turn-1",
+      },
+    });
+    assert.deepStrictEqual(yield* Queue.take(received), {
+      kind: "event",
+      event: {
+        event: "thread.turn.done",
+        data: {
+          cursor: "turn-1",
+          type: "thread.turn.done",
+          payload: { reply: "Project reply" },
+        },
+        id: "turn-1",
+      },
+    });
+    const completed = yield* Queue.take(received);
+    assert.strictEqual(completed.kind, "completed");
+    if (completed.kind === "completed") {
+      assert.strictEqual(completed.result.text, "Project reply");
+      assert.strictEqual(completed.result.events.length, 5);
+    }
+    yield* Fiber.join(fiber);
   }),
 );
 

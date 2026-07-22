@@ -68,6 +68,34 @@ describe("project conversation timeline overlay", () => {
     expect(JSON.stringify(turns)).not.toContain("private-call-id");
   });
 
+  it("maps streamed reasoning and actions into visible work entries", () => {
+    const turns = projectConversationTimelineOverlayTurns([
+      localTurn({
+        status: "streaming",
+        toolItems: [
+          {
+            kind: "activity",
+            id: "activity:reasoning-1",
+            activity: {
+              title: "Thinking",
+              detail: "Inspecting the event flow",
+              status: "running",
+            },
+          },
+        ],
+      }),
+    ]);
+
+    expect(turns[0]?.activities).toEqual([
+      {
+        id: "activity:reasoning-1",
+        title: "Thinking",
+        detail: "Inspecting the event flow",
+        status: "running",
+      },
+    ]);
+  });
+
   it("dedupes the projected tool against its durable adapter lifecycle activity", () => {
     const overlayTurns = projectConversationTimelineOverlayTurns([
       localTurn({

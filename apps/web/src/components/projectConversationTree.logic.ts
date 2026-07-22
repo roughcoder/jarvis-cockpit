@@ -40,6 +40,22 @@ export type ProjectConversationArchiveTarget =
       readonly sessionRef: string;
     };
 
+export type ProjectConversationNavigationTarget =
+  | {
+      readonly availability: "resolvable";
+      readonly kind: "project-thread";
+      readonly threadId: string;
+    }
+  | {
+      readonly availability: "resolvable";
+      readonly kind: "worker-session";
+      readonly threadId: string;
+    }
+  | {
+      readonly availability: "unavailable";
+      readonly reason: string;
+    };
+
 function metadataString(metadata: Readonly<Record<string, unknown>>, key: string): string | null {
   const value = metadata[key];
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
@@ -58,6 +74,44 @@ function sessionField(
 
 export function workerSessionThreadId(sessionRef: string): string {
   return `${JARVIS_THREAD_ID_PREFIX}${sessionRef}`;
+}
+
+/** Resolves an opaque child id against the current durable/projected conversation catalog. */
+export function resolveProjectConversationNavigationTarget(input: {
+  readonly targetId: string;
+  readonly projectThreads: ReadonlyArray<JarvisProjectThread>;
+  readonly workerSessions: ReadonlyArray<JarvisWorkerSession>;
+}): ProjectConversationNavigationTarget {
+  const projectThread = input.projectThreads.find(
+    (thread) => thread.thread_id === input.targetId || thread.session_id === input.targetId,
+  );
+  if (projectThread) {
+    return {
+      availability: "resolvable",
+      kind: "project-thread",
+      threadId: projectThread.thread_id,
+    };
+  }
+
+  const workerSession = input.workerSessions.find(
+    (session) =>
+      session.session_ref === input.targetId ||
+      session.session_id === input.targetId ||
+      session.run_id === input.targetId ||
+      workerSessionThreadId(session.session_ref) === input.targetId,
+  );
+  if (workerSession) {
+    return {
+      availability: "resolvable",
+      kind: "worker-session",
+      threadId: workerSessionThreadId(workerSession.session_ref),
+    };
+  }
+
+  return {
+    availability: "unavailable",
+    reason: "This child has not published a navigable conversation yet.",
+  };
 }
 
 export function projectConversationPinKeyPrefix(environmentId: string, projectId: string): string {
@@ -169,6 +223,7 @@ export function projectConversationTreeItems(input: {
     const threadId = workerSessionThreadId(session.session_ref);
     if (
       projectId !== input.projectId ||
+      session.run_id === null ||
       representedSessionIds.has(session.session_id) ||
       representedThreadIds.has(threadId) ||
       (!input.includeArchived && session.archived_at != null)

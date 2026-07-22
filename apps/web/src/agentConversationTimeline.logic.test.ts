@@ -70,6 +70,35 @@ describe("agentConversationTimelineEntries", () => {
     ]);
   });
 
+  it("gives child watches useful disclosure content", () => {
+    const base = buildConversation();
+    const entries = agentConversationTimelineEntries(
+      buildConversation({
+        activities: [
+          {
+            ...base.activities[0]!,
+            kind: "children.waiting",
+            status: "waiting",
+            title: "Waiting for 2 child conversations",
+            summary: null,
+            toolName: null,
+            relatedConversationIds: ["private-child-a", "private-child-b"],
+            completedAt: null,
+          },
+        ],
+        timeline: [{ kind: "activity", id: "activity-1", observedAt: AT }],
+      }),
+    );
+
+    expect(entries[0]).toMatchObject({
+      kind: "work",
+      entry: {
+        label: "Waiting for 2 child conversations",
+        detail: "Child conversation 1\nChild conversation 2",
+      },
+    });
+  });
+
   it.each([
     ["requested", "inProgress", "tool"],
     ["running", "inProgress", "tool"],
@@ -85,6 +114,65 @@ describe("agentConversationTimelineEntries", () => {
     expect(agentConversationTimelineEntries(conversation)[0]).toMatchObject({
       kind: "work",
       entry: { toolLifecycleStatus: lifecycle, semanticActivityStatus: status, tone },
+    });
+  });
+
+  it("projects structured activity presentation into shared work-log fields", () => {
+    const baseActivity = buildConversation().activities[0]!;
+    const conversation = buildConversation({
+      activities: [
+        {
+          ...baseActivity,
+          presentation: {
+            command: "pnpm exec vp test",
+            rawCommand: "bash -lc 'pnpm exec vp test'",
+            changedFiles: ["src/first.ts", "src/second.ts"],
+            toolTitle: "Terminal",
+            toolData: { name: "exec_command", input: { command: "pnpm exec vp test" } },
+            itemType: "command_execution",
+          },
+        },
+      ],
+      timeline: [{ kind: "activity", id: baseActivity.id, observedAt: AT }],
+    });
+
+    expect(agentConversationTimelineEntries(conversation)[0]).toMatchObject({
+      kind: "work",
+      entry: {
+        command: "pnpm exec vp test",
+        rawCommand: "bash -lc 'pnpm exec vp test'",
+        changedFiles: ["src/first.ts", "src/second.ts"],
+        toolTitle: "Terminal",
+        toolData: { name: "exec_command", input: { command: "pnpm exec vp test" } },
+        itemType: "command_execution",
+      },
+    });
+  });
+
+  it("retains future activity item types in the universal model without leaking them into strict rows", () => {
+    const baseActivity = buildConversation().activities[0]!;
+    const conversation = buildConversation({
+      activities: [
+        {
+          ...baseActivity,
+          presentation: {
+            toolTitle: "Future tool",
+            toolData: { value: 42 },
+            itemType: "future_tool_type",
+          },
+        },
+      ],
+      timeline: [{ kind: "activity", id: baseActivity.id, observedAt: AT }],
+    });
+
+    expect(conversation.activities[0]?.presentation?.itemType).toBe("future_tool_type");
+    expect(agentConversationTimelineEntries(conversation)[0]).toMatchObject({
+      kind: "work",
+      entry: { toolTitle: "Future tool", toolData: { value: 42 } },
+    });
+    expect(agentConversationTimelineEntries(conversation)[0]).not.toMatchObject({
+      kind: "work",
+      entry: { itemType: "future_tool_type" },
     });
   });
 
@@ -138,6 +226,175 @@ describe("agentConversationTimelineEntries", () => {
         row.kind === "work" ? row.groupedEntries.map((entry) => entry.semanticActivityStatus) : [],
       ),
     ).toEqual(["requested", "waiting", "cancelled"]);
+  });
+
+  it("projects messages, reasoning, tool lifecycle, waiting, queued, and failure rows in canonical order", () => {
+    const base = buildConversation();
+    const activities: AgentConversation["activities"] = [
+      {
+        ...base.activities[0]!,
+        id: "reasoning-running",
+        kind: "reasoning.running",
+        status: "running",
+        title: "Thinking",
+        summary: "Inspecting the conversation state",
+        toolName: null,
+        completedAt: null,
+      },
+      {
+        ...base.activities[0]!,
+        id: "tool-requested",
+        kind: "tool.requested",
+        status: "requested",
+        title: "Requested search",
+        completedAt: null,
+      },
+      {
+        ...base.activities[0]!,
+        id: "tool-running",
+        kind: "tool.running",
+        status: "running",
+        title: "Searching repository",
+        completedAt: null,
+      },
+      {
+        ...base.activities[0]!,
+        id: "tool-completed",
+        title: "Searched repository",
+      },
+      {
+        ...base.activities[0]!,
+        id: "children-waiting",
+        kind: "children.waiting",
+        status: "waiting",
+        title: "Waiting for 2 child conversations",
+        summary: null,
+        toolName: null,
+        relatedConversationIds: ["child-a", "child-b"],
+        completedAt: null,
+      },
+      {
+        ...base.activities[0]!,
+        id: "turn-queued",
+        kind: "turn.queued",
+        status: "waiting",
+        title: "Turn queued",
+        summary: "Waiting for the active turn to finish.",
+        toolName: null,
+        completedAt: null,
+      },
+      {
+        ...base.activities[0]!,
+        id: "tool-failed",
+        kind: "tool.failed",
+        status: "failed",
+        title: "Search failed",
+        summary: null,
+        error: "Permission denied",
+      },
+    ];
+    const timeline = [
+      { kind: "message" as const, id: "user-1", observedAt: AT },
+      ...activities.map((activity) => ({
+        kind: "activity" as const,
+        id: activity.id,
+        observedAt: activity.startedAt,
+      })),
+      { kind: "message" as const, id: "assistant-1", observedAt: AT },
+    ];
+
+    const entries = agentConversationTimelineEntries(buildConversation({ activities, timeline }));
+
+    expect(entries.map((entry) => entry.id)).toEqual([
+      "message:user-1",
+      "activity:reasoning-running",
+      "activity:tool-requested",
+      "activity:tool-running",
+      "activity:tool-completed",
+      "activity:children-waiting",
+      "activity:turn-queued",
+      "activity:tool-failed",
+      "message:assistant-1",
+    ]);
+    expect(entries).toMatchObject([
+      { kind: "message", message: { role: "user", text: "Question" } },
+      { kind: "work", entry: { tone: "thinking", semanticActivityStatus: "running" } },
+      { kind: "work", entry: { tone: "tool", toolLifecycleStatus: "inProgress" } },
+      { kind: "work", entry: { tone: "tool", toolLifecycleStatus: "inProgress" } },
+      { kind: "work", entry: { tone: "tool", toolLifecycleStatus: "completed" } },
+      {
+        kind: "work",
+        entry: {
+          label: "Waiting for 2 child conversations",
+          detail: "Child conversation 1\nChild conversation 2",
+          semanticActivityStatus: "waiting",
+        },
+      },
+      {
+        kind: "work",
+        entry: {
+          label: "Turn queued",
+          detail: "Waiting for the active turn to finish.",
+          semanticActivityStatus: "waiting",
+        },
+      },
+      {
+        kind: "work",
+        entry: {
+          label: "Search failed",
+          detail: "Permission denied",
+          tone: "error",
+          toolLifecycleStatus: "failed",
+        },
+      },
+      { kind: "message", message: { role: "assistant", text: "Answer" } },
+    ]);
+  });
+
+  it("keeps the existing canonical prefix when incremental activity and message references append", () => {
+    const base = buildConversation();
+    const reasoning = {
+      ...base.activities[0]!,
+      id: "reasoning-1",
+      kind: "reasoning.running",
+      status: "running" as const,
+      title: "Thinking",
+      toolName: null,
+      completedAt: null,
+    };
+    const firstConversation = buildConversation({
+      activities: [reasoning],
+      timeline: [
+        { kind: "message", id: "user-1", observedAt: AT },
+        { kind: "activity", id: reasoning.id, observedAt: AT },
+      ],
+    });
+    const firstIds = agentConversationTimelineEntries(firstConversation).map((entry) => entry.id);
+    const runningTool = {
+      ...base.activities[0]!,
+      id: "tool-running",
+      kind: "tool.running",
+      status: "running" as const,
+      title: "Searching repository",
+      completedAt: null,
+    };
+    const appendedIds = agentConversationTimelineEntries(
+      buildConversation({
+        activities: [reasoning, runningTool],
+        timeline: [
+          ...firstConversation.timeline,
+          { kind: "activity", id: runningTool.id, observedAt: AT },
+          { kind: "message", id: "assistant-1", observedAt: AT },
+        ],
+      }),
+    ).map((entry) => entry.id);
+
+    expect(firstIds).toEqual(["message:user-1", "activity:reasoning-1"]);
+    expect(appendedIds.slice(0, firstIds.length)).toEqual(firstIds);
+    expect(appendedIds.slice(firstIds.length)).toEqual([
+      "activity:tool-running",
+      "message:assistant-1",
+    ]);
   });
 });
 

@@ -12,6 +12,16 @@ export function projectConversationTimelineOverlayTurns(
     error: turn.error,
     createdAt: turn.createdAt,
     activities: (turn.toolItems ?? []).flatMap((item) => {
+      if (item.kind === "activity") {
+        return [
+          {
+            id: item.id,
+            title: item.activity.title,
+            detail: item.activity.detail,
+            status: item.activity.status,
+          },
+        ];
+      }
       if (item.kind !== "tool") return [];
       return [
         {

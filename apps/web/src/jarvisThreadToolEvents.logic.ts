@@ -15,9 +15,16 @@ export interface JarvisThreadToolCallView {
   readonly status: "pending" | "completed";
 }
 
+export interface JarvisThreadActivityView {
+  readonly title: string;
+  readonly detail: string | null;
+  readonly status: "running" | "completed";
+}
+
 export type JarvisThreadTurnMergedItem =
   | { readonly kind: "reply"; readonly id: string; readonly text: string }
-  | { readonly kind: "tool"; readonly id: string; readonly toolCall: JarvisThreadToolCallView };
+  | { readonly kind: "tool"; readonly id: string; readonly toolCall: JarvisThreadToolCallView }
+  | { readonly kind: "activity"; readonly id: string; readonly activity: JarvisThreadActivityView };
 
 interface ToolCallAccumulator {
   readonly order: number;
@@ -124,6 +131,7 @@ export function mergeJarvisThreadToolEventsWithReply(
   const replyParts: string[] = [];
   let replyIndex = 0;
   let hasReplyFrame = false;
+  const activityItemIndexByKey = new Map<string, number>();
 
   const flushReply = () => {
     const text = replyParts.join("");
@@ -136,12 +144,34 @@ export function mergeJarvisThreadToolEventsWithReply(
 
   for (const event of result.events) {
     const kind = readEventKind(event);
-    if (kind === "thread.reply") {
+    if (isReplyEventKind(kind)) {
       hasReplyFrame = true;
       replyParts.push(readReplyText(event));
       continue;
     }
+    if (kind === "tool.result") {
+      continue;
+    }
     if (kind !== "tool.call") {
+      const activity = projectActivityEvent(event, kind);
+      if (activity === null) continue;
+      flushReply();
+      const key = activityEventKey(event, kind);
+      const previousIndex = activityItemIndexByKey.get(key);
+      const previous = previousIndex === undefined ? undefined : items[previousIndex];
+      if (previousIndex !== undefined && previous?.kind === "activity") {
+        const detail = appendActivityDetail(previous.activity.detail, activity.detail);
+        items[previousIndex] = {
+          ...previous,
+          activity: {
+            ...activity,
+            detail,
+          },
+        };
+      } else {
+        activityItemIndexByKey.set(key, items.length);
+        items.push({ kind: "activity", id: `activity:${key}`, activity });
+      }
       continue;
     }
     const projectedEvent = readProjectedEvent(event);
@@ -243,13 +273,75 @@ function toolEventKeys(messageId: string | null, callId: string | null): Readonl
 }
 
 function readReplyText(event: JsonObject): string {
-  const data = event.data;
+  const data = readProjectedEvent(event);
   if (typeof data === "string") {
     return data;
   }
   const record = readRecord(data);
-  const candidate = record?.text ?? record?.reply ?? record?.content;
+  const payload = readRecord(record?.payload) ?? record;
+  const candidate = payload?.text ?? payload?.reply ?? payload?.content ?? payload?.delta;
   return typeof candidate === "string" ? candidate : "";
+}
+
+function isReplyEventKind(kind: string): boolean {
+  return /(assistant\.(?:delta|message)|thread\.reply|response\.(?:delta|message))/u.test(kind);
+}
+
+function projectActivityEvent(event: JsonObject, kind: string): JarvisThreadActivityView | null {
+  if (kind === "message" || kind === "thread.turn.error") return null;
+  const detail = readActivityDetail(readProjectedEvent(event));
+  if (detail === null && kind !== "thread.turn.started" && kind !== "thread.turn.completed") {
+    return null;
+  }
+  return {
+    title: activityTitle(kind),
+    detail,
+    status: /(?:completed|result|finished|succeeded)$/u.test(kind) ? "completed" : "running",
+  };
+}
+
+function activityTitle(kind: string): string {
+  if (kind === "thread.turn.started") return "Started working";
+  if (kind === "thread.turn.completed") return "Finished work";
+  if (/(?:reasoning|thinking|analysis)/u.test(kind)) return "Thinking";
+  if (/(?:commentary|progress|update)/u.test(kind)) return "Progress update";
+  if (/(?:action|step)/u.test(kind)) return "Action";
+  return kind
+    .split(/[._-]+/u)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+function readActivityDetail(value: unknown): string | null {
+  if (typeof value === "string") return value.trim() || null;
+  const record = readRecord(value);
+  if (!record) return null;
+  const payload = readRecord(record.payload) ?? readRecord(record.data) ?? record;
+  for (const key of ["text", "delta", "content", "message", "summary", "detail", "action"]) {
+    const candidate = payload[key];
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return key === "delta" ? candidate : candidate.trim();
+    }
+  }
+  return null;
+}
+
+function activityEventKey(event: JsonObject, kind: string): string {
+  const projected = readRecord(readProjectedEvent(event));
+  const payload = readRecord(projected?.payload) ?? readRecord(projected?.data);
+  return (
+    readString(projected?.message_id) ??
+    readString(projected?.event_id) ??
+    readString(payload?.id) ??
+    kind
+  );
+}
+
+function appendActivityDetail(current: string | null, next: string | null): string | null {
+  if (!current) return next;
+  if (!next || current.endsWith(next)) return current;
+  return `${current}${next}`;
 }
 
 export function summarizeToolPayload(value: unknown): string | null {

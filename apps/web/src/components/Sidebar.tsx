@@ -11,6 +11,7 @@ import {
   Globe2Icon,
   LoaderIcon,
   PinIcon,
+  PlusIcon,
   RocketIcon,
   SearchIcon,
   SettingsIcon,
@@ -3634,15 +3635,33 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           <span className="text-xs font-medium text-muted-foreground/72">
             {surfaceCopy.topLevelLabel}
           </span>
-          <ProjectSortMenu
-            projectSortOrder={projectSortOrder}
-            threadSortOrder={threadSortOrder}
-            threadPreviewCount={threadPreviewCount}
-            surfaceCopy={surfaceCopy}
-            onProjectSortOrderChange={handleProjectSortOrderChange}
-            onThreadSortOrderChange={handleThreadSortOrderChange}
-            onThreadPreviewCountChange={handleThreadPreviewCountChange}
-          />
+          <div className="flex items-center gap-0.5">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Link
+                    aria-label="Create project"
+                    className={SIDEBAR_ICON_ACTION_BUTTON_CLASS}
+                    to="/projects"
+                    search={{ create: true }}
+                    onClick={handlePrimaryNavigationClick}
+                  />
+                }
+              >
+                <PlusIcon className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipPopup side="right">Create project</TooltipPopup>
+            </Tooltip>
+            <ProjectSortMenu
+              projectSortOrder={projectSortOrder}
+              threadSortOrder={threadSortOrder}
+              threadPreviewCount={threadPreviewCount}
+              surfaceCopy={surfaceCopy}
+              onProjectSortOrderChange={handleProjectSortOrderChange}
+              onThreadSortOrderChange={handleThreadSortOrderChange}
+              onThreadPreviewCountChange={handleThreadPreviewCountChange}
+            />
+          </div>
         </div>
 
         {jarvisRegistryState === "pending" ? (
