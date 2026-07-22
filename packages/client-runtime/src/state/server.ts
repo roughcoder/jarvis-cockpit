@@ -18,7 +18,7 @@ import {
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
-  createEnvironmentRpcStreamAtomFamily,
+  createEnvironmentRpcStreamAtomFactory,
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -39,6 +39,15 @@ export interface JarvisProjectThreadTurnStreamState {
 }
 
 const JARVIS_PROJECT_TURN_EVENT_LIMIT = 512;
+
+export function jarvisProjectThreadTurnStreamIdentity(input: {
+  readonly environmentId: string;
+  readonly projectId: string;
+  readonly threadId: string;
+  readonly idempotencyKey: string;
+}): string {
+  return [input.environmentId, input.projectId, input.threadId, input.idempotencyKey].join(":");
+}
 
 function projectThreadReplyUpdate(
   event: JsonObject,
@@ -450,10 +459,17 @@ export function createServerEnvironmentAtoms<R, E>(
           ),
         ),
     }),
-    jarvisProjectThreadTurnStream: createEnvironmentRpcStreamAtomFamily(runtime, {
+    jarvisProjectThreadTurnStream: createEnvironmentRpcStreamAtomFactory(runtime, {
       label: "environment-data:server:jarvis-project-thread-turn-stream",
       tag: WS_METHODS.serverStreamJarvisProjectThreadTurn,
       idleTtlMs: 0,
+      identity: ({ environmentId, input }) =>
+        jarvisProjectThreadTurnStreamIdentity({
+          environmentId,
+          projectId: input.projectId,
+          threadId: input.threadId,
+          idempotencyKey: input.input.idempotency_key,
+        }),
       transform: (stream) =>
         stream.pipe(
           Stream.mapAccum(

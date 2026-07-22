@@ -411,6 +411,109 @@ describe("Jarvis universal conversation adapter", () => {
     expect(conversation.activities.every((activity) => activity.turnId === "turn-1")).toBe(true);
   });
 
+  it("replays prefixed nested reasoning deltas through completion", () => {
+    const conversation = adaptJarvisProjectThread({
+      ...ENRICHED_JARVIS_CONVERSATION_GOLDEN,
+      messages: [
+        {
+          role: "user",
+          content: "Investigate the event flow.",
+          observed_at: "2026-07-22T10:31:13.000Z",
+          turn_id: "turn-prefixed-reasoning",
+        },
+        {
+          role: "event",
+          peer_id: "jarvis",
+          content: "assistant.reasoning.delta",
+          observed_at: "2026-07-22T10:31:14.000Z",
+          event: {
+            event_id: "event-reasoning-delta",
+            type: "assistant.reasoning.delta",
+            occurred_at: "2026-07-22T10:31:14.000Z",
+            turn_id: "turn-prefixed-reasoning",
+            message_id: "reasoning-prefixed",
+            data: { text: "Inspecting the stream. " },
+          },
+        },
+        {
+          role: "event",
+          peer_id: "jarvis",
+          content: "assistant.reasoning.completed",
+          observed_at: "2026-07-22T10:31:15.000Z",
+          event: {
+            event_id: "event-reasoning-completed",
+            type: "assistant.reasoning.completed",
+            occurred_at: "2026-07-22T10:31:15.000Z",
+            turn_id: "turn-prefixed-reasoning",
+            message_id: "reasoning-prefixed",
+            data: { text: "Confirmed the ordering." },
+          },
+        },
+      ],
+    });
+
+    expect(conversation.activities).toEqual([
+      expect.objectContaining({
+        kind: "reasoning.completed",
+        status: "completed",
+        title: "Thinking",
+        summary: "Inspecting the stream. Confirmed the ordering.",
+        turnId: "turn-prefixed-reasoning",
+      }),
+    ]);
+    expect(conversation.timeline.map((item) => item.kind)).toEqual(["message", "activity"]);
+  });
+
+  it("orders interleaved turn items with one transitive total order", () => {
+    const conversation = adaptJarvisProjectThread({
+      ...ENRICHED_JARVIS_CONVERSATION_GOLDEN,
+      messages: [
+        {
+          role: "event",
+          content: "reasoning.delta",
+          observed_at: "2026-07-22T10:31:10.000Z",
+          event_id: "turn-a-reasoning",
+          message_id: "turn-a-reasoning",
+          turn_id: "turn-a",
+          type: "reasoning.delta",
+          data: { text: "A reasoning" },
+        },
+        {
+          role: "user",
+          content: "B prompt",
+          observed_at: "2026-07-22T10:31:11.000Z",
+          turn_id: "turn-b",
+        },
+        {
+          role: "user",
+          content: "A prompt",
+          observed_at: "2026-07-22T10:31:12.000Z",
+          turn_id: "turn-a",
+        },
+        {
+          role: "assistant",
+          content: "A reply",
+          observed_at: "2026-07-22T10:31:13.000Z",
+          turn_id: "turn-a",
+        },
+        {
+          role: "assistant",
+          content: "B reply",
+          observed_at: "2026-07-22T10:31:14.000Z",
+          turn_id: "turn-b",
+        },
+      ],
+    });
+    const labels = conversation.timeline.map((item) => {
+      if (item.kind === "activity") {
+        return conversation.activities.find((activity) => activity.id === item.id)?.summary;
+      }
+      return conversation.messages.find((message) => message.id === item.id)?.content;
+    });
+
+    expect(labels).toEqual(["B prompt", "B reply", "A prompt", "A reasoning", "A reply"]);
+  });
+
   it("projects the durable nested Jarvis event-message shape", () => {
     const conversation = adaptJarvisProjectThread({
       ...ENRICHED_JARVIS_CONVERSATION_GOLDEN,

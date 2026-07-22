@@ -948,6 +948,116 @@ it.effect("cockpit client fails project turns when SSE reports a turn error", ()
   }),
 );
 
+it.effect("project thread turn streams fail when an empty SSE response ends", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async () => new Response("", { headers: { "content-type": "text/event-stream" } }),
+    });
+
+    const items = yield* Stream.runCollect(
+      client.streamProjectThreadTurn("dogfood", "thread-1", {
+        text: "What changed?",
+        idempotency_key: "turn-empty-eof",
+      }),
+    );
+
+    assert.deepStrictEqual(
+      [...items],
+      [
+        {
+          kind: "failed",
+          error: {
+            message:
+              "Jarvis project turn stream ended before thread.turn.done was received (received no event frames).",
+          },
+        },
+      ],
+    );
+  }),
+);
+
+it.effect("project thread turn streams fail when a delta is followed by EOF", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async () =>
+        new Response(
+          'event: thread.delta\ndata: {"type":"thread.delta","payload":{"delta":"Partial reply"}}\n\n',
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+    });
+
+    const items = yield* Stream.runCollect(
+      client.streamProjectThreadTurn("dogfood", "thread-1", {
+        text: "What changed?",
+        idempotency_key: "turn-partial-eof",
+      }),
+    );
+
+    assert.deepStrictEqual(
+      [...items],
+      [
+        {
+          kind: "event",
+          event: {
+            event: "thread.delta",
+            data: { type: "thread.delta", payload: { delta: "Partial reply" } },
+          },
+        },
+        {
+          kind: "failed",
+          error: {
+            message:
+              "Jarvis project turn stream ended before thread.turn.done was received (received 1 event frame; last event: thread.delta).",
+          },
+        },
+      ],
+    );
+  }),
+);
+
+it.effect("project thread turn streams complete only after an explicit terminal event", () =>
+  Effect.gen(function* () {
+    const client = makeJarvisCockpitClient({
+      baseUrl: new URL("http://jarvis.local:8787"),
+      fetch: async () =>
+        new Response(
+          'event: thread.delta\ndata: {"type":"thread.delta","payload":{"delta":"Complete reply"}}\n\nevent: thread.turn.done\ndata: {"type":"thread.turn.done","payload":{}}\n\n',
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+    });
+
+    const items = yield* Stream.runCollect(
+      client.streamProjectThreadTurn("dogfood", "thread-1", {
+        text: "What changed?",
+        idempotency_key: "turn-explicit-done",
+      }),
+    );
+
+    assert.strictEqual(items.length, 3);
+    assert.strictEqual(items[0]?.kind, "event");
+    assert.strictEqual(items[1]?.kind, "event");
+    assert.deepStrictEqual(items[2], {
+      kind: "completed",
+      result: {
+        ok: true,
+        text: "Complete reply",
+        events: [
+          {
+            event: "thread.delta",
+            data: { type: "thread.delta", payload: { delta: "Complete reply" } },
+          },
+          {
+            event: "thread.turn.done",
+            data: { type: "thread.turn.done", payload: {} },
+          },
+        ],
+      },
+    });
+  }),
+);
+
 it.effect("cockpit client renames project threads with a PATCH request", () =>
   Effect.gen(function* () {
     const requests: Array<{ url: string; method: string; body: unknown }> = [];

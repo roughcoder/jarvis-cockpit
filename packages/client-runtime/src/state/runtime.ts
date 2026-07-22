@@ -622,10 +622,10 @@ export function createEnvironmentRpcSubscriptionAtomFamily<
   });
 }
 
-/** One-shot streaming RPC exposed as an atom family. Unlike a durable
- * subscription this does not re-run a mutating stream when the environment
- * session reconnects. */
-export function createEnvironmentRpcStreamAtomFamily<
+/** Creates one atom per one-shot streaming mutation. Callers must memoize the
+ * returned atom for the lifetime of the request. Keeping the payload outside
+ * atom-family identity avoids serializing or retaining large request bodies. */
+export function createEnvironmentRpcStreamAtomFactory<
   R,
   ER,
   TTag extends EnvironmentStreamCommandRpcTag,
@@ -636,6 +636,10 @@ export function createEnvironmentRpcStreamAtomFamily<
     readonly label: string;
     readonly tag: TTag;
     readonly idleTtlMs?: number;
+    readonly identity: (target: {
+      readonly environmentId: EnvironmentIdType;
+      readonly input: EnvironmentRpcInput<TTag>;
+    }) => string;
     readonly transform?: (
       stream: Stream.Stream<
         EnvironmentRpcStreamValue<TTag>,
@@ -649,20 +653,26 @@ export function createEnvironmentRpcStreamAtomFamily<
     >;
   },
 ) {
-  return createEnvironmentSubscriptionAtomFamily(runtime, {
-    label: options.label,
-    ...(options.idleTtlMs === undefined ? {} : { idleTtlMs: options.idleTtlMs }),
-    subscribe: (input: EnvironmentRpcInput<TTag>) => {
-      const stream = runStream(options.tag, input);
-      return options.transform === undefined
+  return (target: {
+    readonly environmentId: EnvironmentIdType;
+    readonly input: EnvironmentRpcInput<TTag>;
+  }) => {
+    const stream = runStream(options.tag, target.input);
+    const transformed =
+      options.transform === undefined
         ? (stream as Stream.Stream<
             B,
             EnvironmentRpcStreamFailure<TTag> | EnvironmentRpcUnavailableError,
             EnvironmentSupervisor | R
           >)
         : options.transform(stream);
-    },
-  });
+    return runtime
+      .atom(followStreamInEnvironment(target.environmentId, transformed))
+      .pipe(
+        Atom.setIdleTTL(options.idleTtlMs ?? 5 * 60_000),
+        Atom.withLabel(`${options.label}:${options.identity(target)}`),
+      );
+  };
 }
 
 export function createEnvironmentRpcCommand<R, ER, TTag extends EnvironmentUnaryRpcTag>(

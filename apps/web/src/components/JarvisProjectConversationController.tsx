@@ -156,6 +156,8 @@ import {
   cachedProjectConversationControlKey,
   projectConversationComposerRuntime,
   projectConversationRouteIdentity,
+  releaseProjectConversationSend,
+  tryClaimProjectConversationSend,
 } from "../projectConversationRuntime.logic";
 import {
   buildPendingUserInputAnswers,
@@ -371,6 +373,7 @@ export function JarvisProjectConversationController({
   const composerElementContextsRef = useRef<ElementContextDraft[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
   const controlIdempotencyKeysRef = useRef(new Map<string, string>());
+  const sendInFlightRef = useRef(false);
   const composerRef = useComposerHandleContext() ?? localComposerRef;
   const clearComposerContent = useComposerDraftStore((store) => store.clearComposerContent);
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
@@ -379,18 +382,21 @@ export function JarvisProjectConversationController({
   const [activeProjectTurn, setActiveProjectTurn] = useState<ActiveProjectConversationTurn | null>(
     null,
   );
-  const projectTurnStream = useEnvironmentQuery(
-    activeProjectTurn === null || activeProjectTurn.routeIdentity !== routeIdentity
-      ? null
-      : serverEnvironment.jarvisProjectThreadTurnStream({
-          environmentId,
-          input: {
-            projectId,
-            threadId: String(threadId),
-            input: activeProjectTurn.input,
-          },
-        }),
+  const projectTurnStreamAtom = useMemo(
+    () =>
+      activeProjectTurn === null || activeProjectTurn.routeIdentity !== routeIdentity
+        ? null
+        : serverEnvironment.jarvisProjectThreadTurnStream({
+            environmentId,
+            input: {
+              projectId,
+              threadId: String(threadId),
+              input: activeProjectTurn.input,
+            },
+          }),
+    [activeProjectTurn, environmentId, projectId, routeIdentity, threadId],
   );
+  const projectTurnStream = useEnvironmentQuery(projectTurnStreamAtom);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
     ApprovalRequestId[]
@@ -959,11 +965,15 @@ export function JarvisProjectConversationController({
 
   const sendPrompt = async (
     submission: ProjectConversationSubmissionSnapshot,
-    options: { readonly existingTurnId?: string } = {},
+    options: {
+      readonly existingTurnId?: string;
+      readonly restoreDraftOnFailure?: boolean;
+      readonly reserved?: boolean;
+    } = {},
   ) => {
     if (routeIdentityRef.current !== routeIdentity) return;
     const text = submission.prompt.trim();
-    if (text.length === 0 || sendBusy || archived) return;
+    if (text.length === 0 || (sendBusy && !options.reserved) || archived) return;
     const existingTurnId = options.existingTurnId;
     const turnAttachments = submission.attachments;
     const turnWorkspace = submission.workspace;
@@ -1051,7 +1061,8 @@ export function JarvisProjectConversationController({
       routeIdentity,
       turnId,
       submission,
-      restoreDraftOnFailure: !existingTurnId || clearMatchingRetryDraft,
+      restoreDraftOnFailure:
+        options.restoreDraftOnFailure ?? (!existingTurnId || clearMatchingRetryDraft),
       clearWorkspaceOnSuccess: turnWorkspace !== null && workspaceMatchesSubmission,
       input: {
         text,
@@ -1149,6 +1160,8 @@ export function JarvisProjectConversationController({
     if (sendBusy || archived || conversation === null) return;
     const sendContext = composerRef.current?.getSendContext();
     if (!sendContext) return;
+    const prompt = sendContext.prompt.trim();
+    if (prompt.length === 0 || !tryClaimProjectConversationSend(sendInFlightRef)) return;
     const workspace = buildTurnWorkspaceInput(workspaceStaging, conversationWorkspaceEngine);
     const model =
       buildTurnModelInput(
@@ -1171,22 +1184,64 @@ export function JarvisProjectConversationController({
         conversation.speed,
         workspaceEngineOptions,
       ) ?? null;
-    const attachments = await prepareProjectTurnAttachments({
-      images: sendContext.images,
-      persistedImages: sendContext.persistedImages,
-    });
-    if (attachments === null || routeIdentityRef.current !== routeIdentity) {
-      return;
-    }
-    await sendPrompt({
-      prompt: sendContext.prompt,
-      attachments,
+    const turnId = `project-turn-${Date.now()}-${turnCounter.current++}`;
+    const pendingSubmission: ProjectConversationSubmissionSnapshot = {
+      prompt,
+      attachments: [],
       composerImages: [...sendContext.images],
       workspace: workspace ?? null,
       model,
       effort,
       speed,
-    });
+    };
+    timelineController.beginAnchoredTurn(MessageId.make(`overlay:${turnId}:user`));
+    setTurns((existing) => [
+      ...existing,
+      {
+        id: turnId,
+        prompt,
+        response: "",
+        toolItems: [],
+        workspaceInput: pendingSubmission.workspace,
+        modelInput: model,
+        effortInput: effort,
+        speedInput: speed,
+        attachments: [],
+        composerImages: pendingSubmission.composerImages,
+        status: "pending",
+        error: null,
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+    promptRef.current = "";
+    composerImagesRef.current = [];
+    clearComposerContent(composerDraftTarget);
+    composerRef.current?.resetCursorState({ cursor: 0, prompt: "" });
+
+    try {
+      const attachments = await prepareProjectTurnAttachments({
+        images: sendContext.images,
+        persistedImages: sendContext.persistedImages,
+      });
+      if (attachments === null || routeIdentityRef.current !== routeIdentity) {
+        setTurns((existing) => existing.filter((turn) => turn.id !== turnId));
+        if (routeIdentityRef.current === routeIdentity) {
+          restoreFailedSubmission(pendingSubmission);
+        }
+        return;
+      }
+      const submission = { ...pendingSubmission, attachments };
+      setTurns((existing) =>
+        existing.map((turn) => (turn.id === turnId ? { ...turn, attachments } : turn)),
+      );
+      await sendPrompt(submission, {
+        existingTurnId: turnId,
+        restoreDraftOnFailure: true,
+        reserved: true,
+      });
+    } finally {
+      releaseProjectConversationSend(sendInFlightRef);
+    }
   };
 
   const retryTurn = (localTurnId: string) => {
