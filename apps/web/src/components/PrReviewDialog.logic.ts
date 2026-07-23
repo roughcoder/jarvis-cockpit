@@ -14,6 +14,28 @@ export { deriveOrchestratorOptions, resolveOrchestratorKey } from "../orchestrat
 
 export type ReviewerOption = CodeAgentModelOption;
 
+export type CommonReviewWorkerUnavailableReason =
+  | "no_workers"
+  | "availability"
+  | "repository"
+  | "engines"
+  | "capacity";
+
+export type CommonReviewWorkerSelection =
+  | { readonly kind: "not_requested" }
+  | { readonly kind: "selected"; readonly workerId: string }
+  | {
+      readonly kind: "unavailable";
+      readonly reason: CommonReviewWorkerUnavailableReason;
+      readonly message: string;
+    };
+
+interface CommonReviewWorkerSelectionInput {
+  readonly workers: ReadonlyArray<JarvisWorkerProfile>;
+  readonly reviewers: ReadonlyArray<Pick<ReviewerOption, "engine">>;
+  readonly repo: string;
+}
+
 export const PR_REVIEW_ACCESS_OPTIONS: ReadonlyArray<{
   readonly id: PrReviewAccessMode;
   readonly label: string;
@@ -74,37 +96,103 @@ export function defaultReviewerKeys(options: ReadonlyArray<ReviewerOption>): Rea
   return keys;
 }
 
-export function selectCommonReviewWorker(input: {
-  readonly workers: ReadonlyArray<JarvisWorkerProfile>;
-  readonly reviewers: ReadonlyArray<Pick<ReviewerOption, "engine">>;
-  readonly repo: string;
-}): string | undefined {
-  const engines = [...new Set(input.reviewers.map((reviewer) => reviewer.engine))];
-  if (engines.length === 0) return undefined;
+function freeWorkerSlots(worker: JarvisWorkerProfile): number {
+  return (
+    worker.capacity.max_sessions - worker.capacity.active_sessions - worker.capacity.queued_sessions
+  );
+}
 
-  const eligible = input.workers.filter((worker) => {
-    const used = worker.capacity.active_sessions + worker.capacity.queued_sessions;
-    return (
-      workerHasConfirmedAvailability(worker) &&
-      workerIsHealthyEnough(worker) &&
-      workerCanStartRepo(worker, input.repo) &&
-      used + input.reviewers.length <= worker.capacity.max_sessions &&
-      engines.every((engine) => workerSupportsEngine(worker, engine))
-    );
-  });
+export function evaluateCommonReviewWorkerSelection(
+  input: CommonReviewWorkerSelectionInput,
+): CommonReviewWorkerSelection {
+  const engines = [...new Set(input.reviewers.map((reviewer) => reviewer.engine))];
+  const requiredSlots = input.reviewers.length;
+  if (engines.length === 0) return { kind: "not_requested" };
+  if (input.workers.length === 0) {
+    return {
+      kind: "unavailable",
+      reason: "no_workers",
+      message: "No workers are available in the current Jarvis snapshot.",
+    };
+  }
+
+  const available = input.workers.filter(
+    (worker) => workerHasConfirmedAvailability(worker) && workerIsHealthyEnough(worker),
+  );
+  if (available.length === 0) {
+    const details = input.workers
+      .map((worker) => `${worker.display_name} (status ${worker.status}, health ${worker.health})`)
+      .join("; ");
+    return {
+      kind: "unavailable",
+      reason: "availability",
+      message:
+        "No worker has confirmed online/degraded status and healthy/degraded health. " +
+        `${details}.`,
+    };
+  }
+
+  const repoCapable = available.filter((worker) => workerCanStartRepo(worker, input.repo));
+  if (repoCapable.length === 0) {
+    return {
+      kind: "unavailable",
+      reason: "repository",
+      message:
+        `No confirmed healthy worker can start ${input.repo}. Checked: ` +
+        `${available.map((worker) => worker.display_name).join(", ")}.`,
+    };
+  }
+
+  const engineCapable = repoCapable.filter((worker) =>
+    engines.every((engine) => workerSupportsEngine(worker, engine)),
+  );
+  if (engineCapable.length === 0) {
+    const details = repoCapable
+      .map((worker) => {
+        const missing = engines.filter((engine) => !workerSupportsEngine(worker, engine));
+        return `${worker.display_name} is missing ${missing.join(", ")}`;
+      })
+      .join("; ");
+    return {
+      kind: "unavailable",
+      reason: "engines",
+      message: `No repo-capable worker supports all selected reviewer engines. ${details}.`,
+    };
+  }
+
+  const eligible = engineCapable.filter((worker) => freeWorkerSlots(worker) >= requiredSlots);
+  if (eligible.length === 0) {
+    const details = engineCapable
+      .map(
+        (worker) =>
+          `${worker.display_name} has ${String(Math.max(0, freeWorkerSlots(worker)))}/` +
+          `${String(requiredSlots)} slots free (max ${String(worker.capacity.max_sessions)}, ` +
+          `${String(worker.capacity.active_sessions)} active, ` +
+          `${String(worker.capacity.queued_sessions)} queued)`,
+      )
+      .join("; ");
+    return {
+      kind: "unavailable",
+      reason: "capacity",
+      message: `No compatible worker has ${String(requiredSlots)} free slots. ${details}.`,
+    };
+  }
 
   eligible.sort((left, right) => {
     const leftAuthenticated = left.git_identity?.authenticated === true ? 1 : 0;
     const rightAuthenticated = right.git_identity?.authenticated === true ? 1 : 0;
     if (leftAuthenticated !== rightAuthenticated) return rightAuthenticated - leftAuthenticated;
-    const leftFree =
-      left.capacity.max_sessions - left.capacity.active_sessions - left.capacity.queued_sessions;
-    const rightFree =
-      right.capacity.max_sessions - right.capacity.active_sessions - right.capacity.queued_sessions;
-    return rightFree - leftFree;
+    return freeWorkerSlots(right) - freeWorkerSlots(left);
   });
 
-  return eligible[0]?.worker_id;
+  return { kind: "selected", workerId: eligible[0]!.worker_id };
+}
+
+export function selectCommonReviewWorker(
+  input: CommonReviewWorkerSelectionInput,
+): string | undefined {
+  const selection = evaluateCommonReviewWorkerSelection(input);
+  return selection.kind === "selected" ? selection.workerId : undefined;
 }
 
 export function selectReviewOrchestratorWorker(input: {

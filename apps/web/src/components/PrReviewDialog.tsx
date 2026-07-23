@@ -15,8 +15,8 @@ import {
   defaultReviewerKeys,
   deriveOrchestratorOptions,
   deriveReviewerOptions,
+  evaluateCommonReviewWorkerSelection,
   resolveOrchestratorKey,
-  selectCommonReviewWorker,
   selectReviewOrchestratorWorker,
   isPrReviewAccessMode,
   PR_REVIEW_ACCESS_OPTIONS,
@@ -137,10 +137,14 @@ export function PrReviewDialog({
     () => orchestratorOptions.find((option) => option.key === selectedOrchestrator),
     [orchestratorOptions, selectedOrchestrator],
   );
-  const workerId = useMemo(
-    () => selectCommonReviewWorker({ workers, reviewers, repo }),
+  const reviewWorkerSelection = useMemo(
+    () => evaluateCommonReviewWorkerSelection({ workers, reviewers, repo }),
     [workers, reviewers, repo],
   );
+  const workerId =
+    reviewWorkerSelection.kind === "selected" ? reviewWorkerSelection.workerId : undefined;
+  const workerUnavailableMessage =
+    reviewWorkerSelection.kind === "unavailable" ? reviewWorkerSelection.message : undefined;
   const orchestratorWorkerId = useMemo(
     () =>
       selectReviewOrchestratorWorker({
@@ -347,10 +351,8 @@ export function PrReviewDialog({
                 ))}
               </div>
             )}
-            {reviewers.length === 2 && workerId === undefined ? (
-              <p className="text-xs text-destructive">
-                No healthy repo-capable worker has two free slots for both reviewers.
-              </p>
+            {reviewers.length === 2 && workerUnavailableMessage ? (
+              <p className="text-xs text-destructive">{workerUnavailableMessage}</p>
             ) : null}
             {workerId !== undefined && orchestratorWorkerId === undefined ? (
               <p className="text-xs text-destructive">
