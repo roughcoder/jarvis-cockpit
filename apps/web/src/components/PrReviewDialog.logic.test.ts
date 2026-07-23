@@ -11,6 +11,7 @@ import {
   defaultReviewerKeys,
   deriveOrchestratorOptions,
   deriveReviewerOptions,
+  evaluateCommonReviewWorkerSelection,
   resolveOrchestratorKey,
   selectCommonReviewWorker,
   selectReviewOrchestratorWorker,
@@ -61,9 +62,12 @@ function worker(input: {
   readonly engines: ReadonlyArray<string>;
   readonly max: number;
   readonly active?: number;
+  readonly queued?: number;
   readonly authenticated?: boolean;
   readonly status?: JarvisWorkerProfile["status"];
   readonly health?: JarvisWorkerProfile["health"];
+  readonly repository?: string;
+  readonly canStartRepo?: boolean;
 }): JarvisWorkerProfile {
   return {
     worker_id: JarvisWorkerId.make(input.id),
@@ -88,10 +92,15 @@ function worker(input: {
     capacity: {
       max_sessions: input.max,
       active_sessions: input.active ?? 0,
-      queued_sessions: 0,
+      queued_sessions: input.queued ?? 0,
     },
     repositories: [
-      { repo: "jarvis", can_start_work: true, default_branch: "main", is_default: true },
+      {
+        repo: input.repository ?? "jarvis",
+        can_start_work: input.canStartRepo ?? true,
+        default_branch: "main",
+        is_default: true,
+      },
     ],
     git_identity: { authenticated: input.authenticated ?? false },
     system: {},
@@ -251,6 +260,139 @@ describe("selectCommonReviewWorker", () => {
     });
 
     expect(selected).toBeUndefined();
+  });
+});
+
+describe("common review worker eligibility diagnostics", () => {
+  const reviewers = [{ engine: "claude" }, { engine: "codex" }];
+
+  it("reports no diagnostic when a worker is selected", () => {
+    const selection = evaluateCommonReviewWorkerSelection({
+      workers: [worker({ id: "laptop", engines: ["codex", "claude"], max: 2 })],
+      reviewers,
+      repo: "roughcoder/jarvis",
+    });
+
+    expect(selection).toEqual({ kind: "selected", workerId: "laptop" });
+  });
+
+  it("reports unconfirmed worker status and health", () => {
+    const selection = evaluateCommonReviewWorkerSelection({
+      workers: [
+        worker({
+          id: "unconfirmed",
+          engines: ["codex", "claude"],
+          max: 2,
+          status: "unknown",
+          health: "unknown",
+        }),
+      ],
+      reviewers,
+      repo: "roughcoder/jarvis",
+    });
+
+    expect(selection).toEqual({
+      kind: "unavailable",
+      reason: "availability",
+      message:
+        "No worker has confirmed online/degraded status and healthy/degraded health. " +
+        "unconfirmed (status unknown, health unknown).",
+    });
+  });
+
+  it("reports repository capability after availability is confirmed", () => {
+    const selection = evaluateCommonReviewWorkerSelection({
+      workers: [
+        worker({
+          id: "wrong-repo",
+          engines: ["codex", "claude"],
+          max: 2,
+          repository: "other",
+        }),
+      ],
+      reviewers,
+      repo: "roughcoder/jarvis",
+    });
+
+    expect(selection).toEqual({
+      kind: "unavailable",
+      reason: "repository",
+      message: "No confirmed healthy worker can start roughcoder/jarvis. Checked: wrong-repo.",
+    });
+  });
+
+  it("reports missing reviewer engines after repository capability is confirmed", () => {
+    const selection = evaluateCommonReviewWorkerSelection({
+      workers: [worker({ id: "codex-only", engines: ["codex"], max: 2 })],
+      reviewers,
+      repo: "roughcoder/jarvis",
+    });
+
+    expect(selection).toEqual({
+      kind: "unavailable",
+      reason: "engines",
+      message:
+        "No repo-capable worker supports all selected reviewer engines. " +
+        "codex-only is missing claude.",
+    });
+  });
+
+  it("reports configured and occupied capacity after all capabilities are confirmed", () => {
+    const selection = evaluateCommonReviewWorkerSelection({
+      workers: [
+        worker({
+          id: "busy",
+          engines: ["codex", "claude"],
+          max: 8,
+          active: 6,
+          queued: 1,
+        }),
+      ],
+      reviewers,
+      repo: "roughcoder/jarvis",
+    });
+
+    expect(selection).toEqual({
+      kind: "unavailable",
+      reason: "capacity",
+      message:
+        "No compatible worker has 2 free slots. " +
+        "busy has 1/2 slots free (max 8, 6 active, 1 queued).",
+    });
+  });
+
+  it("reports the earliest failed prerequisite when a worker has multiple blockers", () => {
+    const selection = evaluateCommonReviewWorkerSelection({
+      workers: [
+        worker({
+          id: "blocked",
+          engines: ["codex"],
+          max: 1,
+          active: 1,
+          status: "offline",
+          health: "unhealthy",
+          canStartRepo: false,
+        }),
+      ],
+      reviewers,
+      repo: "roughcoder/jarvis",
+    });
+
+    expect(selection).toMatchObject({ kind: "unavailable", reason: "availability" });
+  });
+
+  it("distinguishes an empty fleet snapshot from worker eligibility failures", () => {
+    const selection = evaluateCommonReviewWorkerSelection({
+      workers: [],
+      reviewers,
+      repo: "roughcoder/jarvis",
+    });
+
+    expect(selection).toEqual({
+      kind: "unavailable",
+      reason: "no_workers",
+      message: "No workers are available in the current Jarvis snapshot.",
+    });
   });
 });
 
